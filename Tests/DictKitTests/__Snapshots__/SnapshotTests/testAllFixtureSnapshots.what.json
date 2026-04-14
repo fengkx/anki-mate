@@ -1,0 +1,40 @@
+{
+  "entries" : [
+    {
+      "content" : "pronoun ① (in direct and indirect questions) 什么 shénme▸ what is happening? 出什么事了？",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "pronoun"
+    },
+    {
+      "content" : "determiner ① (which) 哪个 nǎge▸ what time is it? 现在几点钟？",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "determiner"
+    },
+    {
+      "content" : "adverb ① (how much) 多少 duōshao▸ what does it matter? 那有什么关系？",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "adverb"
+    },
+    {
+      "content" : "what about phrase ① (in question) …怎么样 … zěnmeyàng▸ what about the children? 孩子们怎么样？",
+      "kind" : "phrase",
+      "label" : "D",
+      "name" : "what about"
+    },
+    {
+      "content" : "what if phrase ① (what will happen?) 要是…会怎么样 yàoshi… huì zěnmeyàng",
+      "kind" : "phrase",
+      "label" : "E",
+      "name" : "what if"
+    }
+  ],
+  "headword" : "what",
+  "pronunciations" : [
+    "BrE wɒt",
+    "AmE (h)wət, (h)wɑt"
+  ],
+  "query" : "what"
+}

@@ -1,0 +1,28 @@
+{
+  "entries" : [
+    {
+      "content" : "determiner plural these ① (referring to person or thing nearby, to the nearer of two, to person or thing already mentioned) 这（个） zhè(gè)▸ this man is dangerous 这个人很危险",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "determiner"
+    },
+    {
+      "content" : "pronoun plural these ① (referring to person or thing nearby, to the nearer of two, or to person or thing already mentioned) 这（个） zhè(gè)▸ what's this? 这是什么？",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "pronoun"
+    },
+    {
+      "content" : "adverb 这么 zhème▸ it's this big 它有这么大",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "adverb"
+    }
+  ],
+  "headword" : "this",
+  "pronunciations" : [
+    "BrE ðɪs, ðɪs",
+    "AmE ðɪs, ðəs"
+  ],
+  "query" : "this"
+}

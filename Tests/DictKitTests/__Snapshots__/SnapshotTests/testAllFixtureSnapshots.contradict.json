@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "transitive verb ① (conflict with) 与…相矛盾 yǔ… xiāng máodùn▸ all the reports contradict each other 所有的报告都相互矛盾 ② (dispute) 反驳 fǎnbó ‹person, statement›",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "transitive verb"
+    },
+    {
+      "content" : "intransitive verb 反驳 fǎnbó▸ don't contradict! 不要顶嘴！",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "intransitive verb"
+    }
+  ],
+  "headword" : "contradict",
+  "pronunciations" : [
+    "BrE ˌkɒntrəˈdɪkt",
+    "AmE ˌkɑntrəˈdɪk(t)"
+  ],
+  "query" : "contradict"
+}

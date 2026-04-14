@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "adjective 临时的 línshí de ‹decision›; 特别的 tèbié de ‹committee, body›▸ on an ad hoc basis 临时性地",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "adjective"
+    },
+    {
+      "content" : "adverb 临时地 línshí de",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "adverb"
+    }
+  ],
+  "headword" : "ad hoc",
+  "pronunciations" : [
+    "BrE ˌad ˈhɒk",
+    "AmE ˌæd ˈhɑk"
+  ],
+  "query" : "ad hoc"
+}

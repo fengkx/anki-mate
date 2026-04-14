@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "conjunction ① (joining words or clauses) 和 hé▸ ham and eggs 火腿蛋▸ a knife and fork 一副刀叉▸ she shouted and screamed 她大喊大叫 ② (indicating one person or thing) [连接双重身份]▸ my friend and colleague Joe Brown 我的朋友兼同事乔布朗 ③ (used in numbers) [连接数字]▸ four hundred and sixty-two 四百六十二",
+      "kind" : "partOfSpeech",
+      "label" : "",
+      "name" : "conjunction"
+    }
+  ],
+  "headword" : "and",
+  "pronunciations" : [
+    "BrE and, (ə)n(d)",
+    "AmE æn(d), (ə)n(d)"
+  ],
+  "query" : "and"
+}

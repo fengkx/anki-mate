@@ -1,0 +1,152 @@
+{
+  "entries" : [
+    {
+      "headword" : "what",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "pronoun",
+          "partOfSpeechLabel" : "pronoun",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "wɒt"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət, (h)wɑt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "什么 shénme",
+              "examples" : [
+                "what is happening? 出什么事了？"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(in direct and indirect questions)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "determiner",
+          "partOfSpeechLabel" : "determiner",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "wɒt"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət, (h)wɑt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "哪个 nǎge",
+              "examples" : [
+                "what time is it? 现在几点钟？"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(which)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adverb",
+          "partOfSpeechLabel" : "adverb",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "wɒt"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət, (h)wɑt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "多少 duōshao",
+              "examples" : [
+                "what does it matter? 那有什么关系？"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(how much)"
+            }
+          ]
+        }
+      ],
+      "notes" : [
+
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "…怎么样 … zěnmeyàng",
+              "examples" : [
+                "what about the children? 孩子们怎么样？"
+              ],
+              "phrase" : "what about"
+            },
+            {
+              "definition" : "要是…会怎么样 yàoshi… huì zěnmeyàng",
+              "examples" : [
+
+              ],
+              "phrase" : "what if"
+            }
+          ],
+          "title" : "PHRASES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "BrE",
+          "ipa" : "wɒt"
+        },
+        {
+          "dialect" : "AmE",
+          "ipa" : "(h)wət, (h)wɑt"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "publicAPI",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "what"
+}

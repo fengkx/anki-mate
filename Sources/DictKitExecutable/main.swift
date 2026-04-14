@@ -1,0 +1,3 @@
+import DictKitCLI
+
+DictKitCommand.main()

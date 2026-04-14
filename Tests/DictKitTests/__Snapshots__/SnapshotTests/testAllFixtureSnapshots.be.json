@@ -1,0 +1,28 @@
+{
+  "entries" : [
+    {
+      "content" : "copular verb ① (indicating quality or attribute) [表明属性]▸ I'm married 我结婚了",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "copular verb"
+    },
+    {
+      "content" : "intransitive verb ① (exist) 存在 cúnzài▸ can such things be? 会有这样的事情吗？",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "intransitive verb"
+    },
+    {
+      "content" : "auxiliary verb ① (forming passive) [构成被动语态]▸ the child was found (by the search party) 孩子（被搜索队）找到了",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "auxiliary verb"
+    }
+  ],
+  "headword" : "be",
+  "pronunciations" : [
+    "BrE biː",
+    "AmE bi"
+  ],
+  "query" : "be"
+}

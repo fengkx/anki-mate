@@ -1,0 +1,115 @@
+{
+  "entries" : [
+    {
+      "headword" : "apple",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "ˈap(ə)l",
+              "respelling" : "ˈap(ə)l"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "the round fruit of a tree of the rose family, which typically has thin red or green skin and crisp flesh. Many varieties have been developed as dessert or cooking fruit or for making cider.",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an unrelated fruit that resembles an apple in some way.",
+              "examples" : [
+
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the tree which bears apples.",
+              "examples" : [
+
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "Old English æppel, of Germanic origin; related to Dutch appel and German Apfel.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "family characteristics are usually inherited",
+              "examples" : [
+                "he's a fool, Mary, as his father was—the apple never falls far from the tree"
+              ],
+              "phrase" : "the apple never falls far from the tree"
+            },
+            {
+              "definition" : "a person of whom one is extremely fond and proud",
+              "examples" : [
+                "a daughter who had ceased to be the apple of her father's eye"
+              ],
+              "phrase" : "the apple of one's eye"
+            },
+            {
+              "definition" : "used with reference to a comparison regarded as valid because it concerns two things that are fundamentally the same",
+              "examples" : [
+                "there is no apples-to-apples comparison when comparing a foreign currency to USD",
+                "you want to compare us to Australia or Great Britain, like it’s apples to apples"
+              ],
+              "phrase" : "apples to apples"
+            },
+            {
+              "definition" : "spoil a plan or disturb the status quo.",
+              "examples" : [
+
+              ],
+              "phrase" : "upset the applecart"
+            }
+          ],
+          "title" : "PHRASES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "ˈap(ə)l",
+          "respelling" : "ˈap(ə)l"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "apple"
+}

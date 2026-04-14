@@ -1,0 +1,1140 @@
+{
+  "entries" : [
+    {
+      "headword" : "run",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+            "no object",
+            "with object",
+            "no object, with adverbial of direction",
+            "with object and adverbial of direction",
+            "with two objects",
+            "with complement",
+            "no object, with adverbial",
+            "with adverbial or complement"
+          ],
+          "inflections" : [
+            "runs",
+            "running",
+            "ran"
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "verb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rən",
+              "respelling" : "rən"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "move at a speed faster than a walk, never having both or all the feet on the ground at the same time",
+              "examples" : [
+                "the dog ran across the road",
+                "she ran the last few yards, breathing heavily",
+                "he hasn't paid for his drinks—run and catch him"
+              ],
+              "number" : 1,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "run as a sport or for exercise",
+              "examples" : [
+                "I run every morning"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "compete in a race",
+              "examples" : [
+                "she ran in the 200 meters",
+                ": Dave has run 42 marathons"
+              ],
+              "number" : 3,
+              "registers" : [
+                "with object"
+              ],
+              "semanticHint" : "(of an athlete or a racehorse)"
+            },
+            {
+              "definition" : "enter (a racehorse) for a race.",
+              "examples" : [
+
+              ],
+              "number" : 4,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "move about in a hurried and hectic way",
+              "examples" : [
+                "I've spent the whole day running around after the kids"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "run from one wicket to the other in scoring or attempting to score a run.",
+              "examples" : [
+
+              ],
+              "number" : 6,
+              "registers" : [
+                "Cricket"
+              ],
+              "semanticHint" : "(of a batter)"
+            },
+            {
+              "definition" : "attempt to advance to the next base.",
+              "examples" : [
+
+              ],
+              "number" : 7,
+              "registers" : [
+                "Baseball"
+              ],
+              "semanticHint" : "(of a batter or base runner)"
+            },
+            {
+              "definition" : "chase (someone) away",
+              "examples" : [
+                "ah went tuh eat the mangoes but the people run mih"
+              ],
+              "number" : 8,
+              "registers" : [
+                "West Indian English",
+                "with object"
+              ]
+            },
+            {
+              "definition" : "chase or hunt their quarry",
+              "examples" : [
+                "the hounds are running"
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of hounds)"
+            },
+            {
+              "definition" : "sail directly before the wind, especially in bad weather",
+              "examples" : [
+                "we slanted across to the far bank and ran before the wind"
+              ],
+              "number" : 10,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of a boat)"
+            },
+            {
+              "definition" : "go upriver from the sea in order to spawn.",
+              "examples" : [
+
+              ],
+              "number" : 11,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of a migratory fish)"
+            },
+            {
+              "definition" : "pass or cause to pass quickly or smoothly in a particular direction",
+              "examples" : [
+                ": the rumor ran through the pack of photographers",
+                ": Helen ran her fingers through her hair"
+              ],
+              "number" : 12,
+              "registers" : [
+                "no object, with adverbial of direction",
+                "with object and adverbial of direction"
+              ]
+            },
+            {
+              "definition" : "move or cause to move somewhere forcefully or with a particular result",
+              "examples" : [
+                ": the tanker ran aground off the Aleutian Islands",
+                ": a woman ran a stroller into the back of my legs"
+              ],
+              "number" : 13,
+              "registers" : [
+                "no object",
+                "with object"
+              ]
+            },
+            {
+              "definition" : "fail to stop at (a red traffic light)",
+              "examples" : [
+                "cameras triggered by cars running red lights at intersections"
+              ],
+              "number" : 14,
+              "registers" : [
+                "informal",
+                "with object"
+              ]
+            },
+            {
+              "definition" : "navigate (rapids or a waterfall) in a boat",
+              "examples" : [
+                "the boats were preparing to run the big rapids"
+              ],
+              "number" : 15,
+              "registers" : [
+                "North American English",
+                "with object"
+              ]
+            },
+            {
+              "definition" : "flow or cause to flow",
+              "examples" : [
+                ": a small river runs into the sea at one side of the castle",
+                ": she ran cold water into the sink"
+              ],
+              "number" : 16,
+              "registers" : [
+                "no object, with adverbial of direction",
+                "with object"
+              ],
+              "semanticHint" : "(with reference to a liquid)"
+            },
+            {
+              "definition" : "cause water to flow over (something)",
+              "examples" : [
+                "I ran my hands under the faucet"
+              ],
+              "number" : 17,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "fill (a bath) with water",
+              "examples" : [
+                "she ran a bath and lowered herself into the water",
+                ": I'll run you a nice hot bath"
+              ],
+              "number" : 18,
+              "registers" : [
+                "with object",
+                "with two objects"
+              ]
+            },
+            {
+              "definition" : "emit or exude a liquid",
+              "examples" : [
+                "she was weeping loudly, and her nose was running"
+              ],
+              "number" : 19,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "melt and become fluid",
+              "examples" : [
+                "it was so hot that the butter ran"
+              ],
+              "number" : 20,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of a solid substance)"
+            },
+            {
+              "definition" : "rise higher or flow more quickly",
+              "examples" : [
+                "there was still a heavy sea running"
+              ],
+              "number" : 21,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of the sea, the tide, or a river)"
+            },
+            {
+              "definition" : "dissolve and spread when the fabric or paper becomes wet",
+              "examples" : [
+                "the red dye ran when the socks were washed"
+              ],
+              "number" : 22,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of dye or color in fabric or paper)"
+            },
+            {
+              "definition" : "extend or cause to extend in a particular direction",
+              "examples" : [
+                ": cobbled streets run down to a tiny harbor",
+                ": he ran a wire under the carpet"
+              ],
+              "number" : 23,
+              "registers" : [
+                "no object, with adverbial of direction",
+                "with object and adverbial of direction"
+              ]
+            },
+            {
+              "definition" : "pass into or reach a specified state or level",
+              "examples" : [
+                "inflation is running at 11 percent",
+                ": the decision ran counter to previous government commitments"
+              ],
+              "number" : 24,
+              "registers" : [
+                "no object",
+                "with complement"
+              ]
+            },
+            {
+              "definition" : "make a regular journey on a particular route",
+              "examples" : [
+                "buses run into town every half hour"
+              ],
+              "number" : 25,
+              "registers" : [
+                "no object"
+              ],
+              "semanticHint" : "(of a bus, train, ferry, or other form of transportation)"
+            },
+            {
+              "definition" : "put (a particular form of public transportation) in service",
+              "examples" : [
+                "the group is drawing up plans to run trains on key routes"
+              ],
+              "number" : 26,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "take (someone) somewhere in a car",
+              "examples" : [
+                "I'll run you home"
+              ],
+              "number" : 27,
+              "registers" : [
+                "with object and adverbial of direction"
+              ]
+            },
+            {
+              "definition" : "be in charge of; manage",
+              "examples" : [
+                "Andrea runs her own catering business",
+                ": an attractive family-run hotel"
+              ],
+              "number" : 28,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "operate or proceed in a particular way",
+              "examples" : [
+                "everything's running according to plan"
+              ],
+              "number" : 29,
+              "registers" : [
+                "no object, with adverbial"
+              ],
+              "semanticHint" : "(of a system, organization, or plan)"
+            },
+            {
+              "definition" : "organize and make available for other people",
+              "examples" : [
+                "we decided to run a series of seminars"
+              ],
+              "number" : 30,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "own, maintain, and use (a vehicle)",
+              "examples" : [
+                "he could no longer afford to run a car"
+              ],
+              "number" : 31,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "be in or cause to be in operation; function or cause to function",
+              "examples" : [
+                ": the car runs on unleaded fuel",
+                ": a number of peripherals can be run off one SCSI port"
+              ],
+              "number" : 32,
+              "registers" : [
+                "no object",
+                "with object"
+              ]
+            },
+            {
+              "definition" : "move or cause to move between the spools of a recording machine",
+              "examples" : [
+                ": I ran the tape back",
+                ": the tape has run out"
+              ],
+              "number" : 33,
+              "registers" : [
+                "with object",
+                "no object"
+              ]
+            },
+            {
+              "definition" : "continue or be valid or operative for a particular period of time",
+              "examples" : [
+                "the course ran for two days",
+                "this particular debate will run on and on"
+              ],
+              "number" : 34,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "happen or arrive at the specified time",
+              "examples" : [
+                "the program was running fifteen minutes late"
+              ],
+              "number" : 35,
+              "registers" : [
+                "with adverbial or complement"
+              ]
+            },
+            {
+              "definition" : "be staged or presented",
+              "examples" : [
+                "the play ran on Broadway last year"
+              ],
+              "number" : 36,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of a play or exhibition)"
+            },
+            {
+              "definition" : "be a candidate in a political election",
+              "examples" : [
+                "he announced that he intended to run for President"
+              ],
+              "number" : 37,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "sponsor (a candidate) in an election",
+              "examples" : [
+                "they ran their first candidate for the school board"
+              ],
+              "number" : 38,
+              "registers" : [
+                "with object"
+              ],
+              "semanticHint" : "(especially of a political party)"
+            },
+            {
+              "definition" : "publish or be published in a newspaper or magazine",
+              "examples" : [
+                ": the tabloids ran the story",
+                ": when the story ran, there was a big to-do"
+              ],
+              "number" : 39,
+              "registers" : [
+                "with object",
+                "no object"
+              ]
+            },
+            {
+              "definition" : "have a specified wording or contents",
+              "examples" : [
+                "“Tapestries slashed!” ran the dramatic headline"
+              ],
+              "number" : 40,
+              "registers" : [
+                "no object"
+              ],
+              "semanticHint" : "(of a story, argument, or piece of writing)"
+            },
+            {
+              "definition" : "bring (goods) into a country illegally and secretly; smuggle",
+              "examples" : [
+                "they run drugs for the cocaine cartels"
+              ],
+              "number" : 41,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "cost (someone) (a specified amount)",
+              "examples" : [
+                "a new photocopier will run us about $1,300"
+              ],
+              "number" : 42,
+              "registers" : [
+                "North American English",
+                "with two objects"
+              ],
+              "semanticHint" : "(of an object or act)"
+            },
+            {
+              "definition" : "develop a vertical line of unraveled stitches.",
+              "examples" : [
+
+              ],
+              "number" : 43,
+              "registers" : [
+                "North American English",
+                "no object"
+              ],
+              "semanticHint" : "(of a stocking or pair of tights)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "usually with adjective"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rən",
+              "respelling" : "rən"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "an act or spell of running",
+              "examples" : [
+                "I usually go for a run in the morning",
+                "a cross-country run"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a running pace",
+              "examples" : [
+                "Bobby set off at a run"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an annual mass migration of fish up a river to spawn, or their return migration afterward",
+              "examples" : [
+                "the annual salmon runs"
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a journey accomplished or route taken by a vehicle, aircraft, or boat, especially on a regular basis",
+              "examples" : [
+                "the New York-Washington run"
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a short excursion made in a car",
+              "examples" : [
+                "we could take a run out to the country"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the distance covered in a specified period, especially by a ship",
+              "examples" : [
+                "a record run of 398 miles from noon to noon"
+              ],
+              "number" : 6,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a short flight made by an aircraft on a straight and even course at a constant speed before or while dropping bombs",
+              "examples" : [
+                "bombing runs by B52s"
+              ],
+              "number" : 7,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an opportunity or attempt to achieve something",
+              "examples" : [
+                "their absence means the Russians will have a clear run at the title"
+              ],
+              "number" : 8,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a preliminary test of the efficiency of a procedure or system",
+              "examples" : [
+                "if you are styling your hair yourself, have a practice run"
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an attempt to secure election to political office",
+              "examples" : [
+                "his run for the Republican nomination"
+              ],
+              "number" : 10,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a continuous spell of a particular situation or condition",
+              "examples" : [
+                "he's had a run of bad luck"
+              ],
+              "number" : 11,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a continuous series of performances",
+              "examples" : [
+                "the play had a long run on Broadway"
+              ],
+              "number" : 12,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a quantity or amount of something produced at one time",
+              "examples" : [
+                "a production run of only 150 cars"
+              ],
+              "number" : 13,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a continuous stretch or length of something",
+              "examples" : [
+                "long runs of copper piping"
+              ],
+              "number" : 14,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a rapid series of musical notes forming a scale.",
+              "examples" : [
+
+              ],
+              "number" : 15,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a sequence of cards of the same suit.",
+              "examples" : [
+
+              ],
+              "number" : 16,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a widespread and sudden or continuous demand for (a particular currency or commodity)",
+              "examples" : [
+                "there's been a big run on nostalgia toys this year"
+              ],
+              "number" : 17,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a sudden demand for repayment from (a bank) made by a large number of lenders",
+              "examples" : [
+                "growing nervousness among investors led to a run on some banks"
+              ],
+              "number" : 18,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the average or usual type of person or thing",
+              "examples" : [
+                "she stood out from the general run of varsity cheerleaders"
+              ],
+              "number" : 19,
+              "registers" : [
+                "usually with adjective"
+              ]
+            },
+            {
+              "definition" : "a sloping snow-covered course or track used for skiing, bobsledding, or tobogganing",
+              "examples" : [
+                "a ski run"
+              ],
+              "number" : 20,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a track made or regularly used by a particular animal",
+              "examples" : [
+                "a badger run"
+              ],
+              "number" : 21,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an enclosed area in which domestic animals or birds can run freely in the open",
+              "examples" : [
+                "a chicken run"
+              ],
+              "number" : 22,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a large open stretch of land used for pasture or the raising of stock",
+              "examples" : [
+                "one of the richest cattle runs of the district"
+              ],
+              "number" : 23,
+              "registers" : [
+                "Australian and New Zealand English"
+              ]
+            },
+            {
+              "definition" : "free and unrestricted use of or access to",
+              "examples" : [
+                "her cats were given the run of the house"
+              ],
+              "number" : 24,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a point scored when a base runner reaches home plate after touching the other bases.",
+              "examples" : [
+
+              ],
+              "number" : 25,
+              "registers" : [
+                "Baseball"
+              ]
+            },
+            {
+              "definition" : "a point scored by hitting the ball so that both batters are able to run between the wickets, or awarded in some other circumstances.",
+              "examples" : [
+
+              ],
+              "number" : 26,
+              "registers" : [
+                "Cricket"
+              ]
+            },
+            {
+              "definition" : "a vertical line of unraveled stitches in stockings or tights",
+              "examples" : [
+                "she had a run in her nylons"
+              ],
+              "number" : 27,
+              "registers" : [
+                "North American English"
+              ]
+            },
+            {
+              "definition" : "a downward trickle of paint or a similar substance when applied too thickly",
+              "examples" : [
+                "varnish should be applied with care to avoid runs and an uneven surface"
+              ],
+              "number" : 28,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a small stream",
+              "examples" : [
+                "a shallow run at the edge of a low rock"
+              ],
+              "number" : 29,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "diarrhea.",
+              "examples" : [
+
+              ],
+              "number" : 30,
+              "registers" : [
+                "informal"
+              ]
+            },
+            {
+              "definition" : "the after part of a ship's bottom where it rises and narrows toward the stern.",
+              "examples" : [
+
+              ],
+              "number" : 31,
+              "registers" : [
+                "Nautical"
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "On the use of verbs used with and instead of a to infinitive, as in ‘run and fetch the paper’, see and",
+          "kind" : "usage"
+        },
+        {
+          "content" : "Old English rinnan, irnan (verb), of Germanic origin, probably reinforced in Middle English by Old Norse rinna, renna. The current form with -u- in the present tense is first recorded in the 16th century.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "be eager to do what someone wants",
+              "examples" : [
+                "he had only to snap his fingers, and she would come running"
+              ],
+              "phrase" : "come running"
+            },
+            {
+              "definition" : "trying to avoid being captured",
+              "examples" : [
+                "a kidnapper on the run from the FBI",
+                "he took a pass on the run",
+                "I'm on the run every minute of the day"
+              ],
+              "phrase" : "on the run"
+            },
+            {
+              "definition" : "(of a well or river) cease to flow or have any water.",
+              "examples" : [
+                "municipal relief funds had long since run dry"
+              ],
+              "phrase" : "run dry"
+            },
+            {
+              "definition" : "carry out an errand for someone.",
+              "examples" : [
+
+              ],
+              "phrase" : "run an errand"
+            },
+            {
+              "definition" : "talk excessively or indiscreetly",
+              "examples" : [
+                "he just keeps running his mouth until I get really angry"
+              ],
+              "phrase" : "run one's mouth"
+            },
+            {
+              "definition" : "force someone to leave a place",
+              "examples" : [
+                "one of the big goals of the program was running the drug dealers out of town"
+              ],
+              "phrase" : "run someone out of town"
+            },
+            {
+              "definition" : "dominate or be in charge of a project, undertaking, or domain",
+              "examples" : [
+                "you're running the show—what do we do now?"
+              ],
+              "phrase" : "run the show"
+            },
+            {
+              "definition" : "be suffering from a fever or high temperature.",
+              "examples" : [
+
+              ],
+              "phrase" : "run a temperature"
+            },
+            {
+              "definition" : "fall into disrepair; gradually deteriorate.",
+              "examples" : [
+
+              ],
+              "phrase" : "run to ruin"
+            }
+          ],
+          "title" : "PHRASES"
+        },
+        {
+          "items" : [
+            {
+              "definition" : "meet or find someone by chance",
+              "examples" : [
+                "I just thought you might have run across him before"
+              ],
+              "phrase" : "run across"
+            },
+            {
+              "definition" : "go away (used typically to address a child)",
+              "examples" : [
+                "run along now, there's a good girl"
+              ],
+              "phrase" : "run along"
+            },
+            {
+              "definition" : "associate habitually with someone",
+              "examples" : [
+                "he's a good lad, but he started running around with the wrong bunch"
+              ],
+              "phrase" : "run around with"
+            },
+            {
+              "definition" : "rush toward someone to attack them or as if to attack them",
+              "examples" : [
+                "she ran at him, kicking him with all her force"
+              ],
+              "phrase" : "run at"
+            },
+            {
+              "definition" : "leave or escape from a place, person, or situation",
+              "examples" : [
+                "children who run away from home normally go to big cities",
+                "Fran, let's run away together",
+                "he ran away with his sister-in-law",
+                "the commissioners are running away from their responsibilities"
+              ],
+              "phrase" : "run away"
+            },
+            {
+              "definition" : "(of one's imagination or emotions) escape one's control",
+              "examples" : [
+                "Susan's imagination was running away with her",
+                "a lot of people ran away with the idea that they were pacifists",
+                "the Yankees ran away with the series"
+              ],
+              "phrase" : "run away with"
+            },
+            {
+              "definition" : "(of a vehicle) hit a person or animal and knock them to the ground",
+              "examples" : [
+                "the boy was run down by joyriders",
+                "it looks like the ferry captain deliberately ran down the yacht",
+                "you mustn't keep running yourself down",
+                "she finally ran the professor down",
+                "hardwood stocks in some countries are rapidly running down",
+                "he has criticized the government for running down the Armed Forces",
+                "the battery has run down",
+                "switching the hearing aid on and off ran the batteries down",
+                "the property had been allowed to run down",
+                "the former owners ran the place down"
+              ],
+              "phrase" : "run down"
+            },
+            {
+              "definition" : "(of a quality, trait, or condition) be common or inherent in members of a family, especially over several generations",
+              "examples" : [
+                "weight problems run in my family",
+                "I'm going to have to run you in",
+                "whatever system you choose, you must run it in properly",
+                "you need to run the engine in gently for the first 1,000 miles"
+              ],
+              "phrase" : "run in"
+            },
+            {
+              "definition" : "collide with someone or something",
+              "examples" : [
+                "he ran into a lamppost",
+                "I ran into Moira on the way home",
+                "the bank ran into financial difficulties",
+                "the company had debts running into millions of dollars",
+                "her words ran into each other"
+              ],
+              "phrase" : "run into"
+            },
+            {
+              "definition" : "leave a place or situation suddenly",
+              "examples" : [
+                "he ran off to join Napoleon's army and never returned",
+                "he proposed to me and we were running off together",
+                "he ran off with his wife's best friend",
+                "the sweat ran off their faces",
+                "run off the water that has been standing in the pipes",
+                "please run off some copies of that report",
+                "I ran off an article on the history of the Christmas tree"
+              ],
+              "phrase" : "run off"
+            },
+            {
+              "definition" : "steal something",
+              "examples" : [
+                "the treasurer had run off with the pension funds"
+              ],
+              "phrase" : "run off with"
+            },
+            {
+              "definition" : "continue without stopping; go on longer than is expected",
+              "examples" : [
+                "the story ran on for months",
+                "you're right, I do run on a bit at times, sorry",
+                "my thoughts always ran too much on death"
+              ],
+              "phrase" : "run on"
+            },
+            {
+              "definition" : "(of a supply of something) be used up",
+              "examples" : [
+                "our food is about to run out",
+                "we've run out of gasoline",
+                "her contract runs out at the end of the year",
+                "slowly, he let the cables run out",
+                "a row of buildings ran out to Cityline Avenue"
+              ],
+              "phrase" : "run out"
+            },
+            {
+              "definition" : "abandon someone",
+              "examples" : [
+                "it seems Jack's run out on her and the three children"
+              ],
+              "phrase" : "run out on"
+            },
+            {
+              "definition" : "(of a vehicle) knock a person or animal down and pass over their body",
+              "examples" : [
+                "I almost ran over that raccoon",
+                "the bath's running over",
+                "the filming ran over schedule and budget",
+                "her mind ran over their previous conversation"
+              ],
+              "phrase" : "run over"
+            },
+            {
+              "definition" : "be present in every part of something; pervade",
+              "examples" : [
+                "a sense of personal loss runs through many of his lyrics",
+                "her husband had long since run through her money",
+                "I'll just run through the schedule for the weekend",
+                "okay, let's run through Scene 3 again",
+                "Campbell threatened to run him through with his sword"
+              ],
+              "phrase" : "run through"
+            },
+            {
+              "definition" : "extend to or reach a specified amount or size",
+              "examples" : [
+                "the document ran to almost 100 pages",
+                "my income doesn't run to luxuries like taxis",
+                "he was tall and running to fat",
+                "don't come running to me for a handout"
+              ],
+              "phrase" : "run to"
+            },
+            {
+              "definition" : "allow a debt or bill to accumulate",
+              "examples" : [
+                "he ran up debts of $153,000",
+                "North Carolina ran up a 62–44 lead",
+                "I'll run up a dress for you",
+                "they ran up the star and crescent"
+              ],
+              "phrase" : "run up"
+            },
+            {
+              "definition" : "experience or meet a difficulty or problem",
+              "examples" : [
+                "the proposal has been dropped because it could run up against Federal regulations"
+              ],
+              "phrase" : "run up against"
+            },
+            {
+              "definition" : "be covered or streaming with a liquid",
+              "examples" : [
+                "his face was running with sweat",
+                "we do lots of tests before we run with a product",
+                "ever since Lou dropped out, he's been running with a bad crowd"
+              ],
+              "phrase" : "run with"
+            }
+          ],
+          "title" : "PHRASAL VERBS"
+        },
+        {
+          "items" : [
+
+          ],
+          "rawContent" : "runnable | ˈrənəbəl | adjective",
+          "title" : "DERIVATIVES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "rən",
+          "respelling" : "rən"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "run"
+}

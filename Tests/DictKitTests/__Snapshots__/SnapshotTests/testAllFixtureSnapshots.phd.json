@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "abbreviation = Doctor of Philosophy",
+      "kind" : "abbreviation",
+      "label" : "",
+      "name" : "abbreviation"
+    }
+  ],
+  "headword" : "PhD",
+  "pronunciations" : [
+    "BrE piːeɪtʃˈdiː",
+    "AmE ˌpiˌeɪtʃˈdi"
+  ],
+  "query" : "PhD"
+}

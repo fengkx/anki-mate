@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "definite article ① (referring to person or thing mentioned or known) [指已提及或已知的人或事物]▸ the Queen 女王 ⑤ (preceding clause or phrase) the fuss that he made of her [用于短语或从句之前] 他对她的宠爱 ⑭ (in double comparatives) [两个比较级连用]▸ the more I learn, the less I understand 我越学越糊涂",
+      "kind" : "partOfSpeech",
+      "label" : "",
+      "name" : "definite article"
+    }
+  ],
+  "headword" : "the",
+  "pronunciations" : [
+    "BrE ðə, ði, ðiː",
+    "AmE ði, ðə"
+  ],
+  "query" : "the"
+}

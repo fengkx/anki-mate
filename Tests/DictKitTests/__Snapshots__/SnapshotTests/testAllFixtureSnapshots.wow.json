@@ -1,0 +1,28 @@
+{
+  "entries" : [
+    {
+      "content" : "exclamation (expression of astonishment or admiration) 哇 wa [表示惊讶或钦佩]",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "exclamation"
+    },
+    {
+      "content" : "noun countable 巨大成功 jùdà chénggōng▸ that band's new song is a wow 那个乐队的新歌一炮走红",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "noun"
+    },
+    {
+      "content" : "transitive verb 使…喝彩 shǐ… hècǎi ‹person, audience, critics›",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "transitive verb"
+    }
+  ],
+  "headword" : "wow",
+  "pronunciations" : [
+    "BrE waʊ",
+    "AmE waʊ"
+  ],
+  "query" : "wow"
+}

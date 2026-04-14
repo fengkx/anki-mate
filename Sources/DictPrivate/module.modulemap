@@ -1,0 +1,5 @@
+module DictPrivate {
+    header "include/DictPrivate.h"
+    link framework "CoreServices"
+    export *
+}

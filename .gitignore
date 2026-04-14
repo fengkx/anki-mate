@@ -1,0 +1,15 @@
+.DS_Store
+AGENTS.md
+.build/
+.swiftpm/
+DerivedData/
+Package.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.d
+*.o
+*.swiftdeps
+*.swiftdeps~
+/dictdemo
+/dictkit
+/docs/superpowers/

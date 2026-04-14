@@ -1,0 +1,46 @@
+{
+  "entries" : [
+    {
+      "content" : "transitive verb past tense, past participle set ① (place, position) 放置 fàngzhì ‹object›; 安置 ānzhì ‹person›▸ his hat was set at a rakish angle 他歪戴着帽子 ② (arrange, establish) 确定 quèdìng ‹time, venue, target, standard›",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "transitive verb"
+    },
+    {
+      "content" : "intransitive verb past tense, past participle set ① (go down) «sun, moon» 落下 luòxia ② (solidify) «jam, concrete, dye» 凝固 nínggù",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "intransitive verb"
+    },
+    {
+      "content" : "noun ① (of tools, spanners, knives etc.) 一套 yī tào",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "noun"
+    },
+    {
+      "content" : "adjective ① (established) 固定的 gùdìng de▸ events usually follow a set pattern 事态通常按固有的模式发展",
+      "kind" : "partOfSpeech",
+      "label" : "D",
+      "name" : "adjective"
+    },
+    {
+      "content" : "PHRASAL VERBS set about: transitive verb ① [set about sth] (begin purposefully) 着手干 zhuóshǒu gàn ‹job›▸ to set about doing sth; 着手做某事 set against transitive verb ① (cause to be in conflict with) to set sb against sb\/sth; 使某人反对某人\/某事物 shǐ mǒu rén fǎnduì mǒu rén\/mǒu shìwù",
+      "kind" : "specialSection",
+      "label" : "",
+      "name" : "PHRASAL VERBS"
+    },
+    {
+      "content" : "ORIGIN Old English of Germanic origin.",
+      "kind" : "specialSection",
+      "label" : "",
+      "name" : "ORIGIN"
+    }
+  ],
+  "headword" : "set",
+  "pronunciations" : [
+    "BrE sɛt",
+    "AmE sɛt"
+  ],
+  "query" : "set"
+}

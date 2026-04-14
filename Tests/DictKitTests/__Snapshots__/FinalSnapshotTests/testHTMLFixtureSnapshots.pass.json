@@ -1,0 +1,671 @@
+{
+  "entries" : [
+    {
+      "headword" : "pass",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+            "no object, with adverbial of direction",
+            "with object and adverbial of direction",
+            "with object",
+            "no object",
+            "with complement",
+            "with object and usually with adverbial of direction",
+            "with two objects",
+            "no object, with adverbial",
+            "with object and complement"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "verb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "pas",
+              "respelling" : "pas"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "move or cause to move in a specified direction",
+              "examples" : [
+                ": he passed through towns and villages",
+                ": he passed a weary hand across his forehead",
+                "pass an electric current through it",
+                "the shells from the Allied guns were passing very low overhead"
+              ],
+              "number" : 1,
+              "registers" : [
+                "no object, with adverbial of direction",
+                "with object and adverbial of direction"
+              ]
+            },
+            {
+              "definition" : "change from one state or condition to another",
+              "examples" : [
+                "homes that have passed from public to private ownership"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "die (used euphemistically)",
+              "examples" : [
+                "his father had passed to the afterlife"
+              ],
+              "number" : 3,
+              "registers" : [
+                "euphemistic",
+                "North American English"
+              ]
+            },
+            {
+              "definition" : "go past or across; leave behind or on one side in proceeding",
+              "examples" : [
+                "the two vehicles had no room to pass each other",
+                ": we will not let you pass",
+                "she passed a rest area with a pay phone"
+              ],
+              "number" : 4,
+              "registers" : [
+                "with object",
+                "no object"
+              ]
+            },
+            {
+              "definition" : "go beyond the limits of; surpass or exceed",
+              "examples" : [
+                "this item has passed its sell-by date"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "hit a winning shot past (an opponent).",
+              "examples" : [
+
+              ],
+              "number" : 6,
+              "registers" : [
+                "Tennis"
+              ]
+            },
+            {
+              "definition" : "elapse; go by",
+              "examples" : [
+                "the day and night passed slowly",
+                "the moment had passed"
+              ],
+              "number" : 7,
+              "registers" : [
+                "no object"
+              ],
+              "semanticHint" : "(of time or a point in time)"
+            },
+            {
+              "definition" : "spend or use up (a period of time)",
+              "examples" : [
+                "this was how they passed the time"
+              ],
+              "number" : 8,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "come to an end",
+              "examples" : [
+                "the danger had passed"
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "happen; be done or said",
+              "examples" : [
+                "not another word passed between them",
+                ": this fact has passed almost unnoticed"
+              ],
+              "number" : 10,
+              "registers" : [
+                "with complement"
+              ]
+            },
+            {
+              "definition" : "transfer (something) to someone, especially by handing or bequeathing it to the next person in a series",
+              "examples" : [
+                "your letter has been passed to Mr. Rich for action",
+                ": he passed her a cup",
+                "please pass the fish"
+              ],
+              "number" : 11,
+              "registers" : [
+                "with object and usually with adverbial of direction",
+                "with two objects"
+              ]
+            },
+            {
+              "definition" : "be transferred from one person or place to another, especially by inheritance",
+              "examples" : [
+                "if Ann remarried the estate would pass to her new husband",
+                "infections can pass from mother to child at birth"
+              ],
+              "number" : 12,
+              "registers" : [
+                "no object, with adverbial"
+              ]
+            },
+            {
+              "definition" : "throw, kick, or hit (the ball or puck) to another player on one's own team",
+              "examples" : [
+                "his intent was to pass the ball forward rather than knock it back"
+              ],
+              "number" : 13,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(in football, soccer, hockey, and other games)"
+            },
+            {
+              "definition" : "put (something, especially money) into circulation",
+              "examples" : [
+                "persons who have passed bad checks"
+              ],
+              "number" : 14,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "circulate; be current",
+              "examples" : [
+                "cash was passing briskly"
+              ],
+              "number" : 15,
+              "registers" : [
+                "no object"
+              ],
+              "semanticHint" : "(especially of money)"
+            },
+            {
+              "definition" : "be successful in (an examination, test, or course)",
+              "examples" : [
+                "she passed her driving test"
+              ],
+              "number" : 16,
+              "registers" : [
+                "with object"
+              ],
+              "semanticHint" : "(of a candidate)"
+            },
+            {
+              "definition" : "judge the performance or standard of (someone or something) to be satisfactory",
+              "examples" : [
+                ": he was passed fit by army doctors"
+              ],
+              "number" : 17,
+              "registers" : [
+                "with object and complement"
+              ]
+            },
+            {
+              "definition" : "be accepted as adequate; go uncensured",
+              "examples" : [
+                "she couldn't agree, but let it pass",
+                "her dress passed without comment"
+              ],
+              "number" : 18,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "be accepted or perceived as belonging to an ethnic group other than one's own or as having a sex other than the one registered at birth",
+              "examples" : [
+                "when I went through my transition I no longer tried to pass",
+                "how dark one could be and still pass varied from region to region"
+              ],
+              "number" : 19,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "approve or put into effect (a proposal or law) by voting on it",
+              "examples" : [
+                "the bill was passed despite fierce opposition"
+              ],
+              "number" : 20,
+              "registers" : [
+                "with object"
+              ],
+              "semanticHint" : "(of a legislative or other official body)"
+            },
+            {
+              "definition" : "be examined and approved by (a legislative body or process)",
+              "examples" : [
+                "the Bill passed by 164 votes to 107"
+              ],
+              "number" : 21,
+              "registers" : [
+                "no object"
+              ],
+              "semanticHint" : "(of a proposal or law)"
+            },
+            {
+              "definition" : "pronounce (a judgment or judicial sentence)",
+              "examples" : [
+                "passing judgment on these crucial issues",
+                "it is now my duty to pass sentence upon you"
+              ],
+              "number" : 22,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "utter (something, especially criticism)",
+              "examples" : [
+                "she would pass remarks about the Paxtons in their own house"
+              ],
+              "number" : 23,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "adjudicate or give a judgment on a matter",
+              "examples" : [
+                "a jury could not be trusted to pass upon the question of Endicott's good faith"
+              ],
+              "number" : 24,
+              "registers" : [
+                "archaic",
+                "no object"
+              ]
+            },
+            {
+              "definition" : "discharge (something, especially urine or feces) from the body",
+              "examples" : [
+                "frequency of passing urine"
+              ],
+              "number" : 25,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "forgo one's turn in a game or an offered opportunity",
+              "examples" : [
+                "we pass on dessert and have coffee"
+              ],
+              "number" : 26,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "not declare or pay (a dividend)",
+              "examples" : [
+                "the company has already passed its interim dividend"
+              ],
+              "number" : 27,
+              "registers" : [
+                "with object"
+              ],
+              "semanticHint" : "(of a company)"
+            },
+            {
+              "definition" : "make no bid when it is one's turn during an auction",
+              "examples" : [
+                "South bids 1NT. North passes"
+              ],
+              "number" : 28,
+              "registers" : [
+                "Bridge"
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "as modifier"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "pas",
+              "respelling" : "pas"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "an act or instance of moving past or through something",
+              "examples" : [
+                "repeated passes with the swipe card",
+                "an unmarked plane had been making passes over his house"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an act of passing the hands over anything, as in conjuring or hypnotism.",
+              "examples" : [
+
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a thrust in fencing.",
+              "examples" : [
+
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a juggling trick.",
+              "examples" : [
+
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an act of refraining from bidding during the auction.",
+              "examples" : [
+
+              ],
+              "number" : 5,
+              "registers" : [
+                "Bridge"
+              ]
+            },
+            {
+              "definition" : "a single scan through a set of data or a program.",
+              "examples" : [
+
+              ],
+              "number" : 6,
+              "registers" : [
+                "Computing"
+              ]
+            },
+            {
+              "definition" : "a successful completion of an examination or course",
+              "examples" : [
+                ": a 100 percent pass rate"
+              ],
+              "number" : 7,
+              "registers" : [
+                "as modifier"
+              ]
+            },
+            {
+              "definition" : "the grade indicating the successful completion of an examination or course.",
+              "examples" : [
+
+              ],
+              "number" : 8,
+              "registers" : [
+                "US English"
+              ]
+            },
+            {
+              "definition" : "an achievement of a university degree without honors",
+              "examples" : [
+                ": a pass degree"
+              ],
+              "number" : 9,
+              "registers" : [
+                "British English",
+                "as modifier"
+              ]
+            },
+            {
+              "definition" : "a card, ticket, or permit giving authorization for the holder to enter or have access to a place, form of transportation, or event",
+              "examples" : [
+                "a bus pass",
+                "you could only get in with a pass"
+              ],
+              "number" : 10,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "toleration of bad behavior or poor performance",
+              "examples" : [
+                "businesses should not get a pass to be reckless",
+                "that doesn't give him a pass to say things without reproach"
+              ],
+              "number" : 11,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an identity book that Black people had to carry between 1952 and 1986, used to limit the movement of Black people to urban areas.",
+              "examples" : [
+
+              ],
+              "number" : 12,
+              "registers" : [
+                "historical"
+              ],
+              "semanticHint" : "(in South Africa)"
+            },
+            {
+              "definition" : "an act of throwing, kicking, or hitting the ball or puck to another player on the same team",
+              "examples" : [
+                "his cross-field pass to Giggs"
+              ],
+              "number" : 13,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(in football, soccer, hockey, and other games)"
+            },
+            {
+              "definition" : "an amorous or sexual advance made to someone",
+              "examples" : [
+                "she made a pass at Stephen"
+              ],
+              "number" : 14,
+              "registers" : [
+                "informal"
+              ]
+            },
+            {
+              "definition" : "a rejection or dismissal",
+              "examples" : [
+                "those who don't like oily food may want to give this a pass",
+                "I took a pass on his request for help"
+              ],
+              "number" : 15,
+              "registers" : [
+                "US English",
+                "informal"
+              ]
+            },
+            {
+              "definition" : "a state or situation of a specified, usually bad or difficult, nature",
+              "examples" : [
+                "things came to such a pass that these gentlemen sat coldly at the meetings not daring to speak out freely and honestly",
+                "this is a sad pass for a fixture that used to crackle with excitement"
+              ],
+              "number" : 16,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an act of refraining from bidding during the auction.",
+              "examples" : [
+
+              ],
+              "number" : 17,
+              "registers" : [
+                "Bridge"
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "interjection",
+          "partOfSpeechLabel" : "exclamation",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "pas",
+              "respelling" : "pas"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "exclamation said when one does not know the answer to a question, for example in a quizzing game: to the enigmatic question we answered “Pass.”. • US English informal used to express rejection or dismissal: the shepherd's pie looks gross. Pass!.",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "Middle English: from Old French passer, based on Latin passus ‘pace’.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "reach a bad or regrettable state of affairs",
+              "examples" : [
+                "if this was what was being taught these days in colleges things had come to a pretty pass"
+              ],
+              "phrase" : "come to a pretty pass"
+            },
+            {
+              "definition" : "read (a document) cursorily.",
+              "examples" : [
+
+              ],
+              "phrase" : "pass one's eye over"
+            }
+          ],
+          "title" : "PHRASES"
+        },
+        {
+          "items" : [
+            {
+              "definition" : "die",
+              "examples" : [
+                "she passed away in her sleep"
+              ],
+              "phrase" : "pass away"
+            },
+            {
+              "definition" : "happen without being noticed or fully experienced by someone",
+              "examples" : [
+                "sometimes I feel that life is passing me by"
+              ],
+              "phrase" : "pass by"
+            },
+            {
+              "definition" : "falsely represent a person or thing as being someone or something else",
+              "examples" : [
+                "the drink was packaged in champagne bottles and was being passed off as the real stuff",
+                "he made a light joke and passed it off",
+                "the weekend had passed off entirely without incident",
+                "he scored eight times and passed off six assists"
+              ],
+              "phrase" : "pass off"
+            },
+            {
+              "definition" : "die",
+              "examples" : [
+                "his wife passed on twelve years ago"
+              ],
+              "phrase" : "pass on"
+            },
+            {
+              "definition" : "become unconscious",
+              "examples" : [
+                "he consumed enough alcohol to make him pass out"
+              ],
+              "phrase" : "pass out"
+            },
+            {
+              "definition" : "ignore the claims of someone to promotion or advancement",
+              "examples" : [
+                "he was passed over for a cabinet job",
+                "I shall pass over the matter of the transitional period",
+                "by the time I reached the hospital he had passed over"
+              ],
+              "phrase" : "pass over"
+            },
+            {
+              "definition" : "refrain from taking up an opportunity",
+              "examples" : [
+                "he passed up a career in pro baseball"
+              ],
+              "phrase" : "pass up"
+            }
+          ],
+          "title" : "PHRASAL VERBS"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "pas",
+          "respelling" : "pas"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "pass"
+}

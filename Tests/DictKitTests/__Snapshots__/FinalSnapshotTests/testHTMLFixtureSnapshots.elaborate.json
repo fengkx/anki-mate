@@ -1,0 +1,109 @@
+{
+  "entries" : [
+    {
+      "headword" : "elaborate",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adjective",
+          "partOfSpeechLabel" : "adjective",
+          "pronunciations" : [
+
+          ],
+          "senses" : [
+            {
+              "definition" : "adjective | əˈlab(ə)rət | involving many carefully arranged parts or details; detailed and complicated in design and planning: elaborate security precautions | elaborate wrought-iron gates. • (of an action) lengthy and exaggerated: he made an elaborate pretense of yawning.",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "with object",
+            "no object"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "verb",
+          "pronunciations" : [
+
+          ],
+          "senses" : [
+            {
+              "definition" : "develop or present (a theory, policy, or system) in detail",
+              "examples" : [
+                "the key idea of the book is expressed in the title and elaborated in the text"
+              ],
+              "number" : 1,
+              "registers" : [
+                "with object"
+              ]
+            },
+            {
+              "definition" : "add more detail concerning what has already been said",
+              "examples" : [
+                "he would not elaborate on his news"
+              ],
+              "number" : 2,
+              "registers" : [
+                "no object"
+              ]
+            },
+            {
+              "definition" : "produce (a substance) from its elements or simpler constituents",
+              "examples" : [
+                "many amino acid and peptide hormones are elaborated by neural tissue"
+              ],
+              "number" : 3,
+              "registers" : [
+                "Biology",
+                "with object"
+              ],
+              "semanticHint" : "(of a natural agency)"
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "late 16th century (in the sense ‘produced by effort of labor’, also in elaborate (sense 2 of the verb)): from Latin elaborat- ‘worked out’, from the verb elaborare, from e- (variant of ex-) ‘out’ + labor ‘work’.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+
+          ],
+          "rawContent" : "elaborateness | əˈlab(ə)rətnəs | noun elaborative | əˈlabəˌrādiv, ēˈlabəˌrādiv, -rətiv | adjective elaborator | əˈlabəˌrādər, ēˈlabəˌrādər, -rātə | noun",
+          "title" : "DERIVATIVES"
+        }
+      ],
+      "pronunciations" : [
+
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "elaborate"
+}

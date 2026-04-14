@@ -1,0 +1,28 @@
+{
+  "entries" : [
+    {
+      "content" : "noun | BrE ˈabstrakt, AmE ˈæbˌstræk(t) | ① uncountable (theoretical) 抽象 chōuxiàng▸ in the abstract 在抽象意义上 ② countable (summary) 摘要 zhāiyào ③ countable Art 抽象派作品 chōuxiàngpài zuòpǐn",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "noun | bre ˈabstrakt, ame ˈæbˌstræk(t) |"
+    },
+    {
+      "content" : "transitive verb | BrE əbˈstrakt, AmE əbˈstræk(t), ˈæbˌstræk(t) | ① (summarize) 写…的摘要 xiě… de zhāiyào ‹information, book›② formal (remove) 提取 tíqǔ▸ abstract facts from a mound of periodicals 从一大堆期刊中摘取事实",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "transitive verb | bre əbˈstrakt, ame əbˈstræk(t), ˈæbˌstræk(t) |"
+    },
+    {
+      "content" : "to abstract oneself reflexive verb | BrE əbˈstrakt, AmE əbˈstræk(t), ˈæbˌstræk(t) | ▸ to abstract oneself from sth 使自己脱离某事物 shǐ zìjǐ tuōlí mǒu shìwù",
+      "kind" : "partOfSpeech",
+      "label" : "D",
+      "name" : "reflexive verb"
+    }
+  ],
+  "headword" : "abstract A. adjective",
+  "pronunciations" : [
+    "BrE ˈabstrakt",
+    "AmE ˈæbˌstræk(t), ˌæbˈstræk(t)"
+  ],
+  "query" : "abstract"
+}

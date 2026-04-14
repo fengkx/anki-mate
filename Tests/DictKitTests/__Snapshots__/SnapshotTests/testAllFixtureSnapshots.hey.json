@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "exclamation informal ① (call for attention) 嗨 hāi▸ hey you! 喂！我说你哪！ ② (in protest) 嘿 hēi▸ hey, that's mine! 嘿，那是我的！",
+      "kind" : "partOfSpeech",
+      "label" : "",
+      "name" : "exclamation"
+    }
+  ],
+  "headword" : "hey",
+  "pronunciations" : [
+    "BrE heɪ",
+    "AmE heɪ"
+  ],
+  "query" : "hey"
+}

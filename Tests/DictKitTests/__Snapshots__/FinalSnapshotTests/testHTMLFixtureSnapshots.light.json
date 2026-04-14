@@ -1,0 +1,408 @@
+{
+  "entries" : [
+    {
+      "headword" : "light",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+            "in singular"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "līt",
+              "respelling" : "līt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "the natural agent that stimulates sight and makes things visible",
+              "examples" : [
+                "the light of the sun",
+                ": the street lamps shed a faint light into the room"
+              ],
+              "number" : 1,
+              "registers" : [
+                "in singular"
+              ]
+            },
+            {
+              "definition" : "a source of illumination, especially an electric lamp",
+              "examples" : [
+                "a light came on in his room"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "decorative illuminations",
+              "examples" : [
+                "Christmas lights"
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a traffic light",
+              "examples" : [
+                "turn right at the light"
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the amount or quality of light in a place",
+              "examples" : [
+                "the plant requires good light",
+                "in some lights she could look beautiful"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an expression in someone's eyes indicating a particular emotion or mood",
+              "examples" : [
+                "a shrewd light entered his eyes"
+              ],
+              "number" : 6,
+              "registers" : [
+                "in singular"
+              ]
+            },
+            {
+              "definition" : "a person's opinions, standards, and abilities",
+              "examples" : [
+                "leaving the police to do the job according to their lights"
+              ],
+              "number" : 7,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "understanding of a problem or mystery; enlightenment",
+              "examples" : [
+                "she saw light dawn on the woman's face"
+              ],
+              "number" : 8,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "spiritual illumination by divine truth.",
+              "examples" : [
+
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "an area of something that is brighter or paler than its surroundings",
+              "examples" : [
+                "sunshine will brighten the natural lights in your hair"
+              ],
+              "number" : 10,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a device that makes something start burning, as a match, lighter, or flame",
+              "examples" : [
+                "he asked me for a light"
+              ],
+              "number" : 11,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a window or opening in a wall to let light in",
+              "examples" : [
+                "the bedroom has a wide bay with leaded lights"
+              ],
+              "number" : 12,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "any of the perpendicular divisions of a mullioned window.",
+              "examples" : [
+
+              ],
+              "number" : 13,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "any of the panes of glass forming the roof or side of a greenhouse or the top of a cold frame.",
+              "examples" : [
+
+              ],
+              "number" : 14,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a person notable or eminent in a particular sphere of activity or place",
+              "examples" : [
+                "volunteers have been the shining lights of the community"
+              ],
+              "number" : 15,
+              "registers" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "with object",
+            "no object"
+          ],
+          "inflections" : [
+            "lit",
+            "lighted"
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "verb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "līt",
+              "respelling" : "līt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "provide with light or lighting; illuminate",
+              "examples" : [
+                "the room was lighted by a number of small lamps"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "switch on (an electric light)",
+              "examples" : [
+                "only one of the table lamps was lit"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "make (something) start burning; ignite",
+              "examples" : [
+                "Allen gathered sticks and lit a fire"
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "begin to burn; be ignited",
+              "examples" : [
+                "the gas wouldn't light properly"
+              ],
+              "number" : 4,
+              "registers" : [
+                "no object"
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adjective",
+          "partOfSpeechLabel" : "adjective",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "līt",
+              "respelling" : "līt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "having a considerable or sufficient amount of natural light; not dark",
+              "examples" : [
+                "the bedrooms are light and airy",
+                "it was almost light outside"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "pale",
+              "examples" : [
+                "her eyes were light blue"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(of a color)"
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "Old English lēoht, līht (noun and adjective), līhtan (verb), of Germanic origin; related to Dutch licht and German Licht, from an Indo-European root shared by Greek leukos ‘white’ and Latin lux ‘light’.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "make widely known or evident",
+              "examples" : [
+                "an investigation to bring to light examples of extravagant expenditure"
+              ],
+              "phrase" : "bring to light"
+            },
+            {
+              "definition" : "become widely known or evident",
+              "examples" : [
+                "no new facts came to light"
+              ],
+              "phrase" : "come to light"
+            },
+            {
+              "definition" : "fall asleep or lose consciousness suddenly",
+              "examples" : [
+                "she returned to bed and went out like a light"
+              ],
+              "phrase" : "go out like a light"
+            },
+            {
+              "definition" : "in the way specified; so as to give a specified impression",
+              "examples" : [
+                "the audit portrayed the company in a very favorable light"
+              ],
+              "phrase" : "in a — light"
+            },
+            {
+              "definition" : "a long-awaited indication that a period of hardship or adversity is nearing an end",
+              "examples" : [
+                "it had been a hard struggle but I could see a glimmer of light at the end of the tunnel"
+              ],
+              "phrase" : "light at the end of the tunnel"
+            },
+            {
+              "definition" : "daylight",
+              "examples" : [
+                "we sailed at the first light of day",
+                "bringing old family secrets into the light of day"
+              ],
+              "phrase" : "the light of day"
+            },
+            {
+              "definition" : "a much loved person",
+              "examples" : [
+                "she was his only child, the light of his life"
+              ],
+              "phrase" : "the light of one's life"
+            },
+            {
+              "definition" : "bedtime in a school dormitory, military barracks, or other institution, when lights should be switched off",
+              "examples" : [
+                "a few minutes before lights out"
+              ],
+              "phrase" : "lights out"
+            },
+            {
+              "definition" : "understand or realize something after prolonged thought or doubt.",
+              "examples" : [
+
+              ],
+              "phrase" : "see the light"
+            },
+            {
+              "definition" : "be born.",
+              "examples" : [
+                "this software first saw the light of day back in 1993"
+              ],
+              "phrase" : "see the light of day"
+            }
+          ],
+          "title" : "PHRASES"
+        },
+        {
+          "items" : [
+            {
+              "definition" : "become bright on account of a light being shone or switched on; become illuminated",
+              "examples" : [
+                "the sign to fasten seat belts lit up",
+                "lightning suddenly lit up the house",
+                "his eyes lit up and he smiled",
+                "a smile of delight lit up her face",
+                "workers who light up in prohibited areas face dismissal",
+                "she shrugged and lit up another cigarette",
+                "the Tigers were lit up by the Giants in Game 1"
+              ],
+              "phrase" : "light up"
+            }
+          ],
+          "title" : "PHRASAL VERBS"
+        },
+        {
+          "items" : [
+
+          ],
+          "rawContent" : "lightish | ˈlīdiSH | adjective lightless | ˈlītləs | adjective",
+          "title" : "DERIVATIVES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "līt",
+          "respelling" : "līt"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "light"
+}

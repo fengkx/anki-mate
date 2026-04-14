@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "adjective 事实上的 shìshí shang de▸ a de facto one-party system 事实上的一党制",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "adjective"
+    },
+    {
+      "content" : "adverb 事实上 shìshí shang",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "adverb"
+    }
+  ],
+  "headword" : "de facto",
+  "pronunciations" : [
+    "BrE deɪ ˈfaktəʊ",
+    "AmE ˌdeɪ ˈfæktoʊ"
+  ],
+  "query" : "de facto"
+}

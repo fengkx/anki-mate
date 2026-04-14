@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "exclamation 哎呀 āiyā",
+      "kind" : "partOfSpeech",
+      "label" : "",
+      "name" : "exclamation"
+    }
+  ],
+  "headword" : "alas",
+  "pronunciations" : [
+    "BrE əˈlas, əˈlɑːs",
+    "AmE əˈlæs"
+  ],
+  "query" : "alas"
+}

@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "abbreviation = exempli gratia 例如 lìrú",
+      "kind" : "abbreviation",
+      "label" : "",
+      "name" : "abbreviation"
+    }
+  ],
+  "headword" : "e.g.",
+  "pronunciations" : [
+    "BrE ˌiːˈdʒiː",
+    "AmE ˌiˈdʒi"
+  ],
+  "query" : "e.g."
+}

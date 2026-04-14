@@ -1,0 +1,173 @@
+{
+  "entries" : [
+    {
+      "headword" : "elaborate",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adjective",
+          "partOfSpeechLabel" : "adjective",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "ɪˈlab(ə)rət"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "əˈlæb(ə)rət"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "精细的 jīngxì de ‹task›; 精密的 jīngmì de ‹system, apparatus›; 精心编造的 jīngxīn biānzào de ‹joke, excuse›",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(detailed)"
+            },
+            {
+              "definition" : "精美的 jīngměi de ‹work of art, garment, pattern, meal›",
+              "examples" : [
+
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(extravagant)"
+            },
+            {
+              "definition" : "复杂的 fùzá de ‹ceremony, procedure, ritual›",
+              "examples" : [
+
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(complicated)"
+            },
+            {
+              "definition" : "精心策划的 jīngxīn cèhuà de ‹preparations, scheme›",
+              "examples" : [
+
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(carefully planned)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "transitive verb",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "ɪˈlabəreɪt"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "əˈlæbəˌreɪt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "详尽阐述 xiángjìn chǎnshù ‹theory, scheme, hypothesis›",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "intransitive verb",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "ɪˈlabəreɪt"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "əˈlæbəˌreɪt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "详尽阐述 xiángjìn chǎnshù",
+              "examples" : [
+                "to elaborate on a plan 详细说明计划"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+
+      ],
+      "phraseGroups" : [
+
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "BrE",
+          "ipa" : "ɪˈlab(ə)rət"
+        },
+        {
+          "dialect" : "AmE",
+          "ipa" : "əˈlæb(ə)rət"
+        },
+        {
+          "dialect" : "BrE",
+          "ipa" : "ɪˈlabəreɪt"
+        },
+        {
+          "dialect" : "AmE",
+          "ipa" : "əˈlæbəˌreɪt"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "publicAPI",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "elaborate"
+}

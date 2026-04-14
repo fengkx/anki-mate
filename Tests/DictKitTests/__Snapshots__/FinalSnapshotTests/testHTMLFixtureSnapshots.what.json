@@ -1,0 +1,326 @@
+{
+  "entries" : [
+    {
+      "headword" : "what",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+            "interrogative pronoun",
+            "relative pronoun"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "pronoun",
+          "partOfSpeechLabel" : "pronoun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət,",
+              "respelling" : "(h)wət,"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wät",
+              "respelling" : "(h)wät"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "asking for information specifying something",
+              "examples" : [
+                "what is your name?",
+                "I'm not sure what you mean"
+              ],
+              "number" : 1,
+              "registers" : [
+                "interrogative pronoun"
+              ]
+            },
+            {
+              "definition" : "asking for repetition of something not heard or confirmation of something not understood",
+              "examples" : [
+                "what? I can't hear you",
+                "you did what?"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the thing or things that (used in specifying something)",
+              "examples" : [
+                "what we need is a commitment"
+              ],
+              "number" : 3,
+              "registers" : [
+                "relative pronoun"
+              ]
+            },
+            {
+              "definition" : "whatever",
+              "examples" : [
+                "I want to do what I can to make a difference"
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(referring to the whole of an amount)"
+            },
+            {
+              "definition" : "who or that",
+              "examples" : [
+                "the one what got to my house"
+              ],
+              "number" : 5,
+              "registers" : [
+                "dialect"
+              ]
+            },
+            {
+              "definition" : "emphasizing something surprising or remarkable",
+              "examples" : [
+                "what some people do for attention!"
+              ],
+              "number" : 6,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(in exclamations)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "interrogative determiner",
+            "relative determiner",
+            "as determiner",
+            "as predeterminer"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "determiner",
+          "partOfSpeechLabel" : "determiner",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət,",
+              "respelling" : "(h)wət,"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wät",
+              "respelling" : "(h)wät"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "asking for information specifying something",
+              "examples" : [
+                "what time is it?",
+                "do you know what excuse he gave me?"
+              ],
+              "number" : 1,
+              "registers" : [
+                "interrogative determiner"
+              ]
+            },
+            {
+              "definition" : "whatever",
+              "examples" : [
+                "he had been robbed of what little money he had"
+              ],
+              "number" : 2,
+              "registers" : [
+                "relative determiner"
+              ],
+              "semanticHint" : "(referring to the whole of an amount)"
+            },
+            {
+              "definition" : "how great or remarkable",
+              "examples" : [
+                ": what luck!",
+                ": what a fool she was"
+              ],
+              "number" : 3,
+              "registers" : [
+                "as determiner",
+                "as predeterminer"
+              ],
+              "semanticHint" : "(in exclamations)"
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adverb",
+          "partOfSpeechLabel" : "interrogative adverb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wət,",
+              "respelling" : "(h)wət,"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "(h)wät",
+              "respelling" : "(h)wät"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "to what extent?",
+              "examples" : [
+                "what does it matter?"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "used to indicate an estimate or approximation",
+              "examples" : [
+                "see you, what, about four?"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "used for emphasis or to invite agreement",
+              "examples" : [
+                "pretty poor show, what?"
+              ],
+              "number" : 3,
+              "registers" : [
+                "informal,",
+                "dated"
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "On the distinction between what ever and whatever, see whatever",
+          "kind" : "usage"
+        },
+        {
+          "content" : "Old English hwæt, of Germanic origin; related to Dutch wat and German was, from an Indo-European root shared by Latin quod.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "and other similar things.",
+              "examples" : [
+
+              ],
+              "phrase" : "and what not"
+            },
+            {
+              "definition" : "used when asking for information or an opinion on something",
+              "examples" : [
+                "what about the practical angle?",
+                "what about a walk?"
+              ],
+              "phrase" : "what about —?"
+            },
+            {
+              "definition" : "for what reason?.",
+              "examples" : [
+
+              ],
+              "phrase" : "what for?"
+            },
+            {
+              "definition" : "what would result if —?",
+              "examples" : [
+                "what if nobody shows up?",
+                "what if our house is a mess? I'm clean"
+              ],
+              "phrase" : "what if —?"
+            },
+            {
+              "definition" : "and as an additional point; moreover",
+              "examples" : [
+                "what's more, they have a style that is uniquely their own"
+              ],
+              "phrase" : "what is more"
+            },
+            {
+              "definition" : "what is the news concerning —?.",
+              "examples" : [
+
+              ],
+              "phrase" : "what of —?"
+            },
+            {
+              "definition" : "why should that be considered significant?",
+              "examples" : [
+                "I'm forty-one. What of it?"
+              ],
+              "phrase" : "what of it?"
+            },
+            {
+              "definition" : "used to make a suggestion",
+              "examples" : [
+                "what say we take a break?"
+              ],
+              "phrase" : "what say —?"
+            },
+            {
+              "definition" : "what is useful or important",
+              "examples" : [
+                "I'll teach her what's what"
+              ],
+              "phrase" : "what's what"
+            },
+            {
+              "definition" : "because of (used typically to introduce several causes of something)",
+              "examples" : [
+                "what with the drought and the neglect, the garden is in a sad condition"
+              ],
+              "phrase" : "what with"
+            }
+          ],
+          "title" : "PHRASES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "(h)wət,",
+          "respelling" : "(h)wət,"
+        },
+        {
+          "dialect" : "AmE",
+          "ipa" : "(h)wät",
+          "respelling" : "(h)wät"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "what"
+}

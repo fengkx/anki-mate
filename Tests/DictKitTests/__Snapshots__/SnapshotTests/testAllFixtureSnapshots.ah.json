@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "exclamation 啊 à [表示惊讶、同情、喜悦等]▸ ah well! (resignedly) 唉，算啦！",
+      "kind" : "partOfSpeech",
+      "label" : "",
+      "name" : "exclamation"
+    }
+  ],
+  "headword" : "ah",
+  "pronunciations" : [
+    "BrE ɑː",
+    "AmE ɑ"
+  ],
+  "query" : "ah"
+}

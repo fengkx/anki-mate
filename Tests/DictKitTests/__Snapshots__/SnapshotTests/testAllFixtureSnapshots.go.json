@@ -1,0 +1,34 @@
+{
+  "entries" : [
+    {
+      "content" : "intransitive verb ① (move, travel) 去 qù▸ to go for a walk 去散步",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "intransitive verb"
+    },
+    {
+      "content" : "transitive verb ① (operate) 操作 cāozuò▸ to go the machine 这个例子只是测试占位",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "transitive verb"
+    },
+    {
+      "content" : "PHRASAL VERBS go about A. (deal with) 着手 zhuóshǒu▸ how do we go about it? 我们该怎么着手？",
+      "kind" : "specialSection",
+      "label" : "",
+      "name" : "PHRASAL VERBS"
+    },
+    {
+      "content" : "ORIGIN Old English of Germanic origin.",
+      "kind" : "specialSection",
+      "label" : "",
+      "name" : "ORIGIN"
+    }
+  ],
+  "headword" : "go",
+  "pronunciations" : [
+    "BrE ɡəʊ",
+    "AmE ɡoʊ"
+  ],
+  "query" : "go"
+}

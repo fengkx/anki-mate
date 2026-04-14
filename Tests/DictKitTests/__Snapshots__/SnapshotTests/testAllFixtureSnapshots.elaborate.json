@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "transitive verb | BrE ɪˈlabəreɪt, AmE əˈlæbəˌreɪt | 详尽阐述 xiángjìn chǎnshù ‹theory, scheme, hypothesis›",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "transitive verb | bre ɪˈlabəreɪt, ame əˈlæbəˌreɪt | 详尽阐述 xiángjìn chǎnshù ‹theory, scheme, hypothesis›"
+    },
+    {
+      "content" : "intransitive verb | BrE ɪˈlabəreɪt, AmE əˈlæbəˌreɪt | 详尽阐述 xiángjìn chǎnshù▸ to elaborate on a plan 详细说明计划",
+      "kind" : "partOfSpeech",
+      "label" : "C",
+      "name" : "intransitive verb | bre ɪˈlabəreɪt, ame əˈlæbəˌreɪt | 详尽阐述 xiángjìn chǎnshù▸ to elaborate on a plan 详细说明计划"
+    }
+  ],
+  "headword" : "elaborate A. adjective",
+  "pronunciations" : [
+    "BrE ɪˈlab(ə)rət",
+    "AmE əˈlæb(ə)rət"
+  ],
+  "query" : "elaborate"
+}

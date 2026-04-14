@@ -1,0 +1,16 @@
+{
+  "entries" : [
+    {
+      "content" : "abbreviation ① British = Member of Parliament ② = military police ③ = military policeman",
+      "kind" : "abbreviation",
+      "label" : "",
+      "name" : "abbreviation"
+    }
+  ],
+  "headword" : "MP",
+  "pronunciations" : [
+    "BrE ˌɛmˈpiː",
+    "AmE ˌɛmˈpi"
+  ],
+  "query" : "MP"
+}

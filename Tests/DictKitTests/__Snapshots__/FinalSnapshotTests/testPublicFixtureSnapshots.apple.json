@@ -1,0 +1,80 @@
+{
+  "entries" : [
+    {
+      "headword" : "apple",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "BrE",
+              "ipa" : "ˈapl"
+            },
+            {
+              "dialect" : "AmE",
+              "ipa" : "ˈæp(ə)l"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "苹果 píngguǒ",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(fruit)"
+            },
+            {
+              "definition" : "苹果树 píngguǒ shù",
+              "examples" : [
+                "the apple of sb's eye figurative 掌上明珠",
+                "there's a bad apple in every bunch 哪儿都有害群之马",
+                "to upset the apple cart 打乱计划",
+                "an apple a day keeps the doctor away proverb 天天吃苹果，医生远离我"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(tree)"
+            }
+          ]
+        }
+      ],
+      "notes" : [
+
+      ],
+      "phraseGroups" : [
+
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "BrE",
+          "ipa" : "ˈapl"
+        },
+        {
+          "dialect" : "AmE",
+          "ipa" : "ˈæp(ə)l"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "publicAPI",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "apple"
+}

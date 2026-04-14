@@ -1,0 +1,565 @@
+{
+  "entries" : [
+    {
+      "headword" : "right",
+      "lexicalEntries" : [
+        {
+          "displayIndex" : 0,
+          "grammar" : [
+            "with infinitive",
+            "predicative",
+            "attributive"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adjective",
+          "partOfSpeechLabel" : "adjective",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rīt",
+              "respelling" : "rīt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "morally good, justified, or acceptable",
+              "examples" : [
+                "I hope we're doing the right thing",
+                ": you were quite right to criticize him"
+              ],
+              "number" : 1,
+              "registers" : [
+                "with infinitive"
+              ]
+            },
+            {
+              "definition" : "true or correct as a fact",
+              "examples" : [
+                "I'm not sure I know the right answer",
+                "her theories were proved right"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "correct in one's opinion or judgment",
+              "examples" : [
+                "she was right about Tom having no money"
+              ],
+              "number" : 3,
+              "registers" : [
+                "predicative"
+              ]
+            },
+            {
+              "definition" : "according to what is correct for a particular situation or thing",
+              "examples" : [
+                "is this the right way to the cottage?",
+                "you're not holding it the right way up"
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the best or most suitable of a number of possible choices for a particular purpose or occasion",
+              "examples" : [
+                "he was clearly the right man for the job",
+                "I was waiting for the right moment to ask him"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "socially fashionable or important",
+              "examples" : [
+                "he was seen at all the right places"
+              ],
+              "number" : 6,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "in a satisfactory, sound, or normal state or condition",
+              "examples" : [
+                "that sausage doesn't smell right",
+                "if only I could have helped put matters right"
+              ],
+              "number" : 7,
+              "registers" : [
+                "predicative"
+              ]
+            },
+            {
+              "definition" : "on, toward, or relating to the side of a human body or of a thing that is to the east when the person or thing is facing north",
+              "examples" : [
+                "my right elbow",
+                "the right edge of the field",
+                "her right shoe"
+              ],
+              "number" : 8,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "relating to or denoting a person or group favoring right-wing views; conservative",
+              "examples" : [
+                "are you politically right, left, or center?"
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "complete; absolute (used for emphasis, typically in derogatory contexts)",
+              "examples" : [
+                "I felt a right idiot"
+              ],
+              "number" : 10,
+              "registers" : [
+                "British English",
+                "informal",
+                "attributive"
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 1,
+          "grammar" : [
+            "as submodifier"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "adverb",
+          "partOfSpeechLabel" : "adverb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rīt",
+              "respelling" : "rīt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "to the furthest or most complete extent or degree (used for emphasis)",
+              "examples" : [
+                "the car spun right off the track",
+                "I'm right out of ideas"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "exactly; directly (used to emphasize the precise location or time of something)",
+              "examples" : [
+                "Harriet was standing right behind her"
+              ],
+              "number" : 2,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "immediately; without delaying or hesitating",
+              "examples" : [
+                "I'll be right back"
+              ],
+              "number" : 3,
+              "registers" : [
+                "informal"
+              ]
+            },
+            {
+              "definition" : "very",
+              "examples" : [
+                "it's right spooky in there!"
+              ],
+              "number" : 4,
+              "registers" : [
+                "dialect,",
+                "archaic",
+                "as submodifier"
+              ]
+            },
+            {
+              "definition" : "correctly",
+              "examples" : [
+                "he had guessed right"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "in the required or necessary way; properly; satisfactorily",
+              "examples" : [
+                "nothing's going right for me this season"
+              ],
+              "number" : 6,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "on or to the right side",
+              "examples" : [
+                "turn right at Main Street"
+              ],
+              "number" : 7,
+              "registers" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 2,
+          "grammar" : [
+            "with infinitive",
+            "treated as singular or plural"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "noun",
+          "partOfSpeechLabel" : "noun",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rīt",
+              "respelling" : "rīt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "that which is morally correct, just, or honorable",
+              "examples" : [
+                "she doesn't understand the difference between right and wrong",
+                "the rights and wrongs of the matter"
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a moral or legal entitlement to have or obtain something or to act in a certain way",
+              "examples" : [
+                ": she had every right to be angry",
+                "you're quite within your rights to ask for your money back",
+                "there is no right of appeal against the decision"
+              ],
+              "number" : 2,
+              "registers" : [
+                "with infinitive"
+              ]
+            },
+            {
+              "definition" : "the authority to perform, publish, film, or televise a particular work, event, etc.",
+              "examples" : [
+                "they sold the paperback rights"
+              ],
+              "number" : 3,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the right-hand part, side, or direction",
+              "examples" : [
+                "take the first turning on the right",
+                ": she seated me on her right"
+              ],
+              "number" : 4,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "the right-hand half of the field when facing the opponent's goal",
+              "examples" : [
+                "they made a neat series of passes over on the right"
+              ],
+              "number" : 5,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(in football or a similar sport)"
+            },
+            {
+              "definition" : "the right wing of an army",
+              "examples" : [
+                "the allies succeeded in overrunning the French right"
+              ],
+              "number" : 6,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a right turn",
+              "examples" : [
+                "he made a right in Dorchester Avenue"
+              ],
+              "number" : 7,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a road or entrance on the right",
+              "examples" : [
+                "take the first right over the stream"
+              ],
+              "number" : 8,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a person's right fist",
+              "examples" : [
+                "he ducked down low then brought up his right"
+              ],
+              "number" : 9,
+              "registers" : [
+
+              ],
+              "semanticHint" : "(especially in the context of boxing)"
+            },
+            {
+              "definition" : "a blow given with the right fist",
+              "examples" : [
+                "the young cop swung a terrific right"
+              ],
+              "number" : 10,
+              "registers" : [
+
+              ]
+            },
+            {
+              "definition" : "a group or party favoring right-wing or conservative views",
+              "examples" : [
+                "the Right got in at the election",
+                "his proposal was viewed with alarm by the right of the party"
+              ],
+              "number" : 11,
+              "registers" : [
+                "treated as singular or plural"
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 3,
+          "grammar" : [
+            "with object"
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "verb",
+          "partOfSpeechLabel" : "verb",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rīt",
+              "respelling" : "rīt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "verb [with object] restore to a normal or upright position: we righted the capsized dinghy. • restore to a normal or correct condition or situation: righting the economy demanded major cuts in defense spending. • redress or rectify (a wrong or mistaken action): she was determined to right the wrongs done to her father. • (usually be righted) archaic make reparation to (someone) for a wrong done to them: we'll see you righted.",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "displayIndex" : 4,
+          "grammar" : [
+
+          ],
+          "inflections" : [
+
+          ],
+          "partOfSpeech" : "interjection",
+          "partOfSpeechLabel" : "exclamation",
+          "pronunciations" : [
+            {
+              "dialect" : "AmE",
+              "ipa" : "rīt",
+              "respelling" : "rīt"
+            }
+          ],
+          "senses" : [
+            {
+              "definition" : "exclamation informal used to indicate one's agreement or to acknowledge a statement or order: “Barry's here.” “Oh, right” | right you are, sir. • used at the end of a statement to invite agreement, approval, or confirmation: you went to see Angie on Monday, right?. • used as a filler in speech or to introduce an utterance, exhortation, or suggestion: right, let's have a drink | and I didn't think any more of it, right, but Mom said I should take him to a doctor.",
+              "examples" : [
+
+              ],
+              "number" : 1,
+              "registers" : [
+
+              ]
+            }
+          ]
+        }
+      ],
+      "notes" : [
+        {
+          "content" : "Old English riht (adjective and noun), rihtan (verb), rihte (adverb), of Germanic origin; related to Latin rectus ‘ruled’, from an Indo-European root denoting movement in a straight line.",
+          "kind" : "etymology"
+        }
+      ],
+      "phraseGroups" : [
+        {
+          "items" : [
+            {
+              "definition" : "be morally or legally justified in one's views, actions, or decisions",
+              "examples" : [
+                "Sean was not going to apologize as he believed he was in the right"
+              ],
+              "phrase" : "be in the right"
+            },
+            {
+              "definition" : "if things had happened or been done fairly or correctly",
+              "examples" : [
+                "by rights, he should not be playing next week"
+              ],
+              "phrase" : "by rights"
+            },
+            {
+              "definition" : "treat (someone) fairly",
+              "examples" : [
+                "I want to do right by the child"
+              ],
+              "phrase" : "do right by"
+            },
+            {
+              "definition" : "as a result of one's own claims, qualifications, or efforts, rather than an association with someone else",
+              "examples" : [
+                "he was already established as a poet in his own right"
+              ],
+              "phrase" : "in one's own right"
+            },
+            {
+              "definition" : "having full control of one's mind; sane or rational.",
+              "examples" : [
+
+              ],
+              "phrase" : "in one's right mind"
+            },
+            {
+              "definition" : "not having full control of one's mind; not sane or rational.",
+              "examples" : [
+
+              ],
+              "phrase" : "not in one's right mind"
+            },
+            {
+              "definition" : "(of a person) not completely sane or rational.",
+              "examples" : [
+
+              ],
+              "phrase" : "not right in the head"
+            },
+            {
+              "definition" : "on the safe, appropriate, or desirable side of",
+              "examples" : [
+                "a record that fully embraces the theatricality of its genre but falls just on the right side of ridiculous",
+                "he hasn't always remained on the right side of the law",
+                "she's on the right side of forty"
+              ],
+              "phrase" : "on the right side of"
+            },
+            {
+              "definition" : "immediately",
+              "examples" : [
+                "quite a few of them of them will start playing right away"
+              ],
+              "phrase" : "right away"
+            },
+            {
+              "definition" : "certainly; undeniably",
+              "examples" : [
+                "your record's bad right enough"
+              ],
+              "phrase" : "right enough"
+            },
+            {
+              "definition" : "used as an expression of strong support, approval, or encouragement.",
+              "examples" : [
+
+              ],
+              "phrase" : "right on"
+            },
+            {
+              "definition" : "a silly or foolish person.",
+              "examples" : [
+
+              ],
+              "phrase" : "a right one"
+            },
+            {
+              "definition" : "with the side intended to be seen or used uppermost",
+              "examples" : [
+                "turn the skirt right side out"
+              ],
+              "phrase" : "right side out"
+            },
+            {
+              "definition" : "the necessary qualities for a given task or job",
+              "examples" : [
+                "he had the right stuff to enter this business"
+              ],
+              "phrase" : "the right stuff"
+            }
+          ],
+          "title" : "PHRASES"
+        },
+        {
+          "items" : [
+
+          ],
+          "rawContent" : "rightable | ˈrīdəbəl | adjective righter | ˈrīdər | noun rightish | ˈrīdiSH | adjective rightless adjective",
+          "title" : "DERIVATIVES"
+        }
+      ],
+      "pronunciations" : [
+        {
+          "dialect" : "AmE",
+          "ipa" : "rīt",
+          "respelling" : "rīt"
+        }
+      ]
+    }
+  ],
+  "metadata" : {
+    "usedSource" : "privateHTML",
+    "warnings" : [
+
+    ]
+  },
+  "query" : "right"
+}

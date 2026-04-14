@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "preposition ① (lower than, underneath) 在…下方 zài… xiàfāng▸ beneath the table 在桌子底下 ② (concealed by) 在…的掩盖下 zài… de yǎngài xia▸ he hid his disappointment beneath a polite smile 他礼貌地微笑着以掩饰失望",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "preposition"
+    },
+    {
+      "content" : "adverb ① (lower down, underneath) 在下面 zài xiàmian▸ the valley\/river beneath 下面的山谷\/河流 ② (concealed) 掩藏着 yǎncángzhe▸ the smile revealed the evil beneath 微笑中透出内心的邪恶",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "adverb"
+    }
+  ],
+  "headword" : "beneath",
+  "pronunciations" : [
+    "BrE bɪˈniːθ",
+    "AmE bəˈniθ"
+  ],
+  "query" : "beneath"
+}

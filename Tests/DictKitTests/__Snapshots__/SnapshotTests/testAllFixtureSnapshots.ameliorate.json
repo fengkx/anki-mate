@@ -1,0 +1,22 @@
+{
+  "entries" : [
+    {
+      "content" : "transitive verb 改善 gǎishàn▸ to ameliorate living standards 提高生活水平",
+      "kind" : "partOfSpeech",
+      "label" : "A",
+      "name" : "transitive verb"
+    },
+    {
+      "content" : "intransitive verb 改善 gǎishàn",
+      "kind" : "partOfSpeech",
+      "label" : "B",
+      "name" : "intransitive verb"
+    }
+  ],
+  "headword" : "ameliorate",
+  "pronunciations" : [
+    "BrE əˈmiːlɪəreɪt",
+    "AmE əˈmiljəˌreɪt"
+  ],
+  "query" : "ameliorate"
+}
