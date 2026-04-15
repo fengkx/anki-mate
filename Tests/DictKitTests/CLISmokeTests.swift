@@ -178,6 +178,69 @@ final class CLISmokeTests: XCTestCase {
         XCTAssertNotEqual(result.exitCode, 0, "Expected non-zero exit when query is missing")
     }
 
+    // MARK: - Multi-word lookup coverage
+
+    func testCLIJsonLookupMultipleWords() throws {
+        let words = ["hello", "run", "elaborate", "beautiful", "dictionary"]
+        for word in words {
+            let result = try run("--json", word)
+            XCTAssertEqual(result.exitCode, 0, "Failed for '\(word)': \(result.stderr)")
+            XCTAssertTrue(result.stdout.contains("\"query\" : \"\(word)\""),
+                          "Missing query key for '\(word)'")
+        }
+    }
+
+    func testCLIHumanReadableLookupMultipleWords() throws {
+        let words = ["world", "computer", "language", "swift"]
+        for word in words {
+            let result = try run(word)
+            XCTAssertEqual(result.exitCode, 0, "Failed for '\(word)': \(result.stderr)")
+            XCTAssertFalse(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                           "Empty output for '\(word)'")
+        }
+    }
+
+    // MARK: - Multi-word speech coverage
+
+    func testCLISpeechMultipleWords() throws {
+        let words = ["hello", "run", "elaborate", "beautiful", "dictionary"]
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        for word in words {
+            let outputPath = tempDir.appendingPathComponent("\(word).wav").path
+            let result = try run("speech", "--output", outputPath, word)
+
+            XCTAssertEqual(result.exitCode, 0, "Speech failed for '\(word)': \(result.stderr)")
+            let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+            XCTAssertGreaterThan(data.count, 44, "WAV too small for '\(word)'")
+            XCTAssertEqual(String(data: data.prefix(4), encoding: .ascii), "RIFF",
+                           "Invalid WAV header for '\(word)'")
+        }
+    }
+
+    func testCLISpeechMultipleWordsNotSpelledOut() throws {
+        let words = ["hello", "elaborate", "beautiful", "dictionary"]
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        for word in words {
+            let outputPath = tempDir.appendingPathComponent("\(word).wav").path
+            let result = try run("speech", "--output", outputPath, word)
+
+            XCTAssertEqual(result.exitCode, 0, "Speech failed for '\(word)': \(result.stderr)")
+            let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+            // Spoken audio varies by word length and voice, but spelled-out audio is
+            // dramatically larger (each letter becomes a separate utterance).
+            // Use a generous per-character budget to avoid false positives.
+            let maxBytes = word.count * 50000
+            XCTAssertLessThan(data.count, maxBytes,
+                              "Audio for '\(word)' too long (\(data.count) bytes) — likely spelling out letters")
+        }
+    }
+
     // MARK: - Helpers
 
     private func run(_ arguments: String...) throws -> (stdout: String, stderr: String, exitCode: Int32) {
