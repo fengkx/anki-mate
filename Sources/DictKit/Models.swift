@@ -165,12 +165,25 @@ public extension Pronunciation {
     var ttsIPANotation: String? {
         var normalized = ipa.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return nil }
+        // Reject respelling notation that was stored in the ipa field.
+        // Respelling uses ASCII uppercase digraphs (SH, TH, CH, ZH) and
+        // macron vowels (ē, ā, ī, ō, ū) which are not valid IPA.
+        // Real IPA uses Unicode symbols like ʃ, θ, ð, tʃ, etc.
+        guard !Self.isRespelling(normalized) else { return nil }
         // Strip parentheses used in dictionary IPA to mark optional sounds
         // (e.g. "ˈæp(ə)l" → "ˈæpəl"), as AVSpeechSynthesizer does not
         // understand this notation and falls back to spelling out the text.
         normalized = normalized.replacingOccurrences(of: "(", with: "")
         normalized = normalized.replacingOccurrences(of: ")", with: "")
         return normalized.isEmpty ? nil : normalized
+    }
+
+    /// Detects respelling notation by checking for ASCII uppercase letters,
+    /// which appear in digraphs like SH, TH, CH but never in real IPA.
+    private static func isRespelling(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            scalar.value >= 0x41 && scalar.value <= 0x5A // A-Z
+        }
     }
 
     var defaultSpeechLanguageCode: String? {

@@ -124,6 +124,48 @@ final class DictionarySpeechClientTests: XCTestCase {
         }
     }
 
+    func testTtsIPANotationRejectsRespellingNotation() {
+        // Respelling uses ASCII uppercase digraphs like SH, TH — not valid IPA
+        let respelling = Pronunciation(dialect: "AmE", ipa: "ˈdikSHəˌnerē", respelling: "ˈdikSHəˌnerē")
+        XCTAssertNil(respelling.ttsIPANotation, "Respelling notation should be rejected")
+
+        // Real IPA should be accepted
+        let realIPA = Pronunciation(dialect: "AmE", ipa: "ˈdɪkʃəˌnɛri", respelling: nil)
+        XCTAssertEqual(realIPA.ttsIPANotation, "ˈdɪkʃəˌnɛri")
+
+        // IPA with optional-sound parentheses should be stripped
+        let withParens = Pronunciation(dialect: "BrE", ipa: "ˈdɪkʃən(ə)ri", respelling: nil)
+        XCTAssertEqual(withParens.ttsIPANotation, "ˈdɪkʃənəri")
+    }
+
+    func testAutomaticSourcePrefersPublicAPIForRealIPA() async throws {
+        let engine = FakeSpeechSynthesizer()
+        let sourceTracker = SourceTracker()
+
+        let client = DictionarySpeechClient(
+            dictionaryClient: SystemDictionaryClient(),
+            configuration: SpeechSynthesisConfiguration(),
+            lookup: { request in
+                sourceTracker.record(request.source)
+                if request.source == .publicAPI {
+                    return Self.dictionaryPublicAPIResult
+                }
+                return Self.dictionaryRespellingResult
+            },
+            synthesizer: engine
+        )
+
+        let result = try await client.synthesize(
+            LookupSpeechRequest(term: "dictionary", source: .automatic, selection: .preferredDialectFirst)
+        )
+
+        // Should have tried public API first
+        XCTAssertEqual(sourceTracker.sources.first, .publicAPI)
+        // Should use real IPA, not respelling
+        XCTAssertFalse(result.didFallbackToText)
+        XCTAssertEqual(result.pronunciationUsed?.ipa, "ˈdɪkʃəˌnɛri")
+    }
+
     func testSynthesizeBatchCollectsSuccessesAndFailures() async {
         let engine = FakeSpeechSynthesizer(failingTexts: ["fail"])
         let client = DictionarySpeechClient(
@@ -189,6 +231,66 @@ final class DictionarySpeechClientTests: XCTestCase {
         source: nil
     )
 
+    private static let dictionaryRespellingResult = LookupResult(
+        query: "dictionary",
+        entries: [
+            HeadwordEntry(
+                headword: "dictionary",
+                pronunciations: [
+                    Pronunciation(dialect: "AmE", ipa: "ˈdikSHəˌnerē", respelling: "ˈdikSHəˌnerē")
+                ],
+                lexicalEntries: [
+                    LexicalEntry(
+                        partOfSpeech: .noun,
+                        partOfSpeechLabel: "noun",
+                        displayIndex: 0,
+                        pronunciations: [
+                            Pronunciation(dialect: "AmE", ipa: "ˈdikSHəˌnerē", respelling: "ˈdikSHəˌnerē")
+                        ],
+                        senses: [],
+                        grammar: [],
+                        inflections: []
+                    )
+                ],
+                phraseGroups: [],
+                notes: []
+            )
+        ],
+        metadata: LookupMetadata(usedSource: .privateHTML, warnings: []),
+        source: nil
+    )
+
+    private static let dictionaryPublicAPIResult = LookupResult(
+        query: "dictionary",
+        entries: [
+            HeadwordEntry(
+                headword: "dictionary",
+                pronunciations: [
+                    Pronunciation(dialect: "BrE", ipa: "ˈdɪkʃən(ə)ri", respelling: nil),
+                    Pronunciation(dialect: "AmE", ipa: "ˈdɪkʃəˌnɛri", respelling: nil)
+                ],
+                lexicalEntries: [
+                    LexicalEntry(
+                        partOfSpeech: .noun,
+                        partOfSpeechLabel: "noun",
+                        displayIndex: 0,
+                        pronunciations: [
+                            Pronunciation(dialect: "BrE", ipa: "ˈdɪkʃən(ə)ri", respelling: nil),
+                            Pronunciation(dialect: "AmE", ipa: "ˈdɪkʃəˌnɛri", respelling: nil)
+                        ],
+                        senses: [],
+                        grammar: [],
+                        inflections: []
+                    )
+                ],
+                phraseGroups: [],
+                notes: []
+            )
+        ],
+        metadata: LookupMetadata(usedSource: .publicAPI, warnings: []),
+        source: nil
+    )
+
     private static let missingPronunciationResult = LookupResult(
         query: "fallback",
         entries: [
@@ -213,6 +315,11 @@ final class DictionarySpeechClientTests: XCTestCase {
         metadata: LookupMetadata(usedSource: .publicAPI, warnings: []),
         source: nil
     )
+}
+
+private final class SourceTracker: @unchecked Sendable {
+    private(set) var sources: [DictionaryLookupSource] = []
+    func record(_ source: DictionaryLookupSource) { sources.append(source) }
 }
 
 private final class FakeSpeechSynthesizer: SpeechSynthesizing, @unchecked Sendable {

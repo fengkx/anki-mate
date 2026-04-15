@@ -139,6 +139,22 @@ public struct DictionarySpeechClient: Sendable {
     }
 
     private func resolveLookup(_ request: LookupSpeechRequest) throws -> ResolvedSpeechRequest {
+        // For automatic source, prefer public API first — it returns real IPA
+        // that AVSpeechSynthesizer can use. Fall back to HTML source only when
+        // the public API has no usable IPA (e.g. word not found).
+        if request.source == .automatic {
+            let publicRequest = LookupSpeechRequest(
+                term: request.term,
+                source: .publicAPI,
+                selection: request.selection
+            )
+            if let publicResult = try? lookup(publicRequest),
+               let resolved = try? resolveLookup(publicRequest, lookupResult: publicResult),
+               !resolved.didFallbackToText {
+                return resolved
+            }
+        }
+
         let lookupResult: LookupResult
         do {
             lookupResult = try lookup(request)
