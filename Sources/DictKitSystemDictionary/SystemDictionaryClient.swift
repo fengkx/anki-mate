@@ -5,7 +5,7 @@ import DictKit
 import CoreServices
 import DictPrivate
 
-public enum DictionaryLookupSource: Sendable {
+public enum DictionaryLookupSource: Sendable, Equatable {
     case automatic
     case publicAPI
     case privateHTML(dictionaryName: String = SystemDictionaryClient.defaultDictionaryName)
@@ -154,7 +154,7 @@ private func asElements(_ collection: Any?) -> [Any] {
     }
 }
 #else
-public enum DictionaryLookupSource: Sendable {
+public enum DictionaryLookupSource: Sendable, Equatable {
     case automatic
     case publicAPI
     case privateHTML(dictionaryName: String = "")

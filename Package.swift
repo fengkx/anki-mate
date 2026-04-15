@@ -47,7 +47,10 @@ let package = Package(
                 "DictKit",
                 .target(name: "DictPrivate", condition: .when(platforms: [.macOS]))
             ],
-            path: "Sources/DictKitSystemDictionary"
+            path: "Sources/DictKitSystemDictionary",
+            linkerSettings: [
+                .linkedFramework("AVFAudio", .when(platforms: [.macOS]))
+            ]
         ),
         .target(
             name: "DictKitCLI",

@@ -161,6 +161,30 @@ public struct Pronunciation: Codable, Equatable, Sendable {
     }
 }
 
+public extension Pronunciation {
+    var ttsIPANotation: String? {
+        var normalized = ipa.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        // Strip parentheses used in dictionary IPA to mark optional sounds
+        // (e.g. "ˈæp(ə)l" → "ˈæpəl"), as AVSpeechSynthesizer does not
+        // understand this notation and falls back to spelling out the text.
+        normalized = normalized.replacingOccurrences(of: "(", with: "")
+        normalized = normalized.replacingOccurrences(of: ")", with: "")
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    var defaultSpeechLanguageCode: String? {
+        switch dialect?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "ame", "us", "american english":
+            return "en-US"
+        case "bre", "uk", "british english":
+            return "en-GB"
+        default:
+            return nil
+        }
+    }
+}
+
 public enum PartOfSpeech: String, Codable, Sendable {
     case noun
     case verb
