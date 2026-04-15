@@ -139,10 +139,9 @@ public struct DictionarySpeechClient: Sendable {
     }
 
     private func resolveLookup(_ request: LookupSpeechRequest) throws -> ResolvedSpeechRequest {
-        // For automatic source, prefer public API first — it returns real IPA
-        // that AVSpeechSynthesizer can use. Fall back to HTML source only when
-        // the public API has no usable IPA (e.g. word not found).
-        if request.source == .automatic {
+        // When using IPA with automatic source, prefer public API first —
+        // it returns real IPA that AVSpeechSynthesizer can use.
+        if configuration.useIPA, request.source == .automatic {
             let publicRequest = LookupSpeechRequest(
                 term: request.term,
                 source: .publicAPI,
@@ -235,16 +234,24 @@ public struct DictionarySpeechClient: Sendable {
         }
 
         var warnings: [String] = []
-        let pronunciation = request.pronunciation?.ttsIPANotation == nil ? nil : request.pronunciation
-        let didFallbackToText = pronunciation == nil
+        let pronunciation: Pronunciation?
+        let didFallbackToText: Bool
 
-        if didFallbackToText {
-            switch configuration.fallbackPolicy {
-            case .useHeadwordText:
-                warnings.append("missing_pronunciation_fallback")
-            case .failIfNoPronunciation:
-                throw SpeechError.noPronunciationCandidates
+        if configuration.useIPA {
+            pronunciation = request.pronunciation?.ttsIPANotation == nil ? nil : request.pronunciation
+            didFallbackToText = pronunciation == nil
+            if didFallbackToText {
+                switch configuration.fallbackPolicy {
+                case .useHeadwordText:
+                    warnings.append("missing_pronunciation_fallback")
+                case .failIfNoPronunciation:
+                    throw SpeechError.noPronunciationCandidates
+                }
             }
+        } else {
+            // Default: let AVSpeechSynthesizer read the word naturally
+            pronunciation = nil
+            didFallbackToText = false
         }
 
         let availableVoices = SpeechVoiceResolver.availableVoices()

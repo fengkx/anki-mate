@@ -63,7 +63,10 @@ public struct DictKitSpeechCommand: ParsableCommand {
     @Option(help: "Lookup source: automatic, public, or html.")
     var source: SpeechCommandLookupSource = .automatic
 
-    @Flag(help: "Fail when no dictionary pronunciation candidate is available.")
+    @Flag(help: "Use dictionary IPA notation for pronunciation instead of plain text.")
+    var ipa = false
+
+    @Flag(help: "Fail when no dictionary pronunciation candidate is available. Implies --ipa.")
     var strict = false
 
     @Option(help: "Specific system voice identifier to use.")
@@ -83,6 +86,7 @@ public struct DictKitSpeechCommand: ParsableCommand {
         dialect: String?,
         lexicalEntry: Int?,
         source: SpeechCommandLookupSource,
+        ipa: Bool,
         strict: Bool,
         voiceIdentifier: String?,
         languageHint: String?,
@@ -93,6 +97,7 @@ public struct DictKitSpeechCommand: ParsableCommand {
         self.dialect = dialect
         self.lexicalEntry = lexicalEntry
         self.source = source
+        self.ipa = ipa
         self.strict = strict
         self.voiceIdentifier = voiceIdentifier
         self.languageHint = languageHint
@@ -104,6 +109,7 @@ public struct DictKitSpeechCommand: ParsableCommand {
         let outputURL = try resolvedOutputURL()
 
         var configuration = SpeechSynthesisConfiguration()
+        configuration.useIPA = ipa || strict
         if strict {
             configuration.fallbackPolicy = .failIfNoPronunciation
         }

@@ -9,6 +9,7 @@ public struct SpeechSynthesisConfiguration: Sendable, Equatable {
     public var volume: Float?
     public var preUtteranceDelay: TimeInterval?
     public var postUtteranceDelay: TimeInterval?
+    public var useIPA: Bool
     public var voiceIdentifier: String?
     public var languageHint: String?
 
@@ -20,6 +21,7 @@ public struct SpeechSynthesisConfiguration: Sendable, Equatable {
         volume: Float? = nil,
         preUtteranceDelay: TimeInterval? = nil,
         postUtteranceDelay: TimeInterval? = nil,
+        useIPA: Bool = false,
         voiceIdentifier: String? = nil,
         languageHint: String? = nil
     ) {
@@ -30,6 +32,7 @@ public struct SpeechSynthesisConfiguration: Sendable, Equatable {
         self.volume = volume
         self.preUtteranceDelay = preUtteranceDelay
         self.postUtteranceDelay = postUtteranceDelay
+        self.useIPA = useIPA
         self.voiceIdentifier = voiceIdentifier
         self.languageHint = languageHint
     }

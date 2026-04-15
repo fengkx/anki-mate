@@ -8,7 +8,7 @@ final class DictionarySpeechClientTests: XCTestCase {
         let engine = FakeSpeechSynthesizer()
         let client = DictionarySpeechClient(
             dictionaryClient: SystemDictionaryClient(),
-            configuration: SpeechSynthesisConfiguration(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
             lookup: { _ in
                 XCTFail("Lookup should not be called for direct synthesis requests.")
                 throw LookupError.notFound
@@ -34,7 +34,7 @@ final class DictionarySpeechClientTests: XCTestCase {
         let engine = FakeSpeechSynthesizer()
         let client = DictionarySpeechClient(
             dictionaryClient: SystemDictionaryClient(),
-            configuration: SpeechSynthesisConfiguration(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
             lookup: { _ in Self.elaborateResult },
             synthesizer: engine
         )
@@ -55,7 +55,7 @@ final class DictionarySpeechClientTests: XCTestCase {
         let engine = FakeSpeechSynthesizer()
         let client = DictionarySpeechClient(
             dictionaryClient: SystemDictionaryClient(),
-            configuration: SpeechSynthesisConfiguration(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
             lookup: { _ in Self.missingPronunciationResult },
             synthesizer: engine
         )
@@ -72,7 +72,7 @@ final class DictionarySpeechClientTests: XCTestCase {
 
     func testLookupSynthesizeFailsWhenStrictFallbackPolicyConfigured() async throws {
         let engine = FakeSpeechSynthesizer()
-        var configuration = SpeechSynthesisConfiguration()
+        var configuration = SpeechSynthesisConfiguration(useIPA: true)
         configuration.fallbackPolicy = .failIfNoPronunciation
 
         let client = DictionarySpeechClient(
@@ -144,7 +144,7 @@ final class DictionarySpeechClientTests: XCTestCase {
 
         let client = DictionarySpeechClient(
             dictionaryClient: SystemDictionaryClient(),
-            configuration: SpeechSynthesisConfiguration(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
             lookup: { request in
                 sourceTracker.record(request.source)
                 if request.source == .publicAPI {
@@ -164,6 +164,32 @@ final class DictionarySpeechClientTests: XCTestCase {
         // Should use real IPA, not respelling
         XCTAssertFalse(result.didFallbackToText)
         XCTAssertEqual(result.pronunciationUsed?.ipa, "ˈdɪkʃəˌnɛri")
+    }
+
+    func testDefaultModeSkipsIPAAndUsesPlainText() async throws {
+        let engine = FakeSpeechSynthesizer()
+        let sourceTracker = SourceTracker()
+
+        let client = DictionarySpeechClient(
+            dictionaryClient: SystemDictionaryClient(),
+            configuration: SpeechSynthesisConfiguration(), // useIPA defaults to false
+            lookup: { request in
+                sourceTracker.record(request.source)
+                return Self.dictionaryPublicAPIResult
+            },
+            synthesizer: engine
+        )
+
+        let result = try await client.synthesize(
+            LookupSpeechRequest(term: "dictionary", source: .automatic, selection: .preferredDialectFirst)
+        )
+
+        // Should NOT try public API first (no IPA needed)
+        XCTAssertEqual(sourceTracker.sources, [.automatic])
+        // Pronunciation should be nil — plain text mode
+        XCTAssertNil(result.pronunciationUsed)
+        XCTAssertFalse(result.didFallbackToText)
+        XCTAssertTrue(result.warnings.isEmpty)
     }
 
     func testSynthesizeBatchCollectsSuccessesAndFailures() async {

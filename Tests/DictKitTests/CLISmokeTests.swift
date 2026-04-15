@@ -178,18 +178,33 @@ final class CLISmokeTests: XCTestCase {
         XCTAssertNotEqual(result.exitCode, 0, "Expected non-zero exit when query is missing")
     }
 
-    // MARK: - Speech uses real IPA, not respelling
+    // MARK: - Speech IPA mode vs plain text mode
 
-    func testCLISpeechDictionaryUsesRealIPA() throws {
+    func testCLISpeechDefaultUsesPlainText() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let outputPath = tempDir.appendingPathComponent("artifact.wav").path
+        let result = try run("speech", "--json", "--output", outputPath, "artifact")
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        // Default mode should not use IPA — pronunciationUsed should be null
+        XCTAssertTrue(result.stdout.contains("\"pronunciationUsed\" : null") ||
+                      !result.stdout.contains("\"ipa\""),
+                      "Default mode should not pass IPA to synthesizer")
+    }
+
+    func testCLISpeechIPAFlagUsesRealIPA() throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let outputPath = tempDir.appendingPathComponent("dictionary.wav").path
-        let result = try run("speech", "--json", "--output", outputPath, "dictionary")
+        let result = try run("speech", "--ipa", "--json", "--output", outputPath, "dictionary")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
-        // Must use real IPA (ˈdɪkʃəˌnɛri), not respelling (ˈdikSHəˌnerē)
+        // --ipa mode should use real IPA, not respelling
         XCTAssertTrue(result.stdout.contains("\"didFallbackToText\" : false"),
                       "Should use IPA pronunciation, not fall back to text")
         XCTAssertFalse(result.stdout.contains("SH"),
