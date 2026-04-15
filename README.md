@@ -49,6 +49,51 @@ let result = try client.lookup("apple", source: .automatic, includeSource: true)
 #endif
 ```
 
+Synthesize speech directly from an existing `Pronunciation`:
+
+```swift
+import DictKit
+import DictKitSystemDictionary
+
+let speechClient = DictionarySpeechClient()
+let audio = try await speechClient.synthesize(
+    SpeechRequest(
+        text: "apple",
+        pronunciation: Pronunciation(dialect: "AmE", ipa: "ˈæp(ə)l", respelling: nil),
+        sourceLabel: "manual"
+    )
+)
+
+try audio.audioData.write(to: outputURL)
+```
+
+Lookup first, then synthesize using the dictionary pronunciation:
+
+```swift
+import DictKitSystemDictionary
+
+let speechClient = DictionarySpeechClient()
+let spoken = try await speechClient.synthesize(
+    LookupSpeechRequest(
+        term: "elaborate",
+        source: .automatic,
+        selection: .lexicalEntry(index: 1, dialect: "AmE")
+    )
+)
+```
+
+Expand all pronunciation candidates for flashcard generation workflows:
+
+```swift
+import DictKitSystemDictionary
+
+let speechClient = DictionarySpeechClient()
+let requests = try speechClient.resolveSpeechRequests(
+    LookupSpeechRequest(term: "what", source: .automatic, selection: .allCandidates)
+)
+let batch = await speechClient.synthesizeBatch(requests)
+```
+
 ## CLI
 
 ```bash
@@ -57,6 +102,8 @@ swift run dictkit --json apple
 swift run dictkit --html-json run
 swift run dictkit --raw-html run
 swift run dictkit --list-dicts
+swift run dictkit speech --output ./apple.wav apple
+swift run dictkit speech --output ./elaborate.wav --dialect AmE --lexical-entry 1 --json elaborate
 ```
 
 ## Development
