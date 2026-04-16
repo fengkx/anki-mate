@@ -14,6 +14,7 @@ This change is intended to fix the current sidebar interaction model, where coll
 - Column 3 purpose: preview and word detail states only
 - Collection switching model: always-visible collection list, not a picker
 - Word add model: input lives at the top of the words column
+- Export entry point: lives in the words column top action area
 - Word delete model: always confirm, with explicit choice between removing from the current collection and deleting from all collections
 - Scope: App UI and app view model only; persistence and export semantics remain unchanged
 
@@ -104,6 +105,7 @@ UI behavior:
 - Show secondary metadata like `24 words` and `18 ready`
 - Place the add-word text field and `Add` button at the top of the column
 - Keep `Batch Add` near that input area because it is another add path
+- Place `Export to Anki` in the same top action area, separate from collection navigation
 - Show only the words belonging to the selected collection
 - Keep row-level actions on rows or in row context menus
 
@@ -111,6 +113,7 @@ Expected result:
 
 - the user sees that all word operations are scoped to the currently selected collection
 - the add flow becomes local and obvious
+- export is discoverable without polluting the collections column
 
 ### Column 3: Preview
 
@@ -169,6 +172,13 @@ Example copy:
 - batch add follows the same rule
 - no collection chooser is needed in the add flow because collection context is already visible
 
+### Export
+
+- the export button is shown in the words column top action area
+- opening export defaults to the currently selected collection
+- the export sheet still allows selecting one or more collections before writing the `.apkg`
+- export remains an app-level content action, not a collection-row action and not a global preview action
+
 ### Delete Word
 
 - user triggers delete from row menu, keyboard shortcut, or delete button
@@ -225,7 +235,7 @@ If practical, add lightweight view-model-focused tests for delete dialog state a
 - redesigning the visual style of the preview card
 - changing SQLite schema or export format
 - introducing collection search
-- moving export into a collection row action
+- moving export into the collections column or a collection row action
 - changing SWR behavior
 
 ## Risks and Mitigations
@@ -244,6 +254,7 @@ The redesign is complete when:
 - the app shows collections, words, and preview in three separate columns
 - collection actions no longer share the same visual cluster with word actions
 - adding a word is obviously scoped to the selected collection
+- exporting to Anki is accessible from the words column top area
 - deleting a word always opens a confirmation dialog
 - the dialog clearly distinguishes removing from the current collection versus deleting everywhere
 - shared-word dialogs display the other collections that would be affected
