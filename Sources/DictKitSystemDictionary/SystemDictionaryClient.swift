@@ -70,13 +70,23 @@ public struct SystemDictionaryClient: Sendable {
         case let .privateHTML(dictionaryName):
             switch lookupHTMLRecord(for: query, dictionaryName: dictionaryName) {
             case let .html(html):
-                return try DictionaryHTMLParser.parse(query: query, html: html, includeSource: includeSource)
-            case .dictionaryUnavailable:
-                throw LookupError.dictionaryUnavailable(dictionaryName)
+                do {
+                    return try DictionaryHTMLParser.parse(query: query, html: html, includeSource: includeSource)
+                } catch LookupError.parseFailed {
+                    // Dictionary HTML format not supported by the parser; fall back to public API.
+                    guard let raw = lookupDefinition(for: query) else {
+                        throw LookupError.notFound
+                    }
+                    return try DictionaryTextParser.parse(query: query, raw: raw, includeSource: includeSource)
+                }
+            case .dictionaryUnavailable, .notFound:
+                // Selected dictionary unavailable or word not found; fall back to public API.
+                guard let raw = lookupDefinition(for: query) else {
+                    throw LookupError.notFound
+                }
+                return try DictionaryTextParser.parse(query: query, raw: raw, includeSource: includeSource)
             case .sourceUnavailable:
                 throw LookupError.sourceUnavailable
-            case .notFound:
-                throw LookupError.notFound
             }
 
         case .automatic:

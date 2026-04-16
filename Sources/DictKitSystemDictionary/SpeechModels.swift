@@ -144,6 +144,7 @@ struct SpeechVoiceDescriptor: Sendable, Equatable {
     let identifier: String
     let language: String
     let name: String
+    let quality: Int
 }
 
 struct ResolvedSpeechRequest: Sendable, Equatable {

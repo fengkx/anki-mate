@@ -10,8 +10,8 @@ typedef const void* DCSDictRef;
 extern id DCSCopyAvailableDictionaries(void) NS_RETURNS_RETAINED;
 
 /* Returns the display name of the given dictionary (e.g. "New Oxford American Dictionary").
-   Caller must release the returned string. */
-extern NSString* DCSDictionaryGetName(DCSDictRef dict) NS_RETURNS_RETAINED;
+   This is a "Get" (borrowed reference) — caller does NOT own the result. */
+extern NSString* _Nullable DCSDictionaryGetName(DCSDictRef dict);
 
 /* Returns a collection (NSArray or NSSet) of opaque record objects matching the search string.
    The last two parameters are undocumented; pass NULL for both.  Caller owns the result. */
@@ -21,5 +21,6 @@ extern id DCSCopyRecordsForSearchString(DCSDictRef dict, NSString* string, void*
    Caller must release. */
 extern NSString* DCSRecordCopyData(id record) NS_RETURNS_RETAINED;
 
-/* Returns (without copy) the headword string for a record. */
-extern NSString* DCSRecordGetString(id record);
+/* Returns (without copy) the headword string for a record.
+   Borrowed reference — caller does NOT own the result. */
+extern NSString* _Nullable DCSRecordGetString(id record);

@@ -4,12 +4,14 @@ import PackageDescription
 let package = Package(
     name: "macos-dictkit",
     platforms: [
-        .macOS(.v10_15)
+        .macOS(.v13)
     ],
     products: [
         .library(name: "DictKit", targets: ["DictKit"]),
         .library(name: "DictKitSystemDictionary", targets: ["DictKitSystemDictionary"]),
-        .executable(name: "dictkit", targets: ["DictKitExecutable"])
+        .executable(name: "dictkit", targets: ["DictKitExecutable"]),
+        .library(name: "DictKitAnkiExport", targets: ["DictKitAnkiExport"]),
+        .executable(name: "DictKitApp", targets: ["DictKitApp"])
     ],
     dependencies: [
         .package(
@@ -66,6 +68,20 @@ let package = Package(
             dependencies: ["DictKitCLI"],
             path: "Sources/DictKitExecutable"
         ),
+        .target(
+            name: "DictKitAnkiExport",
+            dependencies: ["DictKit"],
+            path: "Sources/DictKitAnkiExport"
+        ),
+        .executableTarget(
+            name: "DictKitApp",
+            dependencies: [
+                "DictKit",
+                "DictKitSystemDictionary",
+                "DictKitAnkiExport"
+            ],
+            path: "Sources/DictKitApp"
+        ),
         .testTarget(
             name: "DictKitTests",
             dependencies: [
@@ -81,6 +97,22 @@ let package = Package(
             resources: [
                 .process("Fixtures")
             ]
+        ),
+        .testTarget(
+            name: "AnkiExportTests",
+            dependencies: [
+                "DictKit",
+                "DictKitAnkiExport"
+            ],
+            path: "Tests/AnkiExportTests"
+        ),
+        .testTarget(
+            name: "DictKitAppTests",
+            dependencies: [
+                "DictKit",
+                "DictKitApp"
+            ],
+            path: "Tests/DictKitAppTests"
         )
     ]
 )

@@ -254,9 +254,12 @@ public struct DictionarySpeechClient: Sendable {
             didFallbackToText = false
         }
 
+        // Use the original pronunciation for voice resolution so the dialect
+        // determines the voice (en-GB for BrE, en-US for AmE) even when IPA
+        // is not used for the utterance text.
         let availableVoices = SpeechVoiceResolver.availableVoices()
         let resolvedVoice = SpeechVoiceResolver.resolveVoice(
-            for: pronunciation,
+            for: request.pronunciation ?? pronunciation,
             configuration: configuration,
             availableVoices: availableVoices
         )
@@ -274,6 +277,7 @@ public struct DictionarySpeechClient: Sendable {
             configuration: configuration,
             voice: resolvedVoice,
             languageHint: resolvedVoice?.language
+                ?? request.pronunciation?.defaultSpeechLanguageCode
                 ?? pronunciation?.defaultSpeechLanguageCode
                 ?? configuration.languageHint
         )
@@ -309,72 +313,73 @@ public struct DictionarySpeechClient: Sendable {
 
 private actor AVSpeechSynthesizerEngine: SpeechSynthesizing {
     func speak(_ request: ResolvedSpeechRequest) async throws {
-        try MainThreadSpeechHelper.speak(request)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Task { @MainActor in
+                let synthesizer = AVSpeechSynthesizer()
+                let delegate = AsyncSpeechDelegate()
+                delegate.onFinish = { continuation.resume() }
+                delegate.onCancel = { continuation.resume(throwing: SpeechError.synthesisUnavailable) }
+                synthesizer.delegate = delegate
+                let utterance = Self.makeUtterance(from: request)
+                synthesizer.speak(utterance)
+                // Prevent deallocation while speaking
+                delegate.retainedSynthesizer = synthesizer
+                delegate.retainedSelf = delegate
+            }
+        }
     }
 
     func synthesize(_ request: ResolvedSpeechRequest) async throws -> SynthesizedSpeechPayload {
-        try MainThreadSpeechHelper.synthesize(request)
-    }
-}
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<SynthesizedSpeechPayload, Error>) in
+            Task { @MainActor in
+                let synthesizer = AVSpeechSynthesizer()
+                let delegate = AsyncSpeechDelegate()
+                let utterance = Self.makeUtterance(from: request)
+                var buffers: [AVAudioPCMBuffer] = []
+                var didResume = false
 
-/// Runs AVSpeechSynthesizer synchronously on the main thread.
-/// AVSpeechSynthesizer requires the main RunLoop to process its audio callbacks.
-/// This helper ensures the synthesizer is created, used, and waited on directly
-/// from the main thread, spinning the RunLoop to process callbacks.
-private enum MainThreadSpeechHelper {
-    static func speak(_ request: ResolvedSpeechRequest) throws {
-        assert(Thread.isMainThread, "Must be called from the main thread")
-        let synthesizer = AVSpeechSynthesizer()
-        let delegate = SpeechDelegate()
-        synthesizer.delegate = delegate
-        synthesizer.speak(Self.makeUtterance(from: request))
-        try waitUntilCompleted { delegate.didFinish || delegate.didCancel }
-        if delegate.didCancel {
-            throw SpeechError.synthesisUnavailable
-        }
-    }
-
-    static func synthesize(_ request: ResolvedSpeechRequest) throws -> SynthesizedSpeechPayload {
-        assert(Thread.isMainThread, "Must be called from the main thread")
-        let synthesizer = AVSpeechSynthesizer()
-        let delegate = SpeechDelegate()
-        synthesizer.delegate = delegate
-        let utterance = makeUtterance(from: request)
-        var buffers: [AVAudioPCMBuffer] = []
-
-        synthesizer.write(utterance) { buffer in
-            if let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 {
-                if let copy = copyBuffer(pcm) {
-                    buffers.append(copy)
+                let finish = {
+                    guard !didResume else { return }
+                    didResume = true
+                    do {
+                        let audioData = try SpeechAudioEncoder.encodeWave(from: buffers)
+                        continuation.resume(returning: SynthesizedSpeechPayload(
+                            audioData: audioData,
+                            voiceIdentifier: utterance.voice?.identifier,
+                            language: utterance.voice?.language ?? request.languageHint
+                        ))
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
                 }
+
+                delegate.onFinish = finish
+                delegate.onCancel = {
+                    guard !didResume else { return }
+                    didResume = true
+                    continuation.resume(throwing: SpeechError.synthesisUnavailable)
+                }
+
+                synthesizer.delegate = delegate
+                synthesizer.write(utterance) { buffer in
+                    guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+                    if pcm.frameLength > 0 {
+                        if let copy = Self.copyBuffer(pcm) {
+                            buffers.append(copy)
+                        }
+                    } else {
+                        // Empty buffer signals end of audio data
+                        finish()
+                    }
+                }
+                // Prevent deallocation while synthesizing
+                delegate.retainedSynthesizer = synthesizer
+                delegate.retainedSelf = delegate
             }
         }
-
-        // Wait for the delegate's didFinish callback rather than relying on
-        // a zero-length completion buffer, which is not sent on all macOS versions.
-        try waitUntilCompleted { delegate.didFinish || delegate.didCancel }
-        if delegate.didCancel {
-            throw SpeechError.synthesisUnavailable
-        }
-        let audioData = try SpeechAudioEncoder.encodeWave(from: buffers)
-        return SynthesizedSpeechPayload(
-            audioData: audioData,
-            voiceIdentifier: utterance.voice?.identifier,
-            language: utterance.voice?.language ?? request.languageHint
-        )
     }
 
-    private static func waitUntilCompleted(_ predicate: () -> Bool) throws {
-        let deadline = Date().addingTimeInterval(10)
-        while !predicate() && Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
-        }
-        guard predicate() else {
-            throw SpeechError.synthesisUnavailable
-        }
-    }
-
-    private static func makeUtterance(from request: ResolvedSpeechRequest) -> AVSpeechUtterance {
+    fileprivate static func makeUtterance(from request: ResolvedSpeechRequest) -> AVSpeechUtterance {
         let utterance: AVSpeechUtterance
         if let ipa = request.pronunciation?.ttsIPANotation {
             let attributed = NSMutableAttributedString(string: request.text)
@@ -413,7 +418,7 @@ private enum MainThreadSpeechHelper {
         return utterance
     }
 
-    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    fileprivate static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
             return nil
         }
@@ -445,7 +450,71 @@ private enum MainThreadSpeechHelper {
     }
 }
 
-private final class SpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+/// Delegate that bridges AVSpeechSynthesizerDelegate callbacks to closures
+/// for use with async continuations.
+private final class AsyncSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    var onFinish: (() -> Void)?
+    var onCancel: (() -> Void)?
+    /// Prevent the synthesizer from being deallocated while speaking.
+    var retainedSynthesizer: AVSpeechSynthesizer?
+    /// Self-retain to prevent ARC from deallocating this delegate
+    /// (AVSpeechSynthesizer.delegate is weak).
+    var retainedSelf: AsyncSpeechDelegate?
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        retainedSynthesizer = nil
+        onFinish?()
+        retainedSelf = nil
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        retainedSynthesizer = nil
+        onCancel?()
+        retainedSelf = nil
+    }
+}
+
+/// Synchronous speech synthesis helper for CLI use.
+/// Spins the RunLoop to wait for callbacks — must only be used from the main
+/// thread in a non-GUI context (e.g. CLI). Using this in a SwiftUI app will
+/// freeze the UI.
+private enum MainThreadSpeechHelper {
+    static func synthesize(_ request: ResolvedSpeechRequest) throws -> SynthesizedSpeechPayload {
+        assert(Thread.isMainThread, "Must be called from the main thread")
+        let synthesizer = AVSpeechSynthesizer()
+        let delegate = SyncSpeechDelegate()
+        synthesizer.delegate = delegate
+        let utterance = AVSpeechSynthesizerEngine.makeUtterance(from: request)
+        var buffers: [AVAudioPCMBuffer] = []
+
+        synthesizer.write(utterance) { buffer in
+            if let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 {
+                if let copy = AVSpeechSynthesizerEngine.copyBuffer(pcm) {
+                    buffers.append(copy)
+                }
+            }
+        }
+
+        let deadline = Date().addingTimeInterval(10)
+        while !(delegate.didFinish || delegate.didCancel) && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        guard delegate.didFinish || delegate.didCancel else {
+            throw SpeechError.synthesisUnavailable
+        }
+        if delegate.didCancel {
+            throw SpeechError.synthesisUnavailable
+        }
+        let audioData = try SpeechAudioEncoder.encodeWave(from: buffers)
+        return SynthesizedSpeechPayload(
+            audioData: audioData,
+            voiceIdentifier: utterance.voice?.identifier,
+            language: utterance.voice?.language ?? request.languageHint
+        )
+    }
+}
+
+private final class SyncSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
     var didFinish = false
     var didCancel = false
 

@@ -192,6 +192,75 @@ final class DictionarySpeechClientTests: XCTestCase {
         XCTAssertTrue(result.warnings.isEmpty)
     }
 
+    func testSpeakWithSpeechRequestDoesNotCallLookup() async throws {
+        let engine = FakeSpeechSynthesizer()
+        let client = DictionarySpeechClient(
+            dictionaryClient: SystemDictionaryClient(),
+            configuration: SpeechSynthesisConfiguration(),
+            lookup: { _ in
+                XCTFail("Lookup must not be called when using SpeechRequest (not LookupSpeechRequest)")
+                throw LookupError.notFound
+            },
+            synthesizer: engine
+        )
+
+        try await client.speak(
+            SpeechRequest(
+                text: "hello",
+                pronunciation: Pronunciation(dialect: "AmE", ipa: "həˈloʊ", respelling: nil),
+                sourceLabel: "test"
+            )
+        )
+
+        XCTAssertEqual(engine.synthesizedRequests.count, 1)
+        XCTAssertEqual(engine.synthesizedRequests.first?.text, "hello")
+    }
+
+    func testSpeechRequestResolvesWithoutDictionaryLookup() async throws {
+        // Verifies the resolve() path (for SpeechRequest) never calls resolveLookup()
+        let engine = FakeSpeechSynthesizer()
+        let client = DictionarySpeechClient(
+            dictionaryClient: SystemDictionaryClient(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
+            lookup: { _ in
+                XCTFail("SpeechRequest must use resolve(), not resolveLookup()")
+                throw LookupError.notFound
+            },
+            synthesizer: engine
+        )
+
+        let result = try await client.synthesize(
+            SpeechRequest(
+                text: "world",
+                pronunciation: Pronunciation(dialect: "BrE", ipa: "wɜːld", respelling: nil),
+                sourceLabel: "test"
+            )
+        )
+
+        XCTAssertEqual(result.textSpoken, "world")
+        XCTAssertNotNil(result.pronunciationUsed)
+    }
+
+    func testSpeechRequestFallsBackToTextWhenIPAMissing() async throws {
+        let engine = FakeSpeechSynthesizer()
+        let client = DictionarySpeechClient(
+            dictionaryClient: SystemDictionaryClient(),
+            configuration: SpeechSynthesisConfiguration(useIPA: true),
+            lookup: { _ in
+                XCTFail("Should not call lookup")
+                throw LookupError.notFound
+            },
+            synthesizer: engine
+        )
+
+        let result = try await client.synthesize(
+            SpeechRequest(text: "test", pronunciation: nil, sourceLabel: nil)
+        )
+
+        XCTAssertTrue(result.didFallbackToText)
+        XCTAssertNil(result.pronunciationUsed)
+    }
+
     func testSynthesizeBatchCollectsSuccessesAndFailures() async {
         let engine = FakeSpeechSynthesizer(failingTexts: ["fail"])
         let client = DictionarySpeechClient(

@@ -20,16 +20,43 @@ enum SpeechVoiceResolver {
 
         let preferredLanguages = preferredLanguages(for: pronunciation, configuration: configuration)
         for language in preferredLanguages {
-            if let exact = availableVoices.first(where: { $0.language.caseInsensitiveCompare(language) == .orderedSame }) {
-                return exact
+            let candidates = availableVoices.filter {
+                $0.language.caseInsensitiveCompare(language) == .orderedSame ||
+                $0.language.lowercased().hasPrefix(language.lowercased())
             }
-
-            if let prefix = availableVoices.first(where: { $0.language.lowercased().hasPrefix(language.lowercased()) }) {
-                return prefix
+            if let best = bestVoice(from: candidates) {
+                return best
             }
         }
 
-        return availableVoices.first
+        return bestVoice(from: availableVoices) ?? availableVoices.first
+    }
+
+    /// Prefer higher-quality, natural-sounding voices over Eloquence and novelty voices.
+    private static func bestVoice(from voices: [SpeechVoiceDescriptor]) -> SpeechVoiceDescriptor? {
+        // Sort by quality tier: higher quality first, then prefer non-Eloquence
+        // and non-novelty voices for more natural pronunciation.
+        let ranked = voices.sorted { lhs, rhs in
+            let lhsRank = voiceRank(lhs)
+            let rhsRank = voiceRank(rhs)
+            return lhsRank < rhsRank
+        }
+        return ranked.first
+    }
+
+    /// Lower rank = better voice for dictionary pronunciation.
+    private static func voiceRank(_ voice: SpeechVoiceDescriptor) -> Int {
+        let id = voice.identifier.lowercased()
+        // Premium/enhanced voices (quality >= 2)
+        if voice.quality >= 2 { return 0 }
+        // Siri voices — generally good quality even at compact level
+        if id.contains("siri_") { return 1 }
+        // Standard compact voices (Samantha, Daniel, Karen, etc.)
+        if id.contains("voice.compact.") { return 2 }
+        // Eloquence voices — robotic but functional
+        if id.contains("eloquence") { return 3 }
+        // Novelty/effect voices (Bells, Boing, Whisper, etc.)
+        return 4
     }
 
     static func preferredLanguages(
@@ -79,7 +106,7 @@ enum SpeechVoiceResolver {
     #if canImport(AVFAudio)
     static func availableVoices() -> [SpeechVoiceDescriptor] {
         AVSpeechSynthesisVoice.speechVoices().map {
-            SpeechVoiceDescriptor(identifier: $0.identifier, language: $0.language, name: $0.name)
+            SpeechVoiceDescriptor(identifier: $0.identifier, language: $0.language, name: $0.name, quality: $0.quality.rawValue)
         }
     }
     #endif
