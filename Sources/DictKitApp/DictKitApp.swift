@@ -20,9 +20,5 @@ struct DictKitApp: App {
                 .disabled(!viewModel.canExportCurrentCollection)
             }
         }
-
-        Settings {
-            SettingsView()
-        }
     }
 }
