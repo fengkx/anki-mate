@@ -232,13 +232,17 @@ final class WordListViewModelTests: XCTestCase {
         let viewModel = try makeViewModel(store: store)
         let item = try XCTUnwrap(viewModel.words.only)
 
-        viewModel.saveAIExampleSentences(["An apple a day keeps the doctor away."], for: item)
-        viewModel.saveAIDefinitionNote("A learner-friendly definition.", for: item)
+        viewModel.saveAISuggestedExampleSentences(["Suggested example."], for: item)
+        viewModel.saveAIAcceptedExampleSentences(["An apple a day keeps the doctor away."], for: item)
+        viewModel.saveAISuggestedDefinitionNote("Suggested note.", for: item)
+        viewModel.saveAIAcceptedDefinitionNote("A learner-friendly definition.", for: item)
         viewModel.reloadFromStore()
 
         let reloaded = try XCTUnwrap(viewModel.words.only)
-        XCTAssertEqual(reloaded.aiExampleSentences, ["An apple a day keeps the doctor away."])
-        XCTAssertEqual(reloaded.aiDefinitionNote, "A learner-friendly definition.")
+        XCTAssertEqual(reloaded.aiSuggestedExampleSentences, ["Suggested example."])
+        XCTAssertEqual(reloaded.aiAcceptedExampleSentences, ["An apple a day keeps the doctor away."])
+        XCTAssertEqual(reloaded.aiSuggestedDefinitionNote, "Suggested note.")
+        XCTAssertEqual(reloaded.aiAcceptedDefinitionNote, "A learner-friendly definition.")
     }
 
     func testAddWordUsesPublicResultWhenExamplesExist() async throws {

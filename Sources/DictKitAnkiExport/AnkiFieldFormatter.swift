@@ -22,7 +22,11 @@ public enum AnkiFieldFormatter {
     }
 
     /// Build HTML definitions grouped by part of speech.
-    public static func definitionsHTML(from result: LookupResult) -> String {
+    public static func definitionsHTML(
+        from result: LookupResult,
+        aiAcceptedExampleSentences: [String] = [],
+        aiAcceptedDefinitionNote: String? = nil
+    ) -> String {
         var html = ""
         for entry in result.entries {
             for lex in entry.lexicalEntries {
@@ -51,7 +55,10 @@ public enum AnkiFieldFormatter {
                 html += "</div>"
             }
         }
-        return html
+        return html + aiSupplementHTML(
+            acceptedExampleSentences: aiAcceptedExampleSentences,
+            acceptedDefinitionNote: aiAcceptedDefinitionNote
+        )
     }
 
     /// Render a full card HTML page for preview purposes (front or back).
@@ -89,5 +96,37 @@ public enum AnkiFieldFormatter {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func escapeHTMLPreservingLineBreaks(_ text: String) -> String {
+        escapeHTML(text)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    private static func aiSupplementHTML(
+        acceptedExampleSentences: [String],
+        acceptedDefinitionNote: String?
+    ) -> String {
+        var html = ""
+        if let acceptedDefinitionNote,
+           !acceptedDefinitionNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            html += "<p class=\"ai-inline-note\">"
+            html += "<span class=\"def\">\(escapeHTMLPreservingLineBreaks(acceptedDefinitionNote))</span>"
+            html += aiGeneratedTagHTML()
+            html += "</p>"
+        }
+        if !acceptedExampleSentences.isEmpty {
+            html += "<ul class=\"examples examples-supplement\">"
+            for sentence in acceptedExampleSentences {
+                html += "<li>\(escapeHTML(sentence))\(aiGeneratedTagHTML())</li>"
+            }
+            html += "</ul>"
+        }
+        return html
+    }
+
+    private static func aiGeneratedTagHTML() -> String {
+        "<span class=\"ai-tag\">AI-generated</span>"
     }
 }

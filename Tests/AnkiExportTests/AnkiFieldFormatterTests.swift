@@ -98,6 +98,42 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("examples"))
     }
 
+    func testDefinitionsHTMLIntegratesAcceptedAIContentWithoutLegacyHeadings() {
+        let result = makeLookupResult(
+            word: "lemmatize",
+            pronunciations: [],
+            senses: [("verb", "reduce to base form", ["We lemmatize the tokens before analysis."])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiAcceptedExampleSentences: ["Before analysis, we need to lemmatize the words carefully."],
+            aiAcceptedDefinitionNote: "EN: Reduce inflected forms to their base form."
+        )
+
+        XCTAssertTrue(html.contains("Before analysis, we need to lemmatize the words carefully."))
+        XCTAssertTrue(html.contains("EN: Reduce inflected forms to their base form."))
+        XCTAssertTrue(html.contains("AI-generated"))
+        XCTAssertFalse(html.contains("AI Examples"))
+        XCTAssertFalse(html.contains("AI Usage"))
+    }
+
+    func testDefinitionsHTMLPreservesLineBreaksInAcceptedUsageHint() {
+        let result = makeLookupResult(
+            word: "charge",
+            pronunciations: [],
+            senses: [("verb", "ask someone to pay a price", [])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiAcceptedDefinitionNote: "- [verb] EN: ask for payment | ZH: 索费\n- [verb] EN: fill a battery | ZH: 充电"
+        )
+
+        XCTAssertTrue(html.contains("<br>"))
+        XCTAssertTrue(html.contains("fill a battery"))
+    }
+
     // MARK: - Helpers
 
     private func makeLookupResult(

@@ -36,9 +36,11 @@ final class WordItem: ObservableObject, Identifiable {
     @Published var updatedAt: Date
     @Published var lastRefreshedAt: Date?
 
-    // AI-generated content
-    @Published var aiExampleSentences: [String] = []
-    @Published var aiDefinitionNote: String?
+    // AI suggestion layer (suggested -> accepted)
+    @Published var aiSuggestedExampleSentences: [String] = []
+    @Published var aiAcceptedExampleSentences: [String] = []
+    @Published var aiSuggestedDefinitionNote: String?
+    @Published var aiAcceptedDefinitionNote: String?
     @Published var isGeneratingAI: Bool = false
 
     var normalizedWord: String {

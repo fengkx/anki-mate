@@ -19,8 +19,10 @@ extension PersistedWordRecord {
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
             lastRefreshedAt: item.lastRefreshedAt,
-            aiExampleSentences: item.aiExampleSentences,
-            aiDefinitionNote: item.aiDefinitionNote
+            aiSuggestedExampleSentences: item.aiSuggestedExampleSentences,
+            aiAcceptedExampleSentences: item.aiAcceptedExampleSentences,
+            aiSuggestedDefinitionNote: item.aiSuggestedDefinitionNote,
+            aiAcceptedDefinitionNote: item.aiAcceptedDefinitionNote
         )
     }
 
@@ -37,8 +39,10 @@ extension PersistedWordRecord {
             updatedAt: updatedAt,
             lastRefreshedAt: lastRefreshedAt
         )
-        item.aiExampleSentences = aiExampleSentences
-        item.aiDefinitionNote = aiDefinitionNote
+        item.aiSuggestedExampleSentences = aiSuggestedExampleSentences
+        item.aiAcceptedExampleSentences = aiAcceptedExampleSentences
+        item.aiSuggestedDefinitionNote = aiSuggestedDefinitionNote
+        item.aiAcceptedDefinitionNote = aiAcceptedDefinitionNote
         return item
     }
 }

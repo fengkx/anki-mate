@@ -406,14 +406,26 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
-    func saveAIExampleSentences(_ sentences: [String], for item: WordItem) {
-        item.aiExampleSentences = sentences
+    func saveAISuggestedExampleSentences(_ sentences: [String], for item: WordItem) {
+        item.aiSuggestedExampleSentences = sentences
         touch(item)
         persist(item)
     }
 
-    func saveAIDefinitionNote(_ note: String?, for item: WordItem) {
-        item.aiDefinitionNote = note
+    func saveAIAcceptedExampleSentences(_ sentences: [String], for item: WordItem) {
+        item.aiAcceptedExampleSentences = sentences
+        touch(item)
+        persist(item)
+    }
+
+    func saveAISuggestedDefinitionNote(_ note: String?, for item: WordItem) {
+        item.aiSuggestedDefinitionNote = note
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIAcceptedDefinitionNote(_ note: String?, for item: WordItem) {
+        item.aiAcceptedDefinitionNote = note
         touch(item)
         persist(item)
     }
@@ -463,7 +475,9 @@ final class WordListViewModel: ObservableObject {
                     return AnkiExporter.ExportInput(
                         word: item.word,
                         lookupResult: result,
-                        audioData: item.audioData
+                        audioData: item.audioData,
+                        aiAcceptedExampleSentences: item.aiAcceptedExampleSentences,
+                        aiAcceptedDefinitionNote: item.aiAcceptedDefinitionNote
                     )
                 }
                 guard !inputs.isEmpty else {
@@ -621,6 +635,10 @@ final class WordListViewModel: ObservableObject {
             existing.audioData = record.audioData
             existing.updatedAt = record.updatedAt
             existing.lastRefreshedAt = record.lastRefreshedAt
+            existing.aiSuggestedExampleSentences = record.aiSuggestedExampleSentences
+            existing.aiAcceptedExampleSentences = record.aiAcceptedExampleSentences
+            existing.aiSuggestedDefinitionNote = record.aiSuggestedDefinitionNote
+            existing.aiAcceptedDefinitionNote = record.aiAcceptedDefinitionNote
         } else {
             let item = record.makeWordItem()
             wordCache[record.id] = item

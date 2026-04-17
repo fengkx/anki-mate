@@ -6,11 +6,21 @@ public struct AnkiExporter: Sendable {
         public let word: String
         public let lookupResult: LookupResult
         public let audioData: Data?
+        public let aiAcceptedExampleSentences: [String]
+        public let aiAcceptedDefinitionNote: String?
 
-        public init(word: String, lookupResult: LookupResult, audioData: Data?) {
+        public init(
+            word: String,
+            lookupResult: LookupResult,
+            audioData: Data?,
+            aiAcceptedExampleSentences: [String] = [],
+            aiAcceptedDefinitionNote: String? = nil
+        ) {
             self.word = word
             self.lookupResult = lookupResult
             self.audioData = audioData
+            self.aiAcceptedExampleSentences = aiAcceptedExampleSentences
+            self.aiAcceptedDefinitionNote = aiAcceptedDefinitionNote
         }
     }
 
@@ -63,7 +73,11 @@ public struct AnkiExporter: Sendable {
         for deck in decks {
             for input in deck.words {
                 let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
-                let definitions = AnkiFieldFormatter.definitionsHTML(from: input.lookupResult)
+                let definitions = AnkiFieldFormatter.definitionsHTML(
+                    from: input.lookupResult,
+                    aiAcceptedExampleSentences: input.aiAcceptedExampleSentences,
+                    aiAcceptedDefinitionNote: input.aiAcceptedDefinitionNote
+                )
                 if phonetic.isEmpty {
                     warnings.append("No pronunciation found for '\(input.word)'")
                 }
@@ -87,7 +101,11 @@ public struct AnkiExporter: Sendable {
         let deck = AnkiDeckConfig(deckName: deckName, deckDescription: deckDescription)
         let notes = words.map { input in
             let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
-            let definitions = AnkiFieldFormatter.definitionsHTML(from: input.lookupResult)
+            let definitions = AnkiFieldFormatter.definitionsHTML(
+                from: input.lookupResult,
+                aiAcceptedExampleSentences: input.aiAcceptedExampleSentences,
+                aiAcceptedDefinitionNote: input.aiAcceptedDefinitionNote
+            )
             let audioFilename = input.audioData.map { _ in
                 input.word
                     .trimmingCharacters(in: .whitespacesAndNewlines)

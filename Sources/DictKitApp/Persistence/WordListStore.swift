@@ -151,8 +151,10 @@ struct PersistedWordRecord: Equatable {
     let createdAt: Date
     let updatedAt: Date
     let lastRefreshedAt: Date?
-    let aiExampleSentences: [String]
-    let aiDefinitionNote: String?
+    let aiSuggestedExampleSentences: [String]
+    let aiAcceptedExampleSentences: [String]
+    let aiSuggestedDefinitionNote: String?
+    let aiAcceptedDefinitionNote: String?
 
     init(
         id: UUID,
@@ -166,8 +168,10 @@ struct PersistedWordRecord: Equatable {
         createdAt: Date,
         updatedAt: Date,
         lastRefreshedAt: Date?,
-        aiExampleSentences: [String] = [],
-        aiDefinitionNote: String? = nil
+        aiSuggestedExampleSentences: [String] = [],
+        aiAcceptedExampleSentences: [String] = [],
+        aiSuggestedDefinitionNote: String? = nil,
+        aiAcceptedDefinitionNote: String? = nil
     ) {
         self.id = id
         self.displayWord = displayWord
@@ -180,8 +184,10 @@ struct PersistedWordRecord: Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastRefreshedAt = lastRefreshedAt
-        self.aiExampleSentences = aiExampleSentences
-        self.aiDefinitionNote = aiDefinitionNote
+        self.aiSuggestedExampleSentences = aiSuggestedExampleSentences
+        self.aiAcceptedExampleSentences = aiAcceptedExampleSentences
+        self.aiSuggestedDefinitionNote = aiSuggestedDefinitionNote
+        self.aiAcceptedDefinitionNote = aiAcceptedDefinitionNote
     }
 }
 
@@ -193,7 +199,7 @@ enum PersistedLookupState: Codable, Equatable {
 }
 
 struct WordListStore: WordListStoring {
-    private static let schemaVersion = 8
+    private static let schemaVersion = 9
 
     let databaseURL: URL
 
@@ -371,7 +377,7 @@ struct WordListStore: WordListStoring {
         _ = try collection(id: collectionID)
         return try withDatabase { db in
             let sql = """
-            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_example_sentences, ai_definition_note
+            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
             FROM words
             WHERE collection_id = ? AND is_deleted = 0
             ORDER BY created_at ASC
@@ -390,7 +396,7 @@ struct WordListStore: WordListStoring {
     func loadAllWords() throws -> [PersistedWordRecord] {
         try withDatabase { db in
             let sql = """
-            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_example_sentences, ai_definition_note
+            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
             FROM words
             WHERE is_deleted = 0
             ORDER BY created_at ASC
@@ -416,8 +422,8 @@ struct WordListStore: WordListStoring {
 
             let sql = """
             INSERT INTO words (
-              id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_example_sentences, ai_definition_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             try bindAndInsertWord(record, collectionID: collectionID, db: db, sql: sql)
             return PersistedWordUpsertResult(record: record, insertedWord: true, insertedAssociation: false)
@@ -429,7 +435,7 @@ struct WordListStore: WordListStoring {
         try withDatabase { db in
             let sql = """
             UPDATE words
-            SET normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, lookup_state_json = ?, audio_data = ?, created_at = ?, updated_at = ?, last_refreshed_at = ?, ai_example_sentences = ?, ai_definition_note = ?
+            SET normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, lookup_state_json = ?, audio_data = ?, created_at = ?, updated_at = ?, last_refreshed_at = ?, ai_suggested_example_sentences = ?, ai_accepted_example_sentences = ?, ai_suggested_definition_note = ?, ai_accepted_definition_note = ?
             WHERE id = ?
             """
             var stmt: OpaquePointer?
@@ -439,7 +445,7 @@ struct WordListStore: WordListStoring {
             defer { sqlite3_finalize(stmt) }
 
             try bindWordFields(record, stmt: stmt, startIndex: 1)
-            sqlite3_bind_text(stmt, 13, record.id.uuidString, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 15, record.id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
@@ -539,7 +545,7 @@ struct WordListStore: WordListStoring {
 
     private func existingWord(normalizedWord: String, collectionID: UUID, db: OpaquePointer?) throws -> PersistedWordRecord? {
         let sql = """
-        SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_example_sentences, ai_definition_note
+        SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
         FROM words
         WHERE collection_id = ? AND normalized_word = ? AND is_deleted = 0
         LIMIT 1
@@ -622,17 +628,29 @@ struct WordListStore: WordListStoring {
         } else {
             sqlite3_bind_null(stmt, startIndex + 9)
         }
-        if !record.aiExampleSentences.isEmpty,
-           let json = try? JSONEncoder().encode(record.aiExampleSentences) {
+        if !record.aiSuggestedExampleSentences.isEmpty,
+           let json = try? JSONEncoder().encode(record.aiSuggestedExampleSentences) {
             let jsonStr = String(data: json, encoding: .utf8)!
             sqlite3_bind_text(stmt, startIndex + 10, jsonStr, -1, transientDestructor)
         } else {
             sqlite3_bind_null(stmt, startIndex + 10)
         }
-        if let note = record.aiDefinitionNote {
-            sqlite3_bind_text(stmt, startIndex + 11, note, -1, transientDestructor)
+        if !record.aiAcceptedExampleSentences.isEmpty,
+           let json = try? JSONEncoder().encode(record.aiAcceptedExampleSentences) {
+            let jsonStr = String(data: json, encoding: .utf8)!
+            sqlite3_bind_text(stmt, startIndex + 11, jsonStr, -1, transientDestructor)
         } else {
             sqlite3_bind_null(stmt, startIndex + 11)
+        }
+        if let note = record.aiSuggestedDefinitionNote {
+            sqlite3_bind_text(stmt, startIndex + 12, note, -1, transientDestructor)
+        } else {
+            sqlite3_bind_null(stmt, startIndex + 12)
+        }
+        if let note = record.aiAcceptedDefinitionNote {
+            sqlite3_bind_text(stmt, startIndex + 13, note, -1, transientDestructor)
+        } else {
+            sqlite3_bind_null(stmt, startIndex + 13)
         }
     }
 
@@ -646,13 +664,21 @@ struct WordListStore: WordListStoring {
 
     private func readWord(from stmt: OpaquePointer?) throws -> PersistedWordRecord {
         // Decode AI example sentences from JSON string
-        let aiSentences: [String]
+        let aiSuggestedSentences: [String]
         if let sentencesJson = nullableTextColumn(stmt, index: 11),
            let data = sentencesJson.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            aiSentences = decoded
+            aiSuggestedSentences = decoded
         } else {
-            aiSentences = []
+            aiSuggestedSentences = []
+        }
+        let aiAcceptedSentences: [String]
+        if let sentencesJson = nullableTextColumn(stmt, index: 12),
+           let data = sentencesJson.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            aiAcceptedSentences = decoded
+        } else {
+            aiAcceptedSentences = []
         }
 
         let record = PersistedWordRecord(
@@ -667,8 +693,10 @@ struct WordListStore: WordListStoring {
             createdAt: dateColumn(stmt, index: 8),
             updatedAt: dateColumn(stmt, index: 9),
             lastRefreshedAt: sqlite3_column_type(stmt, 10) == SQLITE_NULL ? nil : dateColumn(stmt, index: 10),
-            aiExampleSentences: aiSentences,
-            aiDefinitionNote: nullableTextColumn(stmt, index: 12)
+            aiSuggestedExampleSentences: aiSuggestedSentences,
+            aiAcceptedExampleSentences: aiAcceptedSentences,
+            aiSuggestedDefinitionNote: nullableTextColumn(stmt, index: 13),
+            aiAcceptedDefinitionNote: nullableTextColumn(stmt, index: 14)
         )
         try validateWord(record)
         return record
@@ -721,17 +749,23 @@ struct WordListStore: WordListStoring {
         switch version {
         case schemaVersion:
             return
+        case 8:
+            try migrateFromVersion8(db: db)
+            try setSchemaVersion(schemaVersion, db: db)
         case 7:
             try migrateFromVersion7(db: db)
+            try migrateFromVersion8(db: db)
             try setSchemaVersion(schemaVersion, db: db)
         case 6:
             try migrateFromVersion6(db: db)
             try migrateFromVersion7(db: db)
+            try migrateFromVersion8(db: db)
             try setSchemaVersion(schemaVersion, db: db)
         case 5:
             try migrateFromVersion5(db: db)
             try migrateFromVersion6(db: db)
             try migrateFromVersion7(db: db)
+            try migrateFromVersion8(db: db)
             try setSchemaVersion(schemaVersion, db: db)
         default:
             try rebuildSchema(db: db)
@@ -775,8 +809,10 @@ struct WordListStore: WordListStoring {
               last_refreshed_at REAL,
               is_deleted INTEGER NOT NULL DEFAULT 0,
               audio_hash TEXT,
-              ai_example_sentences TEXT,
-              ai_definition_note TEXT,
+              ai_suggested_example_sentences TEXT,
+              ai_accepted_example_sentences TEXT,
+              ai_suggested_definition_note TEXT,
+              ai_accepted_definition_note TEXT,
               UNIQUE (collection_id, normalized_word),
               FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
             );
@@ -863,6 +899,19 @@ struct WordListStore: WordListStoring {
     private static func migrateFromVersion7(db: OpaquePointer?) throws {
         try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_example_sentences TEXT;")
         try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_definition_note TEXT;")
+    }
+
+    private static func migrateFromVersion8(db: OpaquePointer?) throws {
+        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_suggested_example_sentences TEXT;")
+        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_accepted_example_sentences TEXT;")
+        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_suggested_definition_note TEXT;")
+        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_accepted_definition_note TEXT;")
+        try exec(db: db, sql: """
+            UPDATE words
+            SET ai_suggested_example_sentences = ai_example_sentences,
+                ai_suggested_definition_note = ai_definition_note
+            WHERE ai_example_sentences IS NOT NULL OR ai_definition_note IS NOT NULL;
+        """)
     }
 
     static func exec(db: OpaquePointer?, sql: String) throws {

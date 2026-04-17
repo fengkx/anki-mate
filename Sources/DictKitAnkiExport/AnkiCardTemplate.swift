@@ -50,5 +50,37 @@ public enum AnkiCardTemplate {
                    margin-bottom: 2px; }
     .examples li::before { content: "\\201C"; }
     .examples li::after { content: "\\201D"; }
+    .ai-inline-note {
+      margin: 14px 0 0;
+      line-height: 1.55;
+      color: #374151;
+    }
+    .ai-supplement-list {
+      margin-top: 14px;
+      padding-left: 24px;
+    }
+    .ai-tag {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: #6b7280;
+      background: #f3f4f6;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .examples-supplement li {
+      color: #374151;
+      font-style: normal;
+      margin-bottom: 10px;
+      line-height: 1.55;
+    }
+    .examples-supplement li::before,
+    .examples-supplement li::after {
+      content: none;
+    }
     """
 }
