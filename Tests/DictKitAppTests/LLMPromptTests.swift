@@ -66,4 +66,49 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("2. verb: ask someone to pay a price"))
         XCTAssertTrue(prompt.user.contains("3. verb: fill a battery"))
     }
+
+    func testRecallDraftPromptIncludesRequestedModesAndAnchorSnapshot() {
+        let prompt = LLMPrompt.recallCardDrafts(
+            word: "take off",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "verb",
+                    definition: "leave the ground and begin to fly",
+                    semanticHint: "air travel"
+                )
+            ],
+            modes: [.fullSpelling, .targetedLetterCloze, .phraseRecall],
+            anchor: LLMAnchorSnapshot(text: "take ___", note: "UI snapshot only")
+        )
+
+        XCTAssertTrue(prompt.system.contains("strict JSON"))
+        XCTAssertTrue(prompt.user.contains("Generate exactly 3 recall card drafts"))
+        XCTAssertTrue(prompt.user.contains("full_spelling"))
+        XCTAssertTrue(prompt.user.contains("targeted_letter_cloze"))
+        XCTAssertTrue(prompt.user.contains("phrase_recall"))
+        XCTAssertTrue(prompt.user.contains("\"take ___\" [note: UI snapshot only]"))
+        XCTAssertTrue(prompt.user.contains("\"drafts\""))
+        XCTAssertTrue(prompt.user.contains("anchor is optional display metadata only"))
+    }
+
+    func testLearningAidsPromptRequestsStructuredPitfallsMnemonicsAndCollocations() {
+        let prompt = LLMPrompt.learningAids(
+            word: "charge",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation"),
+                LLMSensePromptInput(partOfSpeech: "verb", definition: "ask someone to pay a price")
+            ],
+            anchor: LLMAnchorSnapshot(text: "charge", note: "keep raw")
+        )
+
+        XCTAssertTrue(prompt.system.contains("strict JSON learning aids"))
+        XCTAssertTrue(prompt.user.contains("\"pitfalls\""))
+        XCTAssertTrue(prompt.user.contains("\"mnemonics\""))
+        XCTAssertTrue(prompt.user.contains("\"collocations\""))
+        XCTAssertTrue(prompt.user.contains("\"summary\""))
+        XCTAssertTrue(prompt.user.contains("\"clue\""))
+        XCTAssertTrue(prompt.user.contains("\"phrase\""))
+        XCTAssertTrue(prompt.user.contains("\"charge\" [note: keep raw]"))
+        XCTAssertTrue(prompt.user.contains("do not invent source offsets or remap anchors"))
+    }
 }

@@ -36,12 +36,131 @@ final class WordItem: ObservableObject, Identifiable {
     @Published var updatedAt: Date
     @Published var lastRefreshedAt: Date?
 
-    // AI suggestion layer (suggested -> accepted)
-    @Published var aiSuggestedExampleSentences: [String] = []
-    @Published var aiAcceptedExampleSentences: [String] = []
-    @Published var aiSuggestedDefinitionNote: String?
-    @Published var aiAcceptedDefinitionNote: String?
+    // AI artifacts are stored in a single typed schema with suggested/accepted slots.
+    @Published var aiArtifacts: AIArtifacts = .empty
     @Published var isGeneratingAI: Bool = false
+
+    var aiSuggestedExampleSentences: [String] {
+        get { aiArtifacts.suggestedExampleSentences }
+        set {
+            aiArtifacts.exampleSentences.suggested = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return ExampleSentenceArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiAcceptedExampleSentences: [String] {
+        get { aiArtifacts.acceptedExampleSentences }
+        set {
+            aiArtifacts.exampleSentences.accepted = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return ExampleSentenceArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiSuggestedDefinitionNote: String? {
+        get { aiArtifacts.suggestedDefinitionNoteText }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                aiArtifacts.definitionNote.suggested = DefinitionNoteArtifact(text: trimmed)
+            } else {
+                aiArtifacts.definitionNote.suggested = nil
+            }
+        }
+    }
+
+    var aiAcceptedDefinitionNote: String? {
+        get { aiArtifacts.acceptedDefinitionNoteText }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                aiArtifacts.definitionNote.accepted = DefinitionNoteArtifact(text: trimmed)
+            } else {
+                aiArtifacts.definitionNote.accepted = nil
+            }
+        }
+    }
+
+    var aiSuggestedRecallCardDrafts: [RecallCardDraft] {
+        get { aiArtifacts.recallCardDrafts.suggested ?? [] }
+        set { aiArtifacts.recallCardDrafts.suggested = newValue.nilIfEmpty }
+    }
+
+    var aiAcceptedRecallCardDrafts: [RecallCardDraft] {
+        get { aiArtifacts.recallCardDrafts.accepted ?? [] }
+        set { aiArtifacts.recallCardDrafts.accepted = newValue.nilIfEmpty }
+    }
+
+    var aiSuggestedPitfalls: [String] {
+        get { aiArtifacts.suggestedPitfallTexts }
+        set {
+            aiArtifacts.pitfalls.suggested = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return PitfallArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiAcceptedPitfalls: [String] {
+        get { aiArtifacts.acceptedPitfallTexts }
+        set {
+            aiArtifacts.pitfalls.accepted = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return PitfallArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiSuggestedMnemonics: [String] {
+        get { aiArtifacts.suggestedMnemonicTexts }
+        set {
+            aiArtifacts.mnemonics.suggested = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return MnemonicArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiAcceptedMnemonics: [String] {
+        get { aiArtifacts.acceptedMnemonicTexts }
+        set {
+            aiArtifacts.mnemonics.accepted = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return MnemonicArtifact(text: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiSuggestedCollocations: [String] {
+        get { aiArtifacts.suggestedCollocationPhrases }
+        set {
+            aiArtifacts.collocations.suggested = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return CollocationArtifact(phrase: trimmed)
+            }.nilIfEmpty
+        }
+    }
+
+    var aiAcceptedCollocations: [String] {
+        get { aiArtifacts.acceptedCollocationPhrases }
+        set {
+            aiArtifacts.collocations.accepted = newValue.compactMap {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return CollocationArtifact(phrase: trimmed)
+            }.nilIfEmpty
+        }
+    }
 
     var normalizedWord: String {
         WordListStore.normalizedWord(for: word)
@@ -125,6 +244,12 @@ final class WordItem: ObservableObject, Identifiable {
 
 private extension String {
     var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension Array {
+    var nilIfEmpty: Self? {
         isEmpty ? nil : self
     }
 }

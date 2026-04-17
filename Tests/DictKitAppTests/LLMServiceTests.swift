@@ -181,12 +181,30 @@ final class LLMServiceTests: XCTestCase {
         ]
 
         let resolved = LLMService.resolveAutoSelectedModelId(
+            lastSuccessfullyLoadedModelId: nil,
             currentSelectedModelId: "b",
             registryModels: models,
             downloadedModelIDs: ["a", "b"]
         )
 
         XCTAssertEqual(resolved, "b")
+    }
+
+    func testResolveAutoSelectedModelPrefersLastSuccessfulDownloadedModel() {
+        let models = [
+            ModelInfo(id: "a", displayName: "A", fileName: "a.gguf", url: "https://example.com/a.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "b", displayName: "B", fileName: "b.gguf", url: "https://example.com/b.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "c", displayName: "C", fileName: "c.gguf", url: "https://example.com/c.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048)
+        ]
+
+        let resolved = LLMService.resolveAutoSelectedModelId(
+            lastSuccessfullyLoadedModelId: "c",
+            currentSelectedModelId: "b",
+            registryModels: models,
+            downloadedModelIDs: ["a", "b", "c"]
+        )
+
+        XCTAssertEqual(resolved, "c")
     }
 
     func testResolveAutoSelectedModelFallsBackToFirstDownloadedRegistryModel() {
@@ -197,12 +215,112 @@ final class LLMServiceTests: XCTestCase {
         ]
 
         let resolved = LLMService.resolveAutoSelectedModelId(
+            lastSuccessfullyLoadedModelId: "missing",
             currentSelectedModelId: "missing",
             registryModels: models,
             downloadedModelIDs: ["c", "b"]
         )
 
         XCTAssertEqual(resolved, "b")
+    }
+
+    func testDecodeStructuredRecallDraftsPreservesAnchorSnapshotWithoutRemapping() throws {
+        let payload = """
+        ```json
+        {
+          "drafts": [
+            {
+              "mode": "full_spelling",
+              "front": "根据中文提示写出完整单词",
+              "back": "spelling",
+              "hint": "double l",
+              "anchor": {
+                "text": "speeling",
+                "note": "raw OCR snapshot"
+              }
+            },
+            {
+              "mode": "targetedLetterCloze",
+              "front": "根据提示补全 spe__ing",
+              "back": "spelling",
+              "hint": "watch the ll",
+              "anchor": null
+            }
+          ]
+        }
+        ```
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            decoded.drafts,
+            requestedModes: [.fullSpelling, .targetedLetterCloze, .phraseRecall]
+        )
+
+        XCTAssertEqual(drafts.map(\.mode), [.fullSpelling, .targetedLetterCloze])
+        XCTAssertEqual(drafts.first?.anchor?.text, "speeling")
+        XCTAssertEqual(drafts.first?.anchor?.note, "raw OCR snapshot")
+    }
+
+    func testDecodeLearningAidsTrimsWhitespaceAndKeepsSectionsSeparate() throws {
+        let payload = """
+        model output:
+        {
+          "pitfalls": [
+            {
+              "summary": "  Don't confuse it with fee.  ",
+              "details": "  Money asked for service.  ",
+              "anchor": { "text": "charge", "note": "snapshot" }
+            }
+          ],
+          "mnemonics": [
+            {
+              "clue": "  charge -> car battery starts charging  ",
+              "anchor": null
+            }
+          ],
+          "collocations": [
+            {
+              "phrase": "  charge a fee  ",
+              "gloss": "  ask for money  ",
+              "anchor": { "text": "charge a fee", "note": "" }
+            }
+          ]
+        }
+        extra trailing note
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            LearningAidsEnvelope.self,
+            from: payload
+        )
+        let aids = LLMService.normalizeLearningAids(decoded)
+
+        XCTAssertEqual(aids.pitfalls.count, 1)
+        XCTAssertEqual(aids.pitfalls[0].summary, "Don't confuse it with fee.")
+        XCTAssertEqual(aids.pitfalls[0].details, "Money asked for service.")
+        XCTAssertEqual(aids.pitfalls[0].anchor?.text, "charge")
+        XCTAssertEqual(aids.mnemonics.map(\.clue), ["charge -> car battery starts charging"])
+        XCTAssertEqual(aids.collocations.map(\.phrase), ["charge a fee"])
+        XCTAssertEqual(aids.collocations.first?.gloss, "ask for money")
+        XCTAssertNil(aids.collocations.first?.anchor?.note)
+    }
+
+    func testDecodeStructuredOutputThrowsForNonJSONPayload() {
+        XCTAssertThrowsError(
+            try LLMService.decodeStructuredOutput(
+                LearningAidsEnvelope.self,
+                from: "plain text only"
+            )
+        ) { error in
+            guard case LLMServiceError.invalidStructuredOutput(let message) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("Expected JSON object"))
+        }
     }
 
     private func makeTemporaryDirectory() -> URL {

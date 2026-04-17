@@ -134,6 +134,39 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("fill a battery"))
     }
 
+    func testDefinitionsHTMLRendersUnifiedArtifactSections() {
+        let result = makeLookupResult(
+            word: "consensus",
+            pronunciations: [],
+            senses: [("noun", "general agreement", [])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiArtifacts: AIArtifacts(
+                recallCardDrafts: AIArtifactSlot(
+                    accepted: [RecallCardDraft(mode: .phraseRecall, front: "reach a ____", back: "consensus", hint: "noun")]
+                ),
+                pitfalls: AIArtifactSlot(
+                    accepted: [PitfallArtifact(text: "Do not confuse it with consent.")]
+                ),
+                mnemonics: AIArtifactSlot(
+                    accepted: [MnemonicArtifact(text: "Consensus sounds like many voices settling down.")]
+                ),
+                collocations: AIArtifactSlot(
+                    accepted: [CollocationArtifact(phrase: "reach a consensus", note: "very common academic usage")]
+                )
+            )
+        )
+
+        XCTAssertTrue(html.contains("Recall Cards"))
+        XCTAssertTrue(html.contains("reach a ____"))
+        XCTAssertTrue(html.contains("Do not confuse it with consent."))
+        XCTAssertTrue(html.contains("Consensus sounds like many voices settling down."))
+        XCTAssertTrue(html.contains("reach a consensus"))
+        XCTAssertTrue(html.contains("AI-generated"))
+    }
+
     // MARK: - Helpers
 
     private func makeLookupResult(

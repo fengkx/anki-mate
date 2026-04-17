@@ -186,4 +186,72 @@ final class AnkiExporterTests: XCTestCase {
         XCTAssertEqual(result.mediaCount, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
+
+    func testExportAcceptsUnifiedAIArtifactsContract() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let outputURL = tempDir.appendingPathComponent("artifacts.apkg")
+        let lookupResult = LookupResult(
+            query: "consensus",
+            entries: [HeadwordEntry(
+                headword: "consensus",
+                pronunciations: [Pronunciation(dialect: "AmE", ipa: "kənˈsɛnsəs", respelling: nil)],
+                lexicalEntries: [LexicalEntry(
+                    partOfSpeech: .noun,
+                    partOfSpeechLabel: "noun",
+                    displayIndex: 0,
+                    pronunciations: [],
+                    senses: [Sense(
+                        number: 1,
+                        semanticHint: nil,
+                        definition: "general agreement",
+                        examples: [],
+                        registers: [],
+                        countability: nil
+                    )],
+                    grammar: [],
+                    inflections: []
+                )],
+                phraseGroups: [],
+                notes: []
+            )],
+            metadata: LookupMetadata(usedSource: .publicAPI, warnings: []),
+            source: nil
+        )
+
+        let artifacts = AIArtifacts(
+            definitionNote: AIArtifactSlot(
+                accepted: DefinitionNoteArtifact(text: "Use it for group agreement, not individual permission.")
+            ),
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [RecallCardDraft(mode: .phraseRecall, front: "reach a ____", back: "consensus")]
+            ),
+            pitfalls: AIArtifactSlot(
+                accepted: [PitfallArtifact(text: "Do not confuse it with consent.")]
+            ),
+            collocations: AIArtifactSlot(
+                accepted: [CollocationArtifact(phrase: "reach a consensus")]
+            )
+        )
+
+        let result = try AnkiExporter.export(
+            words: [
+                AnkiExporter.ExportInput(
+                    word: "consensus",
+                    lookupResult: lookupResult,
+                    audioData: nil,
+                    aiArtifacts: artifacts
+                )
+            ],
+            deckName: "Artifacts",
+            to: outputURL
+        )
+
+        XCTAssertEqual(result.cardCount, 1)
+        XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+    }
 }

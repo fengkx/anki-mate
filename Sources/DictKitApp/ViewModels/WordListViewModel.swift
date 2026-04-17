@@ -476,8 +476,7 @@ final class WordListViewModel: ObservableObject {
                         word: item.word,
                         lookupResult: result,
                         audioData: item.audioData,
-                        aiAcceptedExampleSentences: item.aiAcceptedExampleSentences,
-                        aiAcceptedDefinitionNote: item.aiAcceptedDefinitionNote
+                        aiArtifacts: item.aiArtifacts
                     )
                 }
                 guard !inputs.isEmpty else {
@@ -635,10 +634,7 @@ final class WordListViewModel: ObservableObject {
             existing.audioData = record.audioData
             existing.updatedAt = record.updatedAt
             existing.lastRefreshedAt = record.lastRefreshedAt
-            existing.aiSuggestedExampleSentences = record.aiSuggestedExampleSentences
-            existing.aiAcceptedExampleSentences = record.aiAcceptedExampleSentences
-            existing.aiSuggestedDefinitionNote = record.aiSuggestedDefinitionNote
-            existing.aiAcceptedDefinitionNote = record.aiAcceptedDefinitionNote
+            existing.aiArtifacts = record.aiArtifacts
         } else {
             let item = record.makeWordItem()
             wordCache[record.id] = item

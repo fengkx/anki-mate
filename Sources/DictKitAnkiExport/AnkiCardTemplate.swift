@@ -82,5 +82,38 @@ public enum AnkiCardTemplate {
     .examples-supplement li::after {
       content: none;
     }
+    .ai-subnote {
+      margin-top: 4px;
+      font-size: 14px;
+      color: #4b5563;
+      line-height: 1.5;
+    }
+    .ai-artifact-section {
+      margin-top: 18px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e7eb;
+    }
+    .ai-artifact-title {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #111827;
+    }
+    .ai-artifact-list {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .ai-artifact-list li {
+      margin-bottom: 8px;
+      line-height: 1.55;
+    }
+    .ai-recall-draft {
+      line-height: 1.6;
+    }
+    .ai-recall-mode,
+    .ai-collocation-phrase {
+      font-weight: 600;
+      color: #1f2937;
+    }
     """
 }

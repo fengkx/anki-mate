@@ -1,7 +1,9 @@
 import DictKit
+import DictKitAnkiExport
 import DictKitSystemDictionary
 import Foundation
 import Combine
+import SQLite3
 import XCTest
 @testable import DictKitApp
 
@@ -243,6 +245,85 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiAcceptedExampleSentences, ["An apple a day keeps the doctor away."])
         XCTAssertEqual(reloaded.aiSuggestedDefinitionNote, "Suggested note.")
         XCTAssertEqual(reloaded.aiAcceptedDefinitionNote, "A learner-friendly definition.")
+        XCTAssertEqual(reloaded.aiArtifacts.acceptedExampleSentences, ["An apple a day keeps the doctor away."])
+        XCTAssertEqual(reloaded.aiArtifacts.acceptedDefinitionNoteText, "A learner-friendly definition.")
+    }
+
+    func testUnifiedAIArtifactsPersistReservedTypesAcrossReload() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let artifacts = AIArtifacts(
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [
+                    RecallCardDraft(
+                        mode: .phraseRecall,
+                        front: "The committee reached a ____.",
+                        back: "consensus",
+                        hint: "noun"
+                    )
+                ]
+            ),
+            pitfalls: AIArtifactSlot(
+                accepted: [PitfallArtifact(text: "Do not confuse it with consent.")]
+            ),
+            mnemonics: AIArtifactSlot(
+                accepted: [MnemonicArtifact(text: "Consensus sounds like everyone says yes together.")]
+            ),
+            collocations: AIArtifactSlot(
+                accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common academic collocation")]
+            )
+        )
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Consensus",
+                normalizedWord: WordListStore.normalizedWord(for: "Consensus"),
+                lookupState: .loaded(Self.makeLookupResult(query: "consensus", definition: "general agreement", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil,
+                aiArtifacts: artifacts
+            ),
+            into: defaultCollection.id
+        )
+
+        let viewModel = try makeViewModel(store: store)
+        let reloaded = try XCTUnwrap(viewModel.words.only)
+
+        XCTAssertEqual(reloaded.aiArtifacts, artifacts)
+        XCTAssertEqual(reloaded.aiAcceptedRecallCardDrafts.count, 1)
+        XCTAssertEqual(reloaded.aiAcceptedPitfalls, ["Do not confuse it with consent."])
+        XCTAssertEqual(reloaded.aiAcceptedMnemonics, ["Consensus sounds like everyone says yes together."])
+        XCTAssertEqual(reloaded.aiAcceptedCollocations, ["reach a consensus"])
+    }
+
+    func testLegacyAIColumnsMigrateIntoUnifiedSchema() throws {
+        let databaseURL = try makeLegacySchemaDatabase(
+            suggestedExamples: ["Suggested example."],
+            acceptedExamples: ["Accepted example."],
+            suggestedDefinitionNote: "Suggested definition.",
+            acceptedDefinitionNote: "Accepted definition."
+        )
+        let store = try WordListStore(databaseURL: databaseURL)
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let migrated = try XCTUnwrap(try store.loadWords(in: defaultCollection.id).only)
+
+        XCTAssertEqual(migrated.aiArtifacts.suggestedExampleSentences, ["Suggested example."])
+        XCTAssertEqual(migrated.aiArtifacts.acceptedExampleSentences, ["Accepted example."])
+        XCTAssertEqual(migrated.aiArtifacts.suggestedDefinitionNoteText, "Suggested definition.")
+        XCTAssertEqual(migrated.aiArtifacts.acceptedDefinitionNoteText, "Accepted definition.")
+
+        try store.withDatabase { db in
+            let sql = "SELECT ai_artifacts_json FROM words LIMIT 1"
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
+            XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+            let json = String(cString: sqlite3_column_text(stmt, 0))
+            XCTAssertTrue(json.contains("\"schemaVersion\":1"))
+            XCTAssertTrue(json.contains("Accepted example."))
+        }
     }
 
     func testAddWordUsesPublicResultWhenExamplesExist() async throws {
@@ -413,6 +494,109 @@ final class WordListViewModelTests: XCTestCase {
         return try WordListStore(databaseURL: baseURL.appendingPathComponent("word-list.sqlite3"))
     }
 
+    private func makeLegacySchemaDatabase(
+        suggestedExamples: [String],
+        acceptedExamples: [String],
+        suggestedDefinitionNote: String,
+        acceptedDefinitionNote: String
+    ) throws -> URL {
+        let baseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        let databaseURL = baseURL.appendingPathComponent("word-list.sqlite3")
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        try execSQL(
+            """
+            PRAGMA user_version = 9;
+            CREATE TABLE collections (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              dictionary_name TEXT NOT NULL,
+              anki_deck_name TEXT NOT NULL,
+              deck_description TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              is_deleted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE words (
+              id TEXT PRIMARY KEY,
+              collection_id TEXT NOT NULL,
+              normalized_word TEXT NOT NULL,
+              display_word TEXT NOT NULL,
+              source_form TEXT,
+              inflection_kind TEXT,
+              expected_part_of_speech TEXT,
+              lookup_state_json BLOB,
+              audio_data BLOB,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_refreshed_at REAL,
+              is_deleted INTEGER NOT NULL DEFAULT 0,
+              audio_hash TEXT,
+              ai_suggested_example_sentences TEXT,
+              ai_accepted_example_sentences TEXT,
+              ai_suggested_definition_note TEXT,
+              ai_accepted_definition_note TEXT,
+              UNIQUE (collection_id, normalized_word)
+            );
+            CREATE TABLE sync_metadata (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
+            """,
+            db: db
+        )
+
+        let collectionID = UUID()
+        let wordID = UUID()
+        let lookupState = try JSONEncoder().encode(PersistedLookupState.loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])))
+        let suggestedExamplesJSON = try XCTUnwrap(String(data: try JSONEncoder().encode(suggestedExamples), encoding: .utf8))
+        let acceptedExamplesJSON = try XCTUnwrap(String(data: try JSONEncoder().encode(acceptedExamples), encoding: .utf8))
+
+        try execSQL(
+            """
+            INSERT INTO collections (id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, is_deleted)
+            VALUES ('\(collectionID.uuidString)', 'Default', '', 'Default', '', 10, 10, 0);
+            """,
+            db: db
+        )
+
+        var stmt: OpaquePointer?
+        let insertSQL = """
+        INSERT INTO words (
+          id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, is_deleted, audio_hash, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
+        ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, 10, 10, NULL, 0, NULL, ?, ?, ?, ?)
+        """
+        XCTAssertEqual(sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, wordID.uuidString, -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 2, collectionID.uuidString, -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 3, "apple", -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 4, "Apple", -1, testTransientDestructor)
+        _ = lookupState.withUnsafeBytes { bytes in
+            sqlite3_bind_blob(stmt, 5, bytes.baseAddress, Int32(bytes.count), testTransientDestructor)
+        }
+        sqlite3_bind_text(stmt, 6, suggestedExamplesJSON, -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 7, acceptedExamplesJSON, -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 8, suggestedDefinitionNote, -1, testTransientDestructor)
+        sqlite3_bind_text(stmt, 9, acceptedDefinitionNote, -1, testTransientDestructor)
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_DONE)
+
+        return databaseURL
+    }
+
+    private func execSQL(_ sql: String, db: OpaquePointer?) throws {
+        var error: UnsafeMutablePointer<CChar>?
+        let status = sqlite3_exec(db, sql, nil, nil, &error)
+        let message = error.map { String(cString: $0) } ?? "unknown"
+        XCTAssertEqual(status, SQLITE_OK, message)
+        sqlite3_free(error)
+    }
+
     private func makeViewModel(store: any WordListStoring) throws -> WordListViewModel {
         try makeViewModel(store: store, storeErrorMessage: nil) { _, _ in
             Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"])
@@ -514,3 +698,5 @@ private extension Array {
         count == 1 ? first : nil
     }
 }
+
+private let testTransientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

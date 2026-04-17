@@ -1,4 +1,5 @@
 import DictKitSystemDictionary
+import DictKitAnkiExport
 import Foundation
 
 extension PersistedWordRecord {
@@ -19,10 +20,7 @@ extension PersistedWordRecord {
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
             lastRefreshedAt: item.lastRefreshedAt,
-            aiSuggestedExampleSentences: item.aiSuggestedExampleSentences,
-            aiAcceptedExampleSentences: item.aiAcceptedExampleSentences,
-            aiSuggestedDefinitionNote: item.aiSuggestedDefinitionNote,
-            aiAcceptedDefinitionNote: item.aiAcceptedDefinitionNote
+            aiArtifacts: item.aiArtifacts
         )
     }
 
@@ -39,10 +37,7 @@ extension PersistedWordRecord {
             updatedAt: updatedAt,
             lastRefreshedAt: lastRefreshedAt
         )
-        item.aiSuggestedExampleSentences = aiSuggestedExampleSentences
-        item.aiAcceptedExampleSentences = aiAcceptedExampleSentences
-        item.aiSuggestedDefinitionNote = aiSuggestedDefinitionNote
-        item.aiAcceptedDefinitionNote = aiAcceptedDefinitionNote
+        item.aiArtifacts = aiArtifacts
         return item
     }
 }

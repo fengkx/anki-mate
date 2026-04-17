@@ -7,12 +7,14 @@ import AnkiMateRPC
 
 @MainActor
 public final class LLMService: ObservableObject {
+    private static let selectedModelIdDefaultsKey = "ankimate.selectedModelId"
+    private static let lastSuccessfulModelIdDefaultsKey = "ankimate.lastSuccessfullyLoadedModelId"
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var loadedModelId: String?
     @Published public var selectedModelId: String {
         didSet {
-            UserDefaults.standard.set(selectedModelId, forKey: "ankimate.selectedModelId")
+            defaults.set(selectedModelId, forKey: Self.selectedModelIdDefaultsKey)
         }
     }
 
@@ -21,17 +23,19 @@ public final class LLMService: ObservableObject {
     public let serverManager: ServerProcessManager
 
     private let rpcClient: RPCClient
+    private let defaults: UserDefaults
     private var cancellables = Set<AnyCancellable>()
     private var autoStartOnAvailableModel = false
     private var autoStartTask: Task<Void, Never>?
 
-    public init() {
+    public init(defaults: UserDefaults = .standard) {
         let client = RPCClient()
         self.rpcClient = client
+        self.defaults = defaults
         self.registry = ModelRegistry()
         self.downloadManager = ModelDownloadManager()
         self.serverManager = ServerProcessManager(rpcClient: client)
-        self.selectedModelId = UserDefaults.standard.string(forKey: "ankimate.selectedModelId") ?? ""
+        self.selectedModelId = defaults.string(forKey: Self.selectedModelIdDefaultsKey) ?? ""
 
         // Observe server state changes
         serverManager.$state
@@ -96,6 +100,7 @@ public final class LLMService: ObservableObject {
             )
 
             loadedModelId = model.id
+            defaults.set(model.id, forKey: Self.lastSuccessfulModelIdDefaultsKey)
         }
     }
 
@@ -117,6 +122,7 @@ public final class LLMService: ObservableObject {
         guard !downloadedModels.isEmpty else { return }
 
         if let resolvedModelId = Self.resolveAutoSelectedModelId(
+            lastSuccessfullyLoadedModelId: defaults.string(forKey: Self.lastSuccessfulModelIdDefaultsKey),
             currentSelectedModelId: selectedModelId,
             registryModels: registry.models,
             downloadedModelIDs: Set(downloadedModels.map(\.id))
@@ -317,6 +323,185 @@ public final class LLMService: ObservableObject {
         return normalizeUsageHint(result.text)
     }
 
+    public func generateRecallCardDrafts(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        modes: [LLMRecallCardMode] = LLMRecallCardMode.allCases,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMRecallCardDraft] {
+        try await generateRecallCardDrafts(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            modes: modes,
+            anchor: anchor
+        )
+    }
+
+    public func generateRecallCardDrafts(
+        word: String,
+        senses: [LLMSensePromptInput],
+        modes: [LLMRecallCardMode] = LLMRecallCardMode.allCases,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMRecallCardDraft] {
+        let requestedModes = modes.isEmpty ? LLMRecallCardMode.allCases : modes
+        let prompt = LLMPrompt.recallCardDrafts(
+            word: word,
+            senses: senses,
+            modes: requestedModes,
+            anchor: anchor
+        )
+
+        let response: RecallCardDraftEnvelope = try await generateStructuredOutput(
+            type: RecallCardDraftEnvelope.self,
+            prompt: prompt,
+            maxTokens: max(420, requestedModes.count * 140),
+            temperature: 0.35
+        )
+
+        return Self.normalizeRecallCardDrafts(
+            response.drafts,
+            requestedModes: requestedModes
+        )
+    }
+
+    public func generateLearningAids(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMLearningAids {
+        try await generateLearningAids(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            anchor: anchor
+        )
+    }
+
+    public func generateLearningAids(
+        word: String,
+        senses: [LLMSensePromptInput],
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMLearningAids {
+        let prompt = LLMPrompt.learningAids(
+            word: word,
+            senses: senses,
+            anchor: anchor
+        )
+
+        let response: LearningAidsEnvelope = try await generateStructuredOutput(
+            type: LearningAidsEnvelope.self,
+            prompt: prompt,
+            maxTokens: 560,
+            temperature: 0.4
+        )
+
+        return Self.normalizeLearningAids(response)
+    }
+
+    public func generatePitfalls(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMPitfall] {
+        try await generatePitfalls(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            anchor: anchor
+        )
+    }
+
+    public func generatePitfalls(
+        word: String,
+        senses: [LLMSensePromptInput],
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMPitfall] {
+        let aids = try await generateLearningAids(
+            word: word,
+            senses: senses,
+            anchor: anchor
+        )
+        return aids.pitfalls
+    }
+
+    public func generateMnemonics(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMMnemonic] {
+        try await generateMnemonics(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            anchor: anchor
+        )
+    }
+
+    public func generateMnemonics(
+        word: String,
+        senses: [LLMSensePromptInput],
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMMnemonic] {
+        let aids = try await generateLearningAids(
+            word: word,
+            senses: senses,
+            anchor: anchor
+        )
+        return aids.mnemonics
+    }
+
+    public func generateCollocations(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMCollocation] {
+        try await generateCollocations(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            anchor: anchor
+        )
+    }
+
+    public func generateCollocations(
+        word: String,
+        senses: [LLMSensePromptInput],
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> [LLMCollocation] {
+        let aids = try await generateLearningAids(
+            word: word,
+            senses: senses,
+            anchor: anchor
+        )
+        return aids.collocations
+    }
+
     // MARK: - Helpers
 
     private func parseSentences(_ text: String) -> [String] {
@@ -365,6 +550,31 @@ public final class LLMService: ObservableObject {
         return "\(candidate[enRange]) — \(candidate[zhRange])"
     }
 
+    private func generateStructuredOutput<T: Decodable>(
+        type: T.Type,
+        prompt: (system: String, user: String),
+        maxTokens: Int,
+        temperature: Float
+    ) async throws -> T {
+        try await ensureReady()
+        guard let port = serverState.port else {
+            throw LLMServiceError.serverNotAvailable
+        }
+
+        let result: GenerateResult = try await rpcClient.call(
+            method: RPCMethod.generate,
+            params: GenerateParams(
+                prompt: prompt.user,
+                systemPrompt: prompt.system,
+                maxTokens: maxTokens,
+                temperature: temperature
+            ),
+            port: port
+        )
+
+        return try Self.decodeStructuredOutput(type, from: result.text)
+    }
+
     /// Whether the service is ready for generation (server running, model loaded).
     public var isReady: Bool {
         serverState.isRunning && loadedModelId != nil
@@ -379,11 +589,16 @@ public final class LLMService: ObservableObject {
     }
 
     static func resolveAutoSelectedModelId(
+        lastSuccessfullyLoadedModelId: String?,
         currentSelectedModelId: String,
         registryModels: [ModelInfo],
         downloadedModelIDs: Set<String>
     ) -> String? {
         guard !downloadedModelIDs.isEmpty else { return nil }
+        if let lastSuccessfullyLoadedModelId,
+           downloadedModelIDs.contains(lastSuccessfullyLoadedModelId) {
+            return lastSuccessfullyLoadedModelId
+        }
         if downloadedModelIDs.contains(currentSelectedModelId) {
             return currentSelectedModelId
         }
@@ -400,18 +615,310 @@ public final class LLMService: ObservableObject {
     }
 }
 
+struct RecallCardDraftEnvelope: Decodable {
+    let drafts: [RecallCardDraftPayload]
+
+    private enum CodingKeys: String, CodingKey {
+        case drafts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.drafts = try container.decodeIfPresent([RecallCardDraftPayload].self, forKey: .drafts) ?? []
+    }
+}
+
+struct RecallCardDraftPayload: Decodable {
+    let mode: String
+    let front: String
+    let back: String
+    let hint: String?
+    let anchor: LLMAnchorSnapshot?
+}
+
+struct LearningAidsEnvelope: Decodable {
+    let pitfalls: [PitfallPayload]
+    let mnemonics: [MnemonicPayload]
+    let collocations: [CollocationPayload]
+
+    init(
+        pitfalls: [PitfallPayload] = [],
+        mnemonics: [MnemonicPayload] = [],
+        collocations: [CollocationPayload] = []
+    ) {
+        self.pitfalls = pitfalls
+        self.mnemonics = mnemonics
+        self.collocations = collocations
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pitfalls
+        case mnemonics
+        case collocations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pitfalls = try container.decodeIfPresent([PitfallPayload].self, forKey: .pitfalls) ?? []
+        self.mnemonics = try container.decodeIfPresent([MnemonicPayload].self, forKey: .mnemonics) ?? []
+        self.collocations = try container.decodeIfPresent([CollocationPayload].self, forKey: .collocations) ?? []
+    }
+}
+
+struct PitfallPayload: Decodable {
+    let summary: String
+    let details: String?
+    let anchor: LLMAnchorSnapshot?
+}
+
+struct MnemonicPayload: Decodable {
+    let clue: String
+    let anchor: LLMAnchorSnapshot?
+}
+
+struct CollocationPayload: Decodable {
+    let phrase: String
+    let gloss: String?
+    let anchor: LLMAnchorSnapshot?
+}
+
+extension LLMService {
+    static func decodeStructuredOutput<T: Decodable>(
+        _ type: T.Type,
+        from text: String
+    ) throws -> T {
+        let decoder = JSONDecoder()
+        var attemptedPayloads: [String] = []
+
+        for candidate in structuredOutputCandidates(from: text) {
+            guard !attemptedPayloads.contains(candidate) else { continue }
+            attemptedPayloads.append(candidate)
+
+            guard let data = candidate.data(using: .utf8) else { continue }
+            if let decoded = try? decoder.decode(T.self, from: data) {
+                return decoded
+            }
+        }
+
+        throw LLMServiceError.invalidStructuredOutput(
+            "Expected JSON object for structured output"
+        )
+    }
+
+    static func normalizeRecallCardDrafts(
+        _ payloads: [RecallCardDraftPayload],
+        requestedModes: [LLMRecallCardMode]
+    ) -> [LLMRecallCardDraft] {
+        let requestedModeSet = Set(requestedModes)
+        var draftsByMode: [LLMRecallCardMode: LLMRecallCardDraft] = [:]
+
+        for payload in payloads {
+            guard let mode = normalizedRecallCardMode(from: payload.mode),
+                  requestedModeSet.contains(mode),
+                  draftsByMode[mode] == nil,
+                  let draft = normalizeRecallCardDraft(payload, mode: mode) else {
+                continue
+            }
+            draftsByMode[mode] = draft
+        }
+
+        return requestedModes.compactMap { draftsByMode[$0] }
+    }
+
+    static func normalizeLearningAids(_ payload: LearningAidsEnvelope) -> LLMLearningAids {
+        LLMLearningAids(
+            pitfalls: payload.pitfalls.compactMap(normalizePitfall),
+            mnemonics: payload.mnemonics.compactMap(normalizeMnemonic),
+            collocations: payload.collocations.compactMap(normalizeCollocation)
+        )
+    }
+
+    private static func structuredOutputCandidates(from text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var candidates = [trimmed]
+        candidates.append(contentsOf: fencedCodeBlockContents(in: trimmed))
+
+        if let object = firstBalancedJSONBlock(in: trimmed, opening: "{", closing: "}") {
+            candidates.append(object)
+        }
+        if let array = firstBalancedJSONBlock(in: trimmed, opening: "[", closing: "]") {
+            candidates.append(array)
+        }
+
+        for block in fencedCodeBlockContents(in: trimmed) {
+            if let object = firstBalancedJSONBlock(in: block, opening: "{", closing: "}") {
+                candidates.append(object)
+            }
+            if let array = firstBalancedJSONBlock(in: block, opening: "[", closing: "]") {
+                candidates.append(array)
+            }
+        }
+
+        return candidates
+    }
+
+    private static func fencedCodeBlockContents(in text: String) -> [String] {
+        let pattern = #"```(?:json)?\s*([\s\S]*?)```"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return []
+        }
+
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.matches(in: text, range: nsRange).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: text) else { return nil }
+            return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    private static func firstBalancedJSONBlock(
+        in text: String,
+        opening: Character,
+        closing: Character
+    ) -> String? {
+        var startIndex: String.Index?
+        var depth = 0
+        var isInsideString = false
+        var isEscaping = false
+
+        for index in text.indices {
+            let character = text[index]
+
+            if isInsideString {
+                if isEscaping {
+                    isEscaping = false
+                } else if character == "\\" {
+                    isEscaping = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+                continue
+            }
+
+            if character == "\"" {
+                isInsideString = true
+                continue
+            }
+
+            if character == opening {
+                if depth == 0 {
+                    startIndex = index
+                }
+                depth += 1
+                continue
+            }
+
+            guard character == closing, depth > 0 else { continue }
+            depth -= 1
+
+            if depth == 0, let startIndex {
+                let endIndex = text.index(after: index)
+                return String(text[startIndex..<endIndex])
+            }
+        }
+
+        return nil
+    }
+
+    private static func normalizedRecallCardMode(from rawValue: String) -> LLMRecallCardMode? {
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+
+        switch normalized {
+        case LLMRecallCardMode.fullSpelling.rawValue, "fullspelling":
+            return .fullSpelling
+        case LLMRecallCardMode.targetedLetterCloze.rawValue, "targetedlettercloze":
+            return .targetedLetterCloze
+        case LLMRecallCardMode.phraseRecall.rawValue, "phraserecall":
+            return .phraseRecall
+        default:
+            return nil
+        }
+    }
+
+    private static func normalizeRecallCardDraft(
+        _ payload: RecallCardDraftPayload,
+        mode: LLMRecallCardMode
+    ) -> LLMRecallCardDraft? {
+        let front = payload.front.trimmingCharacters(in: .whitespacesAndNewlines)
+        let back = payload.back.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !front.isEmpty, !back.isEmpty else { return nil }
+
+        let hint = payload.hint?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let anchor = normalizeAnchor(payload.anchor)
+        return LLMRecallCardDraft(
+            mode: mode,
+            front: front,
+            back: back,
+            hint: hint,
+            anchor: anchor
+        )
+    }
+
+    private static func normalizePitfall(_ payload: PitfallPayload) -> LLMPitfall? {
+        let summary = payload.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else { return nil }
+        return LLMPitfall(
+            summary: summary,
+            details: payload.details?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            anchor: normalizeAnchor(payload.anchor)
+        )
+    }
+
+    private static func normalizeMnemonic(_ payload: MnemonicPayload) -> LLMMnemonic? {
+        let clue = payload.clue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clue.isEmpty else { return nil }
+        return LLMMnemonic(
+            clue: clue,
+            anchor: normalizeAnchor(payload.anchor)
+        )
+    }
+
+    private static func normalizeCollocation(_ payload: CollocationPayload) -> LLMCollocation? {
+        let phrase = payload.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return nil }
+        return LLMCollocation(
+            phrase: phrase,
+            gloss: payload.gloss?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            anchor: normalizeAnchor(payload.anchor)
+        )
+    }
+
+    private static func normalizeAnchor(_ anchor: LLMAnchorSnapshot?) -> LLMAnchorSnapshot? {
+        guard let anchor else { return nil }
+        let text = anchor.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return LLMAnchorSnapshot(
+            text: text,
+            note: anchor.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        )
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
 // MARK: - Errors
 
 public enum LLMServiceError: Error, LocalizedError {
     case serverNotAvailable
     case noModelSelected
     case modelNotDownloaded
+    case invalidStructuredOutput(String)
 
     public var errorDescription: String? {
         switch self {
         case .serverNotAvailable: return "Inference server is not available"
         case .noModelSelected: return "No model selected"
         case .modelNotDownloaded: return "Selected model has not been downloaded yet"
+        case .invalidStructuredOutput(let message): return message
         }
     }
 }

@@ -1,5 +1,6 @@
 import CryptoKit
 import DictKit
+import DictKitAnkiExport
 import DictKitSystemDictionary
 import Foundation
 import SQLite3
@@ -47,7 +48,7 @@ extension WordListStore {
     func loadAllWordsForSync() throws -> [(record: PersistedWordRecord, collectionId: UUID, isDeleted: Bool, audioHash: String?)] {
         try withDatabase { db in
             let sql = """
-            SELECT id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, is_deleted, audio_hash, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
+            SELECT id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, is_deleted, audio_hash, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
             FROM words
             ORDER BY created_at ASC
             """
@@ -210,26 +211,9 @@ extension WordListStore {
         // Columns: id(0), collection_id(1), normalized_word(2), display_word(3),
         // source_form(4), inflection_kind(5), expected_part_of_speech(6),
         // lookup_state_json(7), audio_data(8), created_at(9), updated_at(10),
-        // last_refreshed_at(11), is_deleted(12), audio_hash(13),
-        // ai_suggested_example_sentences(14), ai_accepted_example_sentences(15),
-        // ai_suggested_definition_note(16), ai_accepted_definition_note(17)
-
-        let aiSuggestedSentences: [String]
-        if let sentencesJson = nullableTextColumn(stmt, index: 14),
-           let data = sentencesJson.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            aiSuggestedSentences = decoded
-        } else {
-            aiSuggestedSentences = []
-        }
-        let aiAcceptedSentences: [String]
-        if let sentencesJson = nullableTextColumn(stmt, index: 15),
-           let data = sentencesJson.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            aiAcceptedSentences = decoded
-        } else {
-            aiAcceptedSentences = []
-        }
+        // last_refreshed_at(11), is_deleted(12), audio_hash(13), ai_artifacts_json(14),
+        // ai_suggested_example_sentences(15), ai_accepted_example_sentences(16),
+        // ai_suggested_definition_note(17), ai_accepted_definition_note(18)
 
         return PersistedWordRecord(
             id: try uuidColumn(stmt, index: 0),
@@ -243,10 +227,13 @@ extension WordListStore {
             createdAt: dateColumn(stmt, index: 9),
             updatedAt: dateColumn(stmt, index: 10),
             lastRefreshedAt: sqlite3_column_type(stmt, 11) == SQLITE_NULL ? nil : dateColumn(stmt, index: 11),
-            aiSuggestedExampleSentences: aiSuggestedSentences,
-            aiAcceptedExampleSentences: aiAcceptedSentences,
-            aiSuggestedDefinitionNote: nullableTextColumn(stmt, index: 16),
-            aiAcceptedDefinitionNote: nullableTextColumn(stmt, index: 17)
+            aiArtifacts: decodeAIArtifacts(
+                json: nullableTextColumn(stmt, index: 14),
+                legacySuggestedExampleSentencesJSON: nullableTextColumn(stmt, index: 15),
+                legacyAcceptedExampleSentencesJSON: nullableTextColumn(stmt, index: 16),
+                legacySuggestedDefinitionNote: nullableTextColumn(stmt, index: 17),
+                legacyAcceptedDefinitionNote: nullableTextColumn(stmt, index: 18)
+            )
         )
     }
 

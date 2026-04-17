@@ -136,6 +136,126 @@ public enum LLMPrompt {
         return (system, user)
     }
 
+    public static func recallCardDrafts(
+        word: String,
+        senses: [LLMSensePromptInput],
+        modes: [LLMRecallCardMode],
+        anchor: LLMAnchorSnapshot? = nil
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+        let requestedModes = modes.isEmpty ? LLMRecallCardMode.allCases : modes
+
+        let system = """
+        You are a bilingual language learning assistant.
+        Generate recall-oriented flashcard drafts as strict JSON.
+        Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary.
+        """
+
+        let user = """
+        Generate exactly \(requestedModes.count) recall card drafts for the target "\(trimmedWord)".
+
+        Sense inventory:
+        \(senseInventoryText(from: trimmedSenses))
+
+        Requested modes:
+        \(requestedModes.map { "- \($0.rawValue)" }.joined(separator: "\n"))
+
+        Anchor snapshot:
+        \(anchorSnapshotText(anchor))
+
+        Rules:
+        - Return a single JSON object with this shape:
+          {
+            "drafts": [
+              {
+                "mode": "full_spelling | targeted_letter_cloze | phrase_recall",
+                "front": "learner-facing prompt",
+                "back": "exact answer",
+                "hint": "optional short hint or null",
+                "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
+              }
+            ]
+          }
+        - Output exactly one draft for each requested mode, no more and no fewer
+        - front should be a recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction
+        - back must be the exact target word or phrase, with original spacing preserved
+        - For full_spelling, ask the learner to recall the complete target
+        - For targeted_letter_cloze, hide the most error-prone letters with underscores in front or hint
+        - For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally
+        - hint is optional and should stay short
+        - anchor is optional display metadata only; do not invent source offsets or remap anchors
+        - If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null
+        - Return JSON only
+        """
+
+        return (system, user)
+    }
+
+    public static func learningAids(
+        word: String,
+        senses: [LLMSensePromptInput],
+        anchor: LLMAnchorSnapshot? = nil
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+
+        let system = """
+        You are a bilingual language learning assistant.
+        Generate strict JSON learning aids that help with recall, correct usage, and collocations.
+        Keep every field concise and practical for flashcards.
+        """
+
+        let user = """
+        Generate structured learning aids for the target "\(trimmedWord)".
+
+        Sense inventory:
+        \(senseInventoryText(from: trimmedSenses))
+
+        Anchor snapshot:
+        \(anchorSnapshotText(anchor))
+
+        Return a single JSON object with this shape:
+        {
+          "pitfalls": [
+            {
+              "summary": "short learner warning",
+              "details": "optional extra explanation",
+              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
+            }
+          ],
+          "mnemonics": [
+            {
+              "clue": "very short mnemonic cue",
+              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
+            }
+          ],
+          "collocations": [
+            {
+              "phrase": "common collocation or pattern",
+              "gloss": "optional short usage gloss",
+              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
+            }
+          ]
+        }
+
+        Rules:
+        - Return JSON only
+        - pitfalls: 2-4 items, focus on spelling traps, confusable meanings, or common misuse
+        - mnemonics: 1-3 items, make them short and memorable rather than explanatory
+        - collocations: 2-5 items, prefer high-frequency phrases or short patterns
+        - Keep every string compact and learner-facing
+        - anchor is optional display metadata only; do not invent source offsets or remap anchors
+        - If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null
+        """
+
+        return (system, user)
+    }
+
     private static func senseInventoryText(from senses: [LLMSensePromptInput]) -> String {
         guard !senses.isEmpty else {
             return "1. general: no sense inventory provided"
@@ -144,5 +264,16 @@ public enum LLMPrompt {
         return senses.enumerated().map { index, sense in
             "\(index + 1). \(sense.inventoryLine)"
         }.joined(separator: "\n")
+    }
+
+    private static func anchorSnapshotText(_ anchor: LLMAnchorSnapshot?) -> String {
+        guard let anchor, !anchor.text.isEmpty else {
+            return "none"
+        }
+
+        if let note = anchor.note, !note.isEmpty {
+            return "\"\(anchor.text)\" [note: \(note)]"
+        }
+        return "\"\(anchor.text)\""
     }
 }

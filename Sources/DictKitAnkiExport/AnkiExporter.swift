@@ -6,22 +6,39 @@ public struct AnkiExporter: Sendable {
         public let word: String
         public let lookupResult: LookupResult
         public let audioData: Data?
-        public let aiAcceptedExampleSentences: [String]
-        public let aiAcceptedDefinitionNote: String?
+        public let aiArtifacts: AIArtifacts
 
         public init(
             word: String,
             lookupResult: LookupResult,
             audioData: Data?,
+            aiArtifacts: AIArtifacts = .empty,
             aiAcceptedExampleSentences: [String] = [],
-            aiAcceptedDefinitionNote: String? = nil
+            aiAcceptedDefinitionNote: String? = nil,
+            aiAcceptedRecallCardDrafts: [RecallCardDraft] = [],
+            aiAcceptedPitfalls: [String] = [],
+            aiAcceptedMnemonics: [String] = [],
+            aiAcceptedCollocations: [String] = []
         ) {
             self.word = word
             self.lookupResult = lookupResult
             self.audioData = audioData
-            self.aiAcceptedExampleSentences = aiAcceptedExampleSentences
-            self.aiAcceptedDefinitionNote = aiAcceptedDefinitionNote
+            self.aiArtifacts = aiArtifacts.fillingMissingSlots(
+                legacyAcceptedExampleSentences: aiAcceptedExampleSentences,
+                legacyAcceptedDefinitionNote: aiAcceptedDefinitionNote,
+                legacyAcceptedRecallCardDrafts: aiAcceptedRecallCardDrafts,
+                legacyAcceptedPitfalls: aiAcceptedPitfalls,
+                legacyAcceptedMnemonics: aiAcceptedMnemonics,
+                legacyAcceptedCollocations: aiAcceptedCollocations
+            )
         }
+
+        public var aiAcceptedExampleSentences: [String] { aiArtifacts.acceptedExampleSentences }
+        public var aiAcceptedDefinitionNote: String? { aiArtifacts.acceptedDefinitionNoteText }
+        public var aiAcceptedRecallCardDrafts: [RecallCardDraft] { aiArtifacts.recallCardDrafts.accepted ?? [] }
+        public var aiAcceptedPitfalls: [String] { aiArtifacts.acceptedPitfallTexts }
+        public var aiAcceptedMnemonics: [String] { aiArtifacts.acceptedMnemonicTexts }
+        public var aiAcceptedCollocations: [String] { aiArtifacts.acceptedCollocationPhrases }
     }
 
     public struct ExportDeck: Sendable {
@@ -75,8 +92,7 @@ public struct AnkiExporter: Sendable {
                 let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
                 let definitions = AnkiFieldFormatter.definitionsHTML(
                     from: input.lookupResult,
-                    aiAcceptedExampleSentences: input.aiAcceptedExampleSentences,
-                    aiAcceptedDefinitionNote: input.aiAcceptedDefinitionNote
+                    aiArtifacts: input.aiArtifacts
                 )
                 if phonetic.isEmpty {
                     warnings.append("No pronunciation found for '\(input.word)'")
@@ -103,8 +119,7 @@ public struct AnkiExporter: Sendable {
             let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
             let definitions = AnkiFieldFormatter.definitionsHTML(
                 from: input.lookupResult,
-                aiAcceptedExampleSentences: input.aiAcceptedExampleSentences,
-                aiAcceptedDefinitionNote: input.aiAcceptedDefinitionNote
+                aiArtifacts: input.aiArtifacts
             )
             let audioFilename = input.audioData.map { _ in
                 input.word
