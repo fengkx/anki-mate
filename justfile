@@ -16,7 +16,7 @@ build-cli:
 
 # Build the macOS app
 build-app:
-    swift build --product DictKitApp
+    swift build --product anki-mate
 
 # Build the Anki export library
 build-anki:
@@ -75,26 +75,34 @@ run-app:
     #!/usr/bin/env bash
     set -euo pipefail
     # Kill any existing instance so macOS doesn't reuse a stale cached process
-    pkill -9 -f 'DictKitApp\.app' 2>/dev/null || true
+    pkill -9 -f 'anki-mate\.app' 2>/dev/null || true
     sleep 0.5
-    swift build --product DictKitApp
-    APP_BUNDLE=".build/DictKitApp.app"
+    swift build --product anki-mate
+    ./scripts/build-app-icon.sh .build
+    APP_BUNDLE=".build/anki-mate.app"
     APP_DIR="$APP_BUNDLE/Contents/MacOS"
+    APP_RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
     # Remove old bundle to avoid any caching issues
     rm -rf "$APP_BUNDLE"
     mkdir -p "$APP_DIR"
-    cp .build/debug/DictKitApp "$APP_DIR/"
+    mkdir -p "$APP_RESOURCES_DIR"
+    cp .build/debug/anki-mate "$APP_DIR/"
+    cp .build/AppIcon.icns "$APP_RESOURCES_DIR/"
     cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
     <dict>
         <key>CFBundleExecutable</key>
-        <string>DictKitApp</string>
+        <string>anki-mate</string>
         <key>CFBundleIdentifier</key>
         <string>dev.dictkit.app</string>
         <key>CFBundleName</key>
-        <string>DictKit</string>
+        <string>anki-mate</string>
+        <key>CFBundleDisplayName</key>
+        <string>anki-mate</string>
+        <key>CFBundleIconFile</key>
+        <string>AppIcon</string>
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleShortVersionString</key>

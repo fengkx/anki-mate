@@ -16,10 +16,12 @@ public struct AnkiExporter: Sendable {
 
     public struct ExportDeck: Sendable {
         public let deckName: String
+        public let deckDescription: String
         public let words: [ExportInput]
 
-        public init(deckName: String, words: [ExportInput]) {
+        public init(deckName: String, deckDescription: String = "", words: [ExportInput]) {
             self.deckName = deckName
+            self.deckDescription = deckDescription
             self.words = words
         }
     }
@@ -49,7 +51,7 @@ public struct AnkiExporter: Sendable {
         to outputURL: URL
     ) throws -> ExportResult {
         let payloads = decks.map { deck in
-            makeDeckPayload(deckName: deck.deckName, words: deck.words)
+            makeDeckPayload(deckName: deck.deckName, deckDescription: deck.deckDescription, words: deck.words)
         }
         var warnings: [String] = []
         let uniqueMediaNames = Set(
@@ -81,8 +83,8 @@ public struct AnkiExporter: Sendable {
         )
     }
 
-    private static func makeDeckPayload(deckName: String, words: [ExportInput]) -> AnkiDeckPayload {
-        let deck = AnkiDeckConfig(deckName: deckName)
+    private static func makeDeckPayload(deckName: String, deckDescription: String, words: [ExportInput]) -> AnkiDeckPayload {
+        let deck = AnkiDeckConfig(deckName: deckName, deckDescription: deckDescription)
         let notes = words.map { input in
             let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
             let definitions = AnkiFieldFormatter.definitionsHTML(from: input.lookupResult)

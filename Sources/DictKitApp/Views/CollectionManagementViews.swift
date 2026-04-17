@@ -1,18 +1,18 @@
+import DictKitSystemDictionary
 import SwiftUI
 
 struct CollectionEditorSheet: View {
     @EnvironmentObject var viewModel: WordListViewModel
     @Environment(\.dismiss) private var dismiss
     let mode: CollectionEditorMode
-    let initialName: String
-    let onSubmit: (String) -> Bool
-    @State private var name: String
+    let onSubmit: (CollectionEditorFormData) -> Bool
+    @State private var form: CollectionEditorFormData
+    @State private var availableDictionaries: [String] = []
 
-    init(mode: CollectionEditorMode, initialName: String, onSubmit: @escaping (String) -> Bool) {
+    init(mode: CollectionEditorMode, initialForm: CollectionEditorFormData, onSubmit: @escaping (CollectionEditorFormData) -> Bool) {
         self.mode = mode
-        self.initialName = initialName
         self.onSubmit = onSubmit
-        _name = State(initialValue: initialName)
+        _form = State(initialValue: initialForm)
     }
 
     var body: some View {
@@ -20,8 +20,28 @@ struct CollectionEditorSheet: View {
             Text(mode == .create ? "New Collection" : "Rename Collection")
                 .font(.headline)
 
-            TextField("Collection name", text: $name)
+            TextField("Collection name", text: $form.collectionName)
                 .textFieldStyle(.roundedBorder)
+
+            Picker("Dictionary", selection: $form.dictionaryName) {
+                Text("Automatic").tag("")
+                ForEach(availableDictionaries, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Deck description")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $form.deckDescription)
+                    .frame(minHeight: 90)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.2))
+                    )
+            }
 
             if let errorMessage = viewModel.collectionEditorErrorMessage {
                 Text(errorMessage)
@@ -37,18 +57,19 @@ struct CollectionEditorSheet: View {
                 Spacer()
 
                 Button(mode == .create ? "Create" : "Save") {
-                    if onSubmit(name) {
+                    if onSubmit(form) {
                         dismiss()
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(form.collectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding()
-        .frame(width: 360)
+        .frame(width: 420)
         .onAppear {
             viewModel.collectionEditorErrorMessage = nil
+            availableDictionaries = SystemDictionaryClient().listAvailableDictionaries().sorted()
         }
     }
 }
@@ -56,40 +77,36 @@ struct CollectionEditorSheet: View {
 struct ExportCollectionsSheet: View {
     @EnvironmentObject var viewModel: WordListViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedCollectionIDs: Set<UUID> = []
+    @State private var deckDescription: String = ""
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Export Collections")
+            Text("Export Collection")
                 .font(.headline)
 
-            List(viewModel.collections) { collection in
-                Toggle(
-                    isOn: Binding(
-                        get: { selectedCollectionIDs.contains(collection.id) },
-                        set: { isSelected in
-                            if isSelected {
-                                selectedCollectionIDs.insert(collection.id)
-                            } else {
-                                selectedCollectionIDs.remove(collection.id)
-                            }
-                        }
-                    )
-                ) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(collection.name)
-                        if collection.ankiDeckName != collection.name {
-                            Text(collection.ankiDeckName)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Text("\(viewModel.exportableWordCount(for: collection.id)) ready")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+            if let collection = viewModel.currentCollection {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(collection.name)
+                        .font(.body.weight(.medium))
+                    Text("\(viewModel.exportableWordCount(for: collection.id)) ready")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 220)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Deck description")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $deckDescription)
+                    .frame(minHeight: 120)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.2))
+                    )
+            }
 
             HStack {
                 Button("Cancel") { dismiss() }
@@ -98,20 +115,22 @@ struct ExportCollectionsSheet: View {
                 Spacer()
 
                 Button("Export") {
-                    let selection = selectedCollectionIDs
+                    guard let currentCollection = viewModel.currentCollection else { return }
+                    let request = CollectionExportRequest(
+                        collectionID: currentCollection.id,
+                        deckDescription: deckDescription
+                    )
                     dismiss()
-                    viewModel.exportCollections(selection)
+                    viewModel.exportCollection(request)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(selectedCollectionIDs.isEmpty)
+                .disabled(viewModel.currentCollection == nil)
             }
         }
         .padding()
-        .frame(width: 420, height: 360)
+        .frame(width: 420, height: 280)
         .onAppear {
-            if selectedCollectionIDs.isEmpty {
-                selectedCollectionIDs = viewModel.defaultExportCollectionIDs()
-            }
+            deckDescription = viewModel.currentCollection?.ankiDeckDescription ?? ""
         }
     }
 }

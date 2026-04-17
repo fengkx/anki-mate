@@ -4,17 +4,6 @@ import DictKitSystemDictionary
 import Foundation
 import SwiftUI
 
-struct PendingWordDeletion: Identifiable, Equatable {
-    let wordID: UUID
-    let word: String
-    let currentCollectionName: String
-    let otherCollectionNames: [String]
-
-    var id: UUID {
-        wordID
-    }
-}
-
 @MainActor
 final class WordListViewModel: ObservableObject {
     @Published var collections: [PersistedCollectionRecord] = []
@@ -35,39 +24,40 @@ final class WordListViewModel: ObservableObject {
     @Published var isExporting: Bool = false
     @Published var exportProgress: Double = 0
     @Published var exportError: String?
+    @Published var storeErrorMessage: String?
     @Published var collectionEditorErrorMessage: String?
     @Published var showExportDialog: Bool = false
     @Published var showBatchInput: Bool = false
-    @Published private(set) var pendingWordDeletion: PendingWordDeletion? = nil
 
     private let store: any WordListStoring
-    private let lookup: @Sendable (String) async throws -> LookupResult
+    private let rawLookup: @Sendable (String, DictionaryLookupSource) async throws -> LookupResult
+    private let resolvedLookupService: ResolvedLookupService
     private let speak: @Sendable (SpeechRequest) async throws -> Void
     private let synthesize: @Sendable (SpeechRequest) async throws -> Data
 
     private var wordCache: [UUID: WordItem] = [:]
     private var lookupQueue: [LookupJob] = []
     private var isLookupRunning = false
-    private var pendingWordDeletionCollectionID: UUID?
 
     init() {
         let dictionaryClient = SystemDictionaryClient()
         let speechClient = DictionarySpeechClient()
         let store: any WordListStoring
+        let storeErrorMessage: String?
         do {
             store = try WordListStore(databaseURL: Self.defaultDatabaseURL())
+            storeErrorMessage = nil
         } catch {
             store = NoOpWordListStore()
+            storeErrorMessage = "Storage initialization failed: \(error.localizedDescription)"
         }
 
         self.store = store
-        self.lookup = { word in
-            let selectedDict = UserDefaults.standard.string(forKey: "selectedDictionary") ?? ""
-            let source: DictionaryLookupSource = selectedDict.isEmpty
-                ? .automatic
-                : .privateHTML(dictionaryName: selectedDict)
-            return try dictionaryClient.lookup(word, source: source)
+        self.storeErrorMessage = storeErrorMessage
+        self.rawLookup = { word, source in
+            try dictionaryClient.lookup(word, source: source)
         }
+        self.resolvedLookupService = ResolvedLookupService(lookup: self.rawLookup)
         self.speak = { request in
             try await speechClient.speak(request)
         }
@@ -81,12 +71,15 @@ final class WordListViewModel: ObservableObject {
 
     init(
         store: any WordListStoring,
-        lookup: @escaping @Sendable (String) async throws -> LookupResult,
+        storeErrorMessage: String? = nil,
+        lookup: @escaping @Sendable (String, DictionaryLookupSource) async throws -> LookupResult,
         speak: @escaping @Sendable (SpeechRequest) async throws -> Void,
         synthesize: @escaping @Sendable (SpeechRequest) async throws -> Data
     ) throws {
         self.store = store
-        self.lookup = lookup
+        self.storeErrorMessage = storeErrorMessage
+        self.rawLookup = lookup
+        self.resolvedLookupService = ResolvedLookupService(lookup: lookup)
         self.speak = speak
         self.synthesize = synthesize
         try restoreStateFromStore()
@@ -126,8 +119,8 @@ final class WordListViewModel: ObservableObject {
         currentCollection != nil
     }
 
-    var canExportCollections: Bool {
-        !collections.isEmpty && !isExporting
+    var canExportCurrentCollection: Bool {
+        currentCollection != nil && !isExporting
     }
 
     func exportableWordCount(for collectionID: UUID) -> Int {
@@ -146,10 +139,24 @@ final class WordListViewModel: ObservableObject {
         currentCollectionID = id
     }
 
+    func dismissStoreError() {
+        storeErrorMessage = nil
+    }
+
     func createCollection(named name: String) -> Bool {
+        createCollection(
+            using: .defaults(forCollectionName: name)
+        )
+    }
+
+    func createCollection(using form: CollectionEditorFormData) -> Bool {
         collectionEditorErrorMessage = nil
         do {
-            let record = try store.createCollection(name: name, deckName: nil)
+            let record = try store.createCollection(
+                name: form.collectionName,
+                exportSettings: form.exportSettings,
+                dictionaryName: form.dictionaryName
+            )
             collections.append(record)
             currentCollectionID = record.id
             collectionEditorErrorMessage = nil
@@ -161,10 +168,25 @@ final class WordListViewModel: ObservableObject {
     }
 
     func renameCurrentCollection(to name: String) -> Bool {
+        renameCurrentCollection(
+            using: CollectionEditorFormData(
+                collectionName: name,
+                deckDescription: currentCollection?.ankiDeckDescription ?? "",
+                dictionaryName: currentCollection?.dictionaryName ?? ""
+            )
+        )
+    }
+
+    func renameCurrentCollection(using form: CollectionEditorFormData) -> Bool {
         guard let currentCollection else { return false }
         collectionEditorErrorMessage = nil
         do {
-            let updated = try store.renameCollection(id: currentCollection.id, name: name, deckName: nil)
+            let updated = try store.renameCollection(
+                id: currentCollection.id,
+                name: form.collectionName,
+                exportSettings: form.exportSettings,
+                dictionaryName: form.dictionaryName
+            )
             collections = collections.map { $0.id == updated.id ? updated : $0 }
             collectionEditorErrorMessage = nil
             return true
@@ -180,11 +202,28 @@ final class WordListViewModel: ObservableObject {
         restoreState()
     }
 
-    func defaultExportCollectionIDs() -> Set<UUID> {
-        if let currentCollectionID {
-            return [currentCollectionID]
+    func collectionEditorForm(for mode: CollectionEditorMode) -> CollectionEditorFormData {
+        switch mode {
+        case .create:
+            return .defaults(forCollectionName: "")
+        case .rename:
+            guard let currentCollection else {
+                return .defaults(forCollectionName: "")
+            }
+            return CollectionEditorFormData(
+                collectionName: currentCollection.name,
+                deckDescription: currentCollection.ankiDeckDescription,
+                dictionaryName: currentCollection.dictionaryName
+            )
         }
-        return Set(collections.map(\.id))
+    }
+
+    func defaultExportRequest() -> CollectionExportRequest? {
+        guard let currentCollection else { return nil }
+        return CollectionExportRequest(
+            collectionID: currentCollection.id,
+            deckDescription: currentCollection.ankiDeckDescription
+        )
     }
 
     // MARK: - Word Management
@@ -203,7 +242,7 @@ final class WordListViewModel: ObservableObject {
             upsertCachedWord(result.record)
             reloadCurrentWords()
             guard result.insertedWord else { return }
-            enqueueLookup(id: result.record.id, mode: .initial)
+            enqueueLookup(id: result.record.id, mode: .initial, collectionID: currentCollectionID)
         } catch {
             return
         }
@@ -220,81 +259,28 @@ final class WordListViewModel: ObservableObject {
 
     func removeWords(at offsets: IndexSet) {
         guard let firstIndex = offsets.first, words.indices.contains(firstIndex) else { return }
-        requestDelete(words[firstIndex].id)
+        deleteWord(id: words[firstIndex].id)
     }
 
     func removeWord(_ item: WordItem) {
-        requestDelete(item.id)
+        deleteWord(id: item.id)
     }
 
     func deleteSelectedWord() {
         guard let item = selectedWord else { return }
-        requestDelete(item.id)
-    }
-
-    func requestDelete(_ wordID: UUID) {
-        guard let currentCollection else { return }
-        guard let currentWords = try? store.loadWords(in: currentCollection.id),
-              let currentWord = currentWords.first(where: { $0.id == wordID }) else {
-            clearPendingDeletionState()
-            return
-        }
-        let word = currentWord.word
-
-        let otherCollectionNames = collections.compactMap { collection -> String? in
-            guard collection.id != currentCollection.id else { return nil }
-            guard let records = try? store.loadWords(in: collection.id) else { return nil }
-            return records.contains(where: { $0.id == wordID }) ? collection.name : nil
-        }
-
-        pendingWordDeletion = PendingWordDeletion(
-            wordID: wordID,
-            word: word,
-            currentCollectionName: currentCollection.name,
-            otherCollectionNames: otherCollectionNames
-        )
-        pendingWordDeletionCollectionID = currentCollection.id
-    }
-
-    func cancelPendingWordDeletion() {
-        clearPendingDeletionState()
-    }
-
-    func confirmRemovePendingWordFromCurrentCollection() {
-        guard let pendingWordDeletion, let pendingWordDeletionCollectionID else { return }
-        do {
-            try store.removeWord(id: pendingWordDeletion.wordID, from: pendingWordDeletionCollectionID)
-            clearPendingDeletionState()
-            syncCacheAndReload()
-        } catch {
-            syncCacheAndReload()
-            rebuildPendingDeletionState(for: pendingWordDeletion.wordID)
-        }
-    }
-
-    func confirmDeletePendingWordEverywhere() {
-        guard let pendingWordDeletion else { return }
-        do {
-            for collection in collections {
-                try store.removeWord(id: pendingWordDeletion.wordID, from: collection.id)
-            }
-            clearPendingDeletionState()
-            syncCacheAndReload()
-        } catch {
-            syncCacheAndReload()
-            rebuildPendingDeletionState(for: pendingWordDeletion.wordID)
-        }
+        deleteWord(id: item.id)
     }
 
     // MARK: - Serialized Lookup Queue
 
     func retryLookup(_ item: WordItem) {
+        guard let currentCollectionID else { return }
         item.lookupState = .pending
         persist(item)
-        enqueueLookup(id: item.id, mode: .retry)
+        enqueueLookup(id: item.id, mode: .retry, collectionID: currentCollectionID)
     }
 
-    private func enqueueLookup(id: UUID, mode: LookupMode) {
+    private func enqueueLookup(id: UUID, mode: LookupMode, collectionID: UUID) {
         guard let item = wordCache[id] else { return }
         switch mode {
         case .initial, .retry:
@@ -307,7 +293,7 @@ final class WordListViewModel: ObservableObject {
             item.isRefreshing = true
             item.refreshErrorMessage = nil
         }
-        lookupQueue.append(LookupJob(id: id, mode: mode))
+        lookupQueue.append(LookupJob(id: id, mode: mode, collectionID: collectionID))
         processNextLookup()
     }
 
@@ -320,13 +306,18 @@ final class WordListViewModel: ObservableObject {
             processNextLookup()
             return
         }
+        guard let collection = collections.first(where: { $0.id == job.collectionID }) else {
+            isLookupRunning = false
+            processNextLookup()
+            return
+        }
         let cachedResult = item.lookupResult
 
         Task {
             do {
-                let result = try await lookup(item.word)
+                let result = try await resolvedLookupService.resolve(item.word, dictionaryName: collection.dictionaryName)
                 await MainActor.run {
-                    self.handleLookupSuccess(result, for: item, mode: job.mode, cachedResult: cachedResult)
+                    self.handleLookupSuccess(result, for: item, collectionID: job.collectionID, mode: job.mode, cachedResult: cachedResult)
                 }
             } catch {
                 await MainActor.run {
@@ -400,14 +391,14 @@ final class WordListViewModel: ObservableObject {
     // MARK: - Export
 
     func exportToAnki() {
-        exportCollections(defaultExportCollectionIDs())
+        guard let request = defaultExportRequest() else { return }
+        exportCollection(request)
     }
 
-    func exportCollections(_ collectionIDs: Set<UUID>) {
-        let selection = collectionIDs.isEmpty ? defaultExportCollectionIDs() : collectionIDs
-        guard !selection.isEmpty else { return }
+    func exportCollection(_ request: CollectionExportRequest) {
+        guard let collection = collections.first(where: { $0.id == request.collectionID }) else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "DictKit Vocabulary.apkg"
+        panel.nameFieldStringValue = "\(sanitizedPackageFilenameStem(collection.name, fallback: "Collection")).apkg"
         panel.allowedContentTypes = [.init(filenameExtension: "apkg")!]
         panel.canCreateDirectories = true
 
@@ -419,37 +410,39 @@ final class WordListViewModel: ObservableObject {
             exportError = nil
 
             do {
-                let selectedCollections = collections.filter { selection.contains($0.id) }
-                let recordsByCollection = selectedCollections.map { collection in
-                    (collection, (try? store.loadWords(in: collection.id)) ?? [])
-                }
-                let uniqueWordIDs = Array(Set(recordsByCollection.flatMap { $0.1.map(\.id) }))
-                let total = Double(uniqueWordIDs.count)
+                let records = (try? store.loadWords(in: collection.id)) ?? []
+                let total = Double(records.count)
 
-                for (i, wordID) in uniqueWordIDs.enumerated() {
+                for (i, wordID) in records.map(\.id).enumerated() {
                     guard let item = wordCache[wordID], item.audioData == nil, item.isReady else {
                         exportProgress = Double(i + 1) / max(total, 1) * 0.5
                         continue
                     }
-                        await synthesizeAudio(for: item)
+                    await synthesizeAudio(for: item)
                     exportProgress = Double(i + 1) / max(total, 1) * 0.5
                 }
 
-                let decks: [AnkiExporter.ExportDeck] = recordsByCollection.compactMap { collection, records in
-                    let inputs: [AnkiExporter.ExportInput] = records.compactMap { record in
-                        guard let item = wordCache[record.id], let result = item.lookupResult else { return nil }
-                        return AnkiExporter.ExportInput(
-                            word: item.word,
-                            lookupResult: result,
-                            audioData: item.audioData
-                        )
-                    }
-                    guard !inputs.isEmpty else { return nil }
-                    return AnkiExporter.ExportDeck(deckName: collection.ankiDeckName, words: inputs)
+                let inputs: [AnkiExporter.ExportInput] = records.compactMap { record in
+                    guard let item = wordCache[record.id], let result = item.lookupResult else { return nil }
+                    return AnkiExporter.ExportInput(
+                        word: item.word,
+                        lookupResult: result,
+                        audioData: item.audioData
+                    )
+                }
+                guard !inputs.isEmpty else {
+                    isExporting = false
+                    return
                 }
 
                 let result = try AnkiExporter.export(
-                    decks: decks,
+                    decks: [
+                        AnkiExporter.ExportDeck(
+                            deckName: collection.name,
+                            deckDescription: sanitizedDeckDescription(request.deckDescription),
+                            words: inputs
+                        )
+                    ],
                     to: url
                 )
 
@@ -467,17 +460,23 @@ final class WordListViewModel: ObservableObject {
     }
 
     private func refreshWordIfNeeded(id: UUID) {
-        enqueueLookup(id: id, mode: .refresh)
+        guard let currentCollectionID else { return }
+        enqueueLookup(id: id, mode: .refresh, collectionID: currentCollectionID)
     }
 
     private func handleLookupSuccess(
-        _ result: LookupResult,
+        _ resolved: ResolvedLookup,
         for item: WordItem,
+        collectionID: UUID,
         mode: LookupMode,
         cachedResult: LookupResult?
     ) {
-        let resultChanged = cachedResult != result
-        item.lookupState = .loaded(result)
+        let resultChanged = cachedResult != resolved.lookupResult
+        item.word = resolved.word
+        item.sourceForm = resolved.sourceForm
+        item.inflectionKind = resolved.inflectionKind
+        item.expectedPartOfSpeech = resolved.expectedPartOfSpeech
+        item.lookupState = .loaded(resolved.lookupResult)
         item.refreshErrorMessage = nil
         item.isRefreshing = false
         if mode == .refresh {
@@ -485,6 +484,9 @@ final class WordListViewModel: ObservableObject {
         }
         if mode == .refresh, resultChanged {
             item.audioData = nil
+        }
+        if resolveDuplicateLemma(for: item, collectionID: collectionID) {
+            return
         }
         touch(item)
         persist(item)
@@ -536,7 +538,6 @@ final class WordListViewModel: ObservableObject {
         guard let currentCollectionID else {
             words = []
             selectedWordID = nil
-            reconcilePendingDeletionState()
             return
         }
         let records = (try? store.loadWords(in: currentCollectionID)) ?? []
@@ -547,7 +548,6 @@ final class WordListViewModel: ObservableObject {
         if let selectedWordID, !words.contains(where: { $0.id == selectedWordID }) {
             self.selectedWordID = nil
         }
-        reconcilePendingDeletionState()
     }
 
     private func syncCacheAndReload() {
@@ -560,8 +560,23 @@ final class WordListViewModel: ObservableObject {
         reloadCurrentWords()
     }
 
+    private func deleteWord(id: UUID) {
+        guard let currentCollectionID else { return }
+        do {
+            try store.removeWord(id: id, from: currentCollectionID)
+        } catch {
+            syncCacheAndReload()
+            return
+        }
+        syncCacheAndReload()
+    }
+
     private func upsertCachedWord(_ record: PersistedWordRecord) {
         if let existing = wordCache[record.id] {
+            existing.word = record.displayWord
+            existing.sourceForm = record.sourceForm
+            existing.inflectionKind = record.inflectionKind
+            existing.expectedPartOfSpeech = record.expectedPartOfSpeech
             existing.lookupState = record.lookupState.restoredLookupState
             existing.audioData = record.audioData
             existing.updatedAt = record.updatedAt
@@ -569,6 +584,24 @@ final class WordListViewModel: ObservableObject {
         } else {
             wordCache[record.id] = record.makeWordItem()
         }
+    }
+
+    private func resolveDuplicateLemma(for item: WordItem, collectionID: UUID) -> Bool {
+        guard let currentRecords = try? store.loadWords(in: collectionID) else { return false }
+        guard let duplicateID = currentRecords.first(where: {
+            $0.id != item.id && $0.normalizedWord == item.normalizedWord
+        })?.id else {
+            return false
+        }
+
+        if let selectedWordID, selectedWordID == item.id {
+            self.selectedWordID = duplicateID
+        }
+
+        try? store.removeWord(id: item.id, from: collectionID)
+        wordCache[item.id] = nil
+        reloadCurrentWords()
+        return true
     }
 
     private func touch(_ item: WordItem) {
@@ -579,52 +612,16 @@ final class WordListViewModel: ObservableObject {
         try? store.saveWord(PersistedWordRecord(item: item))
     }
 
-    private func reconcilePendingDeletionState() {
-        guard let pendingWordDeletion else { return }
-        rebuildPendingDeletionState(
-            for: pendingWordDeletion.wordID,
-            preferredCollectionID: pendingWordDeletionCollectionID
-        )
+    private func sanitizedDeckDescription(_ description: String) -> String {
+        description.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func rebuildPendingDeletionState(for wordID: UUID, preferredCollectionID: UUID? = nil) {
-        let remainingMemberships: [(collection: PersistedCollectionRecord, record: PersistedWordRecord)] = collections.compactMap { collection in
-            guard let records = try? store.loadWords(in: collection.id),
-                  let record = records.first(where: { $0.id == wordID }) else { return nil }
-            return (collection, record)
-        }
-
-        guard !remainingMemberships.isEmpty else {
-            clearPendingDeletionState()
-            return
-        }
-
-        let sourceMembership: (collection: PersistedCollectionRecord, record: PersistedWordRecord)
-        if let preferredCollectionID,
-           let preferredMembership = remainingMemberships.first(where: { $0.collection.id == preferredCollectionID }) {
-            sourceMembership = preferredMembership
-        } else if let currentCollectionID,
-                  let preferredMembership = remainingMemberships.first(where: { $0.collection.id == currentCollectionID }) {
-            sourceMembership = preferredMembership
-        } else {
-            sourceMembership = remainingMemberships[0]
-        }
-
-        pendingWordDeletion = PendingWordDeletion(
-            wordID: wordID,
-            word: sourceMembership.record.word,
-            currentCollectionName: sourceMembership.collection.name,
-            otherCollectionNames: remainingMemberships
-                .map(\.collection)
-                .filter { $0.id != sourceMembership.collection.id }
-                .map(\.name)
-        )
-        pendingWordDeletionCollectionID = sourceMembership.collection.id
-    }
-
-    private func clearPendingDeletionState() {
-        pendingWordDeletion = nil
-        pendingWordDeletionCollectionID = nil
+    private func sanitizedPackageFilenameStem(_ stem: String, fallback: String) -> String {
+        let trimmed = stem.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutExtension = trimmed.lowercased().hasSuffix(".apkg")
+            ? String(trimmed.dropLast(5))
+            : trimmed
+        return withoutExtension.isEmpty ? fallback : withoutExtension
     }
 
     private static func defaultDatabaseURL() -> URL {
@@ -639,10 +636,21 @@ final class WordListViewModel: ObservableObject {
 private struct LookupJob: Equatable {
     let id: UUID
     let mode: LookupMode
+    let collectionID: UUID
 }
 
 private enum LookupMode: Equatable {
     case initial
     case retry
     case refresh
+}
+
+private extension CollectionEditorFormData {
+    func withCollectionName(_ name: String) -> CollectionEditorFormData {
+        CollectionEditorFormData(
+            collectionName: name,
+            deckDescription: deckDescription,
+            dictionaryName: dictionaryName
+        )
+    }
 }

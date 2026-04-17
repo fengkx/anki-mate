@@ -50,6 +50,14 @@ struct WordRowView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
+                if let sourceDescription = item.sourceDescription {
+                    Text(sourceDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
                 if !item.phonetic.isEmpty {
                     Text("/\(item.phonetic)/")
                         .font(.caption)

@@ -78,6 +78,26 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("hr id=\"answer\""))
     }
 
+    func testRenderCardHTMLBackIncludesExampleMarkup() {
+        let result = makeLookupResult(
+            word: "apple",
+            pronunciations: [Pronunciation(dialect: "AmE", ipa: "ˈæpəl", respelling: nil)],
+            senses: [("noun", "fruit", ["I had an apple for lunch"])]
+        )
+        let note = AnkiNoteData(
+            word: "apple",
+            phonetic: AnkiFieldFormatter.phonetic(from: result),
+            definitions: AnkiFieldFormatter.definitionsHTML(from: result),
+            audioFilename: nil,
+            audioData: nil
+        )
+
+        let html = AnkiFieldFormatter.renderCardHTML(note: note, showBack: true)
+
+        XCTAssertTrue(html.contains("I had an apple for lunch"))
+        XCTAssertTrue(html.contains("examples"))
+    }
+
     // MARK: - Helpers
 
     private func makeLookupResult(

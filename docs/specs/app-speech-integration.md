@@ -239,17 +239,17 @@ private func makeSpeechRequest(for item: WordItem) -> SpeechRequest? {
 
 **问题**
 
-SPM 的 `swift build --target DictKitApp` 只编译 target 但**不链接**为可执行文件。要得到可运行的二进制，必须用 `swift build --product DictKitApp`。
+SPM 的 `swift build --target DictKitApp` 只编译 target 但**不链接**为可执行文件。要得到可运行的二进制，必须用 `swift build --product anki-mate`。
 
-此外，macOS 的 SwiftUI 应用需要 `.app` bundle 结构才能正确获得 Dock 图标、窗口焦点等系统行为。直接运行 `.build/debug/DictKitApp` 二进制虽然能跑，但行为异常。
+此外，macOS 的 SwiftUI 应用需要 `.app` bundle 结构才能正确获得 Dock 图标、窗口焦点等系统行为。直接运行 `.build/debug/anki-mate` 二进制虽然能跑，但行为异常。
 
 **决策**
 
-1. `Package.swift` 中将 `DictKitApp` 同时声明为 `.executableTarget`（编译目标）和 `.executable` product（可链接产物）：
+1. `Package.swift` 中将 `DictKitApp` 声明为 `.executableTarget`（编译目标），并通过单独的 `.executable` product 暴露 `anki-mate` 可执行产物：
 
 ```swift
 products: [
-    .executable(name: "DictKitApp", targets: ["DictKitApp"])
+    .executable(name: "anki-mate", targets: ["DictKitApp"])
 ],
 targets: [
     .executableTarget(
@@ -263,12 +263,12 @@ targets: [
 
 ```bash
 run-app:
-    pkill -9 -f 'DictKitApp\.app' 2>/dev/null || true   # 杀掉旧实例
-    swift build --product DictKitApp                      # 用 --product 链接
-    mkdir -p .build/DictKitApp.app/Contents/MacOS
-    cp .build/debug/DictKitApp .build/DictKitApp.app/Contents/MacOS/
+    pkill -9 -f 'anki-mate\.app' 2>/dev/null || true   # 杀掉旧实例
+    swift build --product anki-mate                    # 用 --product 链接
+    mkdir -p .build/anki-mate.app/Contents/MacOS
+    cp .build/debug/anki-mate .build/anki-mate.app/Contents/MacOS/
     # 写入 Info.plist（CFBundleIdentifier, NSHighResolutionCapable 等）
-    open -n .build/DictKitApp.app                         # -n 强制启动新实例
+    open -n .build/anki-mate.app                       # -n 强制启动新实例
 ```
 
 `open -n` 的 `-n` flag 强制 macOS 启动一个新的应用实例，而不是激活已有的。这对开发调试很重要——否则 macOS 可能会复用一个旧的缓存进程。

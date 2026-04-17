@@ -1,5 +1,6 @@
 import DictKit
 import DictKitAnkiExport
+import DictKitSystemDictionary
 import Foundation
 import SwiftUI
 
@@ -21,7 +22,10 @@ enum LookupState: Equatable {
 
 final class WordItem: ObservableObject, Identifiable {
     let id: UUID
-    let word: String
+    @Published var word: String
+    @Published var sourceForm: String?
+    @Published var inflectionKind: InflectionKind?
+    @Published var expectedPartOfSpeech: PartOfSpeech?
     let createdAt: Date
 
     @Published var lookupState: LookupState
@@ -34,6 +38,22 @@ final class WordItem: ObservableObject, Identifiable {
 
     var normalizedWord: String {
         WordListStore.normalizedWord(for: word)
+    }
+
+    var sourceDescription: String? {
+        guard let sourceForm, !sourceForm.isEmpty else { return nil }
+        if let inflectionKind {
+            return "from \"\(sourceForm)\" · \(inflectionKind.shortDescription)"
+        }
+        return "from \"\(sourceForm)\""
+    }
+
+    var inflectionDescription: String? {
+        guard let inflectionKind else { return nil }
+        if let expectedPartOfSpeech {
+            return "\(expectedPartOfSpeech.rawValue) · \(inflectionKind.shortDescription)"
+        }
+        return inflectionKind.shortDescription
     }
 
     var lookupResult: LookupResult? {
@@ -74,6 +94,9 @@ final class WordItem: ObservableObject, Identifiable {
     init(
         id: UUID = UUID(),
         word: String,
+        sourceForm: String? = nil,
+        inflectionKind: InflectionKind? = nil,
+        expectedPartOfSpeech: PartOfSpeech? = nil,
         lookupState: LookupState = .pending,
         audioData: Data? = nil,
         createdAt: Date = Date(),
@@ -82,10 +105,19 @@ final class WordItem: ObservableObject, Identifiable {
     ) {
         self.id = id
         self.word = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.sourceForm = sourceForm?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.inflectionKind = inflectionKind
+        self.expectedPartOfSpeech = expectedPartOfSpeech
         self.lookupState = lookupState
         self.audioData = audioData
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastRefreshedAt = lastRefreshedAt
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

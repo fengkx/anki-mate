@@ -27,7 +27,7 @@ struct WordsColumnView: View {
                             viewModel.showExportDialog = true
                         }
                         .buttonStyle(.bordered)
-                        .disabled(!viewModel.canExportCollections)
+                        .disabled(!viewModel.canExportCurrentCollection)
                     }
                 }
 

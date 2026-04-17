@@ -235,3 +235,18 @@ public enum LookupError: Error, Sendable, Equatable {
     case sourceUnavailable
     case parseFailed
 }
+
+extension LookupError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notFound:
+            return "No dictionary entry found."
+        case .dictionaryUnavailable(let name):
+            return "The dictionary \"\(name)\" is unavailable."
+        case .sourceUnavailable:
+            return "Dictionary source is unavailable."
+        case .parseFailed:
+            return "Failed to parse dictionary result."
+        }
+    }
+}

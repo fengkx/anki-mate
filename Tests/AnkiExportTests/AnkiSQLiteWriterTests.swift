@@ -110,6 +110,40 @@ final class AnkiSQLiteWriterTests: XCTestCase {
         XCTAssertEqual(scalar(db: db, sql: "SELECT COUNT(*) FROM cards"), 2)
     }
 
+    func testWritePersistsDeckDescriptionIntoCollectionMetadata() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let dbPath = tempDir.appendingPathComponent("collection.anki2").path
+        try AnkiSQLiteWriter.write(
+            deck: AnkiDeckConfig(deckName: "Reading", deckDescription: "Reading vocabulary deck"),
+            notes: [
+                AnkiNoteData(
+                    word: "apple",
+                    phonetic: "ˈæpəl",
+                    definitions: "<div>fruit</div>",
+                    audioFilename: nil,
+                    audioData: nil
+                )
+            ],
+            to: dbPath
+        )
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT decks FROM col", -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+        let decksJSON = String(cString: sqlite3_column_text(stmt, 0))
+        XCTAssertTrue(decksJSON.contains("\"name\":\"Reading\""))
+        XCTAssertTrue(decksJSON.contains("\"desc\":\"Reading vocabulary deck\""))
+    }
+
     private func scalar(db: OpaquePointer?, sql: String) -> Int {
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, sql, -1, &stmt, nil)

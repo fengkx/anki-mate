@@ -3,18 +3,21 @@ import Foundation
 public struct AnkiDeckConfig: Sendable {
     public let deckId: Int64
     public let deckName: String
+    public let deckDescription: String
     public let modelId: Int64
 
-    public init(deckName: String = "DictKit Vocabulary") {
+    public init(deckName: String = "DictKit Vocabulary", deckDescription: String = "") {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         self.deckId = now + Int64.random(in: 1...999)
         self.deckName = deckName
+        self.deckDescription = deckDescription
         self.modelId = now + Int64.random(in: 1000...1999)
     }
 
-    public init(deckId: Int64, deckName: String, modelId: Int64) {
+    public init(deckId: Int64, deckName: String, deckDescription: String, modelId: Int64) {
         self.deckId = deckId
         self.deckName = deckName
+        self.deckDescription = deckDescription
         self.modelId = modelId
     }
 }

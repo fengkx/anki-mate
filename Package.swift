@@ -11,7 +11,7 @@ let package = Package(
         .library(name: "DictKitSystemDictionary", targets: ["DictKitSystemDictionary"]),
         .executable(name: "dictkit", targets: ["DictKitExecutable"]),
         .library(name: "DictKitAnkiExport", targets: ["DictKitAnkiExport"]),
-        .executable(name: "DictKitApp", targets: ["DictKitApp"])
+        .executable(name: "anki-mate", targets: ["DictKitApp"])
     ],
     dependencies: [
         .package(
@@ -51,7 +51,8 @@ let package = Package(
             ],
             path: "Sources/DictKitSystemDictionary",
             linkerSettings: [
-                .linkedFramework("AVFAudio", .when(platforms: [.macOS]))
+                .linkedFramework("AVFAudio", .when(platforms: [.macOS])),
+                .linkedFramework("NaturalLanguage", .when(platforms: [.macOS]))
             ]
         ),
         .target(

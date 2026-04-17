@@ -36,6 +36,18 @@ struct CardPreviewView: View {
                     .frame(width: 140)
                 }
 
+                if let sourceDescription = item.sourceDescription {
+                    Text(sourceDescription)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let inflectionDescription = item.inflectionDescription {
+                    Text(inflectionDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 // Row 2: Phonetics with dialect badges (AmE first, then BrE)
                 let phonetics = item.phoneticsByDialect.sorted { a, b in
                     let order = ["AmE": 0, "BrE": 1]

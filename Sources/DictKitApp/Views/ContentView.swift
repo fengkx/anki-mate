@@ -42,46 +42,16 @@ struct ContentView: View {
         .sheet(item: $collectionEditorMode) { mode in
             CollectionEditorSheet(
                 mode: mode,
-                initialName: mode == .rename ? (viewModel.currentCollection?.name ?? "") : ""
-            ) { name in
+                initialForm: viewModel.collectionEditorForm(for: mode)
+            ) { form in
                 switch mode {
                 case .create:
-                    return viewModel.createCollection(named: name)
+                    return viewModel.createCollection(using: form)
                 case .rename:
-                    return viewModel.renameCurrentCollection(to: name)
+                    return viewModel.renameCurrentCollection(using: form)
                 }
             }
             .environmentObject(viewModel)
-        }
-        .confirmationDialog(
-            "Delete Word",
-            isPresented: Binding(
-                get: { viewModel.pendingWordDeletion != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.cancelPendingWordDeletion()
-                    }
-                }
-            ),
-            presenting: viewModel.pendingWordDeletion
-        ) { pendingWordDeletion in
-            Button("Remove from \(pendingWordDeletion.currentCollectionName)", role: .destructive) {
-                viewModel.confirmRemovePendingWordFromCurrentCollection()
-            }
-
-            Button("Delete Everywhere", role: .destructive) {
-                viewModel.confirmDeletePendingWordEverywhere()
-            }
-
-            Button("Cancel", role: .cancel) {
-                viewModel.cancelPendingWordDeletion()
-            }
-        } message: { pendingWordDeletion in
-            if pendingWordDeletion.otherCollectionNames.isEmpty {
-                Text("This word only exists in \(pendingWordDeletion.currentCollectionName).")
-            } else {
-                Text("Also in: \(pendingWordDeletion.otherCollectionNames.joined(separator: ", "))")
-            }
         }
         .alert("Export Result", isPresented: .init(
             get: { viewModel.exportError != nil && !viewModel.isExporting },
@@ -90,6 +60,14 @@ struct ContentView: View {
             Button("OK") { viewModel.exportError = nil }
         } message: {
             Text(viewModel.exportError ?? "")
+        }
+        .alert("Storage Error", isPresented: .init(
+            get: { viewModel.storeErrorMessage != nil },
+            set: { if !$0 { viewModel.dismissStoreError() } }
+        )) {
+            Button("OK") { viewModel.dismissStoreError() }
+        } message: {
+            Text(viewModel.storeErrorMessage ?? "")
         }
     }
 }

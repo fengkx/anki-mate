@@ -1,23 +1,15 @@
-import DictKitSystemDictionary
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage("selectedDictionary") private var selectedDictionary: String = ""
-    @State private var availableDictionaries: [String] = []
-
     var body: some View {
-        Form {
-            Picker("Dictionary", selection: $selectedDictionary) {
-                Text("Automatic").tag("")
-                ForEach(availableDictionaries, id: \.self) { name in
-                    Text(name).tag(name)
-                }
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Dictionary settings are configured per collection.")
+                .font(.body)
+            Text("Edit a collection to choose its preferred dictionary and fallback behavior.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
-        .frame(width: 400)
-        .onAppear {
-            availableDictionaries = SystemDictionaryClient().listAvailableDictionaries().sorted()
-        }
+        .frame(width: 400, height: 120, alignment: .topLeading)
+        .padding()
     }
 }

@@ -133,7 +133,7 @@ public enum AnkiSQLiteWriter {
         """
 
         let deckObjects = decks.map {
-            "\"\($0.deckId)\":{\"id\":\($0.deckId),\"name\":\"\($0.deckName)\",\"mod\":\(now),\"usn\":-1,\"lrnToday\":[0,0],\"revToday\":[0,0],\"newToday\":[0,0],\"timeToday\":[0,0],\"collapsed\":false,\"desc\":\"\",\"dyn\":0,\"conf\":1,\"extendNew\":10,\"extendRev\":50}"
+            "\"\($0.deckId)\":{\"id\":\($0.deckId),\"name\":\(jsonString($0.deckName)),\"mod\":\(now),\"usn\":-1,\"lrnToday\":[0,0],\"revToday\":[0,0],\"newToday\":[0,0],\"timeToday\":[0,0],\"collapsed\":false,\"desc\":\(jsonString($0.deckDescription)),\"dyn\":0,\"conf\":1,\"extendNew\":10,\"extendRev\":50}"
         }.joined(separator: ",")
         let decksJSON = "{\"1\":{\"id\":1,\"name\":\"Default\",\"mod\":\(now),\"usn\":-1,\"lrnToday\":[0,0],\"revToday\":[0,0],\"newToday\":[0,0],\"timeToday\":[0,0],\"collapsed\":false,\"desc\":\"\",\"dyn\":0,\"conf\":1,\"extendNew\":10,\"extendRev\":50},\(deckObjects)}"
 

@@ -1,3 +1,4 @@
+import DictKitSystemDictionary
 import Foundation
 
 extension PersistedWordRecord {
@@ -10,6 +11,9 @@ extension PersistedWordRecord {
             id: item.id,
             displayWord: item.word,
             normalizedWord: item.normalizedWord,
+            sourceForm: item.sourceForm,
+            inflectionKind: item.inflectionKind,
+            expectedPartOfSpeech: item.expectedPartOfSpeech,
             lookupState: PersistedLookupState(item.lookupState),
             audioData: item.audioData,
             createdAt: item.createdAt,
@@ -22,6 +26,9 @@ extension PersistedWordRecord {
         WordItem(
             id: id,
             word: displayWord,
+            sourceForm: sourceForm,
+            inflectionKind: inflectionKind,
+            expectedPartOfSpeech: expectedPartOfSpeech,
             lookupState: lookupState.restoredLookupState,
             audioData: audioData,
             createdAt: createdAt,

@@ -9,6 +9,7 @@ struct DictKitApp: App {
             ContentView()
                 .environmentObject(viewModel)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .importExport) {
@@ -16,7 +17,7 @@ struct DictKitApp: App {
                     viewModel.showExportDialog = true
                 }
                 .keyboardShortcut("e", modifiers: .command)
-                .disabled(!viewModel.canExportCollections)
+                .disabled(!viewModel.canExportCurrentCollection)
             }
         }
 
