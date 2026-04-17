@@ -1,30 +1,69 @@
 # macOS DictKit development commands
 
+swiftpm_env := ""
+swiftpm_flags := "--disable-sandbox --scratch-path .build"
+llama_swiftpm_flags := "-Xcc -I./vendor/llama-install/include -Xlinker -L./vendor/llama-install/lib"
+llama_header := "vendor/llama-install/include/llama.h"
+llama_lib_dir := "vendor/llama-install/lib"
+cert_name := "AnkiMateDev"
+cert_dir := ".build/certs"
+
 # List available recipes
 default:
     @just --list
 
+# Prepare the local build directory.
+prepare-swiftpm:
+    @mkdir -p .build
+
+# Fail fast when llama.cpp artifacts are not prepared yet.
+assert-llama:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f "{{llama_header}}" ] || [ ! -d "{{llama_lib_dir}}" ]; then
+        echo "Missing vendor/llama-install. Run 'just build-llama' first."
+        exit 1
+    fi
+
 # ── Build ──────────────────────────────────────────────
 
-# Build all targets
-build:
-    swift build
+# Build the main products that are available in a fresh checkout.
+build: prepare-swiftpm
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product dictkit
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product anki-mate
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --target DictKitAnkiExport
+    if [ -f "{{llama_header}}" ] && [ -d "{{llama_lib_dir}}" ]; then
+        {{swiftpm_env}} swift build {{swiftpm_flags}} --product AnkiMateServer {{llama_swiftpm_flags}}
+    else
+        echo "Skipping AnkiMateServer: vendor/llama-install is missing. Run 'just build-llama' to enable it."
+    fi
 
 # Build CLI only
-build-cli:
-    swift build --product dictkit
+build-cli: prepare-swiftpm
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product dictkit
 
 # Build the macOS app
-build-app:
-    swift build --product anki-mate
+build-app: prepare-swiftpm
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product anki-mate
 
 # Build the Anki export library
-build-anki:
-    swift build --target DictKitAnkiExport
+build-anki: prepare-swiftpm
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --target DictKitAnkiExport
 
-# Build in release mode
-build-release:
-    swift build -c release
+# Build the main products in release mode
+build-release: prepare-swiftpm
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{swiftpm_env}} swift build {{swiftpm_flags}} -c release --product dictkit
+    {{swiftpm_env}} swift build {{swiftpm_flags}} -c release --product anki-mate
+    {{swiftpm_env}} swift build {{swiftpm_flags}} -c release --target DictKitAnkiExport
+    if [ -f "{{llama_header}}" ] && [ -d "{{llama_lib_dir}}" ]; then
+        {{swiftpm_env}} swift build {{swiftpm_flags}} -c release --product AnkiMateServer {{llama_swiftpm_flags}}
+    else
+        echo "Skipping AnkiMateServer release build: vendor/llama-install is missing. Run 'just build-llama' to enable it."
+    fi
 
 # ── LLM / Inference ──────────────────────────────────
 
@@ -32,106 +71,99 @@ build-release:
 build-llama:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ ! -d vendor/llama.cpp/CMakeLists.txt ] && [ ! -f vendor/llama.cpp/CMakeLists.txt ]; then
+    if [ ! -f vendor/llama.cpp/CMakeLists.txt ]; then
         echo "Initializing llama.cpp submodule..."
         git submodule update --init vendor/llama.cpp
     fi
     ./scripts/build-llama.sh
 
 # Build the inference server (requires build-llama first)
-build-server:
-    swift build --product AnkiMateServer \
-        -Xcc -I./vendor/llama-install/include \
-        -Xlinker -L./vendor/llama-install/lib
+build-server: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product AnkiMateServer {{llama_swiftpm_flags}}
 
 # ── Test ───────────────────────────────────────────────
 
-# Run all tests
-test:
-    swift test
+# SwiftPM currently builds AnkiMateServer during test builds, so llama artifacts are required.
+test: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}}
 
 # Run tests with verbose output
-test-verbose:
-    swift test --verbose
+test-verbose: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --verbose
 
 # Run a specific test by filter (e.g. just test-filter CLISmoke)
-test-filter filter:
-    swift test --filter '{{filter}}'
+test-filter filter: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter '{{filter}}'
 
 # Run only AnkiExport tests
-test-anki:
-    swift test --filter AnkiExportTests
+test-anki: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter AnkiExportTests
 
-# Run only DictKit core tests (excludes Anki tests)
-test-core:
-    swift test --filter DictKitTests
+# Run only DictKit core tests
+test-core: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter DictKitTests
 
 # Run speech integration tests (requires DICTKIT_RUN_SPEECH_TESTS=1)
-test-speech:
-    DICTKIT_RUN_SPEECH_TESTS=1 swift test --filter Speech
+test-speech: prepare-swiftpm assert-llama
+    DICTKIT_RUN_SPEECH_TESTS=1 {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter Speech
 
 # ── Run ────────────────────────────────────────────────
 
 # Run the CLI with arguments (e.g. just run apple)
-run *args:
-    swift run dictkit {{args}}
+run *args: prepare-swiftpm
+    {{swiftpm_env}} swift run {{swiftpm_flags}} dictkit {{args}}
 
 # Lookup a word (e.g. just lookup apple)
-lookup *words:
-    swift run dictkit {{words}}
+lookup *words: prepare-swiftpm
+    {{swiftpm_env}} swift run {{swiftpm_flags}} dictkit {{words}}
 
 # Lookup a word as JSON
-lookup-json *words:
-    swift run dictkit --json {{words}}
+lookup-json *words: prepare-swiftpm
+    {{swiftpm_env}} swift run {{swiftpm_flags}} dictkit --json {{words}}
 
 # Speak a word and save to wav (e.g. just speak apple)
-speak word:
-    swift run dictkit speech --output ./{{word}}.wav {{word}}
+speak word: prepare-swiftpm
+    {{swiftpm_env}} swift run {{swiftpm_flags}} dictkit speech --output ./{{word}}.wav {{word}}
 
 # Run the macOS app (builds, signs, bundles and opens it)
-run-app:
+run-app: prepare-swiftpm
     #!/usr/bin/env bash
     set -euo pipefail
-    # Kill any existing instance so macOS doesn't reuse a stale cached process
     pkill -9 -f 'anki-mate\.app' 2>/dev/null || true
     pkill -9 -f 'anki-mate-server' 2>/dev/null || true
     sleep 0.5
-    swift build --product anki-mate
 
-    # Build inference server if llama.cpp is available
-    HAS_LLAMA=false
-    if [ -d vendor/llama-install/lib ]; then
+    {{swiftpm_env}} swift build {{swiftpm_flags}} --product anki-mate
+
+    has_llama=false
+    if [ -f "{{llama_header}}" ] && [ -d "{{llama_lib_dir}}" ]; then
         echo "Building inference server..."
-        swift build --product AnkiMateServer \
-            -Xcc -I./vendor/llama-install/include \
-            -Xlinker -L./vendor/llama-install/lib
-        HAS_LLAMA=true
+        {{swiftpm_env}} swift build {{swiftpm_flags}} --product AnkiMateServer {{llama_swiftpm_flags}}
+        has_llama=true
     else
-        echo "⚠️  vendor/llama-install not found. Run 'just build-llama' for LLM support."
+        echo "Skipping AnkiMateServer: vendor/llama-install is missing. Run 'just build-llama' to enable it."
     fi
 
-    # Sign if certificate is available
     if security find-identity -v -p codesigning | grep -q '{{cert_name}}'; then
         codesign -s '{{cert_name}}' -f .build/debug/anki-mate
     fi
-    ./scripts/build-app-icon.sh .build
-    APP_BUNDLE=".build/anki-mate.app"
-    APP_DIR="$APP_BUNDLE/Contents/MacOS"
-    APP_RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
-    APP_FRAMEWORKS_DIR="$APP_BUNDLE/Contents/Frameworks"
-    # Remove old bundle to avoid any caching issues
-    rm -rf "$APP_BUNDLE"
-    mkdir -p "$APP_DIR" "$APP_RESOURCES_DIR" "$APP_FRAMEWORKS_DIR"
-    cp .build/debug/anki-mate "$APP_DIR/"
 
-    # Copy inference server and dylibs if available
-    if [ "$HAS_LLAMA" = true ]; then
-        cp .build/debug/AnkiMateServer "$APP_DIR/anki-mate-server"
-        ./scripts/fixup-dylibs.sh vendor/llama-install/lib "$APP_FRAMEWORKS_DIR" "$APP_DIR/anki-mate-server"
+    app_bundle=".build/anki-mate.app"
+    app_dir="$app_bundle/Contents/MacOS"
+    app_resources_dir="$app_bundle/Contents/Resources"
+    app_frameworks_dir="$app_bundle/Contents/Frameworks"
+
+    rm -rf "$app_bundle"
+    mkdir -p "$app_dir" "$app_resources_dir" "$app_frameworks_dir"
+    cp .build/debug/anki-mate "$app_dir/"
+
+    if [ "$has_llama" = true ]; then
+        cp .build/debug/AnkiMateServer "$app_dir/anki-mate-server"
+        ./scripts/fixup-dylibs.sh vendor/llama-install/lib "$app_frameworks_dir" "$app_dir/anki-mate-server"
     fi
 
-    cp .build/AppIcon.icns "$APP_RESOURCES_DIR/"
-    cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
+    cp Assets/AppIcon.png "$app_resources_dir/"
+    cat > "$app_bundle/Contents/Info.plist" << 'PLIST'
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
@@ -145,7 +177,7 @@ run-app:
         <key>CFBundleDisplayName</key>
         <string>anki-mate</string>
         <key>CFBundleIconFile</key>
-        <string>AppIcon</string>
+        <string>AppIcon.png</string>
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleShortVersionString</key>
@@ -159,22 +191,20 @@ run-app:
     </dict>
     </plist>
     PLIST
-    # Sign the app bundle if certificate is available
+
     if security find-identity -v -p codesigning | grep -q '{{cert_name}}'; then
-        codesign -s '{{cert_name}}' -f --deep "$APP_BUNDLE"
+        codesign -s '{{cert_name}}' -f --deep "$app_bundle"
     fi
-    open -n "$APP_BUNDLE"
+
+    open -n "$app_bundle"
 
 # ── Code Signing ──────────────────────────────────────
-
-cert_name := "AnkiMateDev"
-cert_dir := ".build/certs"
 
 # Check if the code signing certificate exists
 cert-check:
     @security find-identity -v -p codesigning | grep -q '{{cert_name}}' \
-        && echo "✅ Certificate '{{cert_name}}' found" \
-        || echo "❌ Certificate '{{cert_name}}' not found — run: just cert-create"
+        && echo "Certificate '{{cert_name}}' found" \
+        || echo "Certificate '{{cert_name}}' not found. Run: just cert-create"
 
 # Create a self-signed code signing certificate and trust it
 cert-create:
@@ -211,7 +241,7 @@ cert-create:
         -k ~/Library/Keychains/login.keychain-db {{cert_dir}}/cert.pem
     rm -f {{cert_dir}}/key.pem {{cert_dir}}/cert.pem {{cert_dir}}/cert.p12 {{cert_dir}}/codesign.cnf
     rmdir {{cert_dir}} 2>/dev/null || true
-    echo "✅ Certificate '{{cert_name}}' created and trusted"
+    echo "Certificate '{{cert_name}}' created and trusted"
 
 # Remove the self-signed certificate
 cert-remove:
@@ -219,36 +249,36 @@ cert-remove:
     set -euo pipefail
     security delete-identity -c '{{cert_name}}' 2>/dev/null || true
     security remove-trusted-cert -c '{{cert_name}}' 2>/dev/null || true
-    echo "✅ Certificate '{{cert_name}}' removed"
+    echo "Certificate '{{cert_name}}' removed"
 
 # Sign the built app binary
 sign: build-app
     codesign -s '{{cert_name}}' -f .build/debug/anki-mate
-    @echo "✅ Signed .build/debug/anki-mate"
+    @echo "Signed .build/debug/anki-mate"
 
 # ── Maintenance ────────────────────────────────────────
 
 # Clean build artifacts
-clean:
-    swift package clean
+clean: prepare-swiftpm
+    {{swiftpm_env}} swift package {{swiftpm_flags}} clean
 
 # Full clean including .build directory
 clean-all:
     rm -rf .build
 
 # Resolve dependencies
-resolve:
-    swift package resolve
+resolve: prepare-swiftpm
+    {{swiftpm_env}} swift package {{swiftpm_flags}} resolve
 
 # Update dependencies
-update:
-    swift package update
+update: prepare-swiftpm
+    {{swiftpm_env}} swift package {{swiftpm_flags}} update
 
 # Show dependency graph
-deps:
-    swift package show-dependencies --format tree
+deps: prepare-swiftpm
+    {{swiftpm_env}} swift package {{swiftpm_flags}} show-dependencies --format tree
 
 # ── CI ─────────────────────────────────────────────────
 
-# CI pipeline: build all + run all tests
+# CI pipeline: build the main products, then run tests with llama artifacts available.
 ci: build test

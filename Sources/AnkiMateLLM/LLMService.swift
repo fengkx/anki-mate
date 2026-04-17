@@ -35,9 +35,9 @@ public final class LLMService: ObservableObject {
         serverManager.$state
             .assign(to: &$serverState)
 
-        // Forward child objectWillChange, throttled to avoid UI flicker during downloads
+        // Forward child changes so views that depend on derived download state refresh promptly.
         downloadManager.objectWillChange
-            .throttle(for: .milliseconds(500), scheduler: DispatchQueue.main, latest: true)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }

@@ -3,6 +3,7 @@ import DictKitAnkiExport
 import DictKitSystemDictionary
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 final class WordListViewModel: ObservableObject {
@@ -44,6 +45,7 @@ final class WordListViewModel: ObservableObject {
     private let synthesize: @Sendable (SpeechRequest) async throws -> Data
 
     private var wordCache: [UUID: WordItem] = [:]
+    private var wordChangeCancellables: [UUID: AnyCancellable] = [:]
     private var lookupQueue: [LookupJob] = []
     private var isLookupRunning = false
 
@@ -149,6 +151,15 @@ final class WordListViewModel: ObservableObject {
 
     func dismissStoreError() {
         storeErrorMessage = nil
+    }
+
+    func reloadFromStore() {
+        do {
+            try restoreStateFromStore()
+            storeErrorMessage = nil
+        } catch {
+            storeErrorMessage = "Storage reload failed: \(error.localizedDescription)"
+        }
     }
 
     func createCollection(named name: String) -> Bool {
@@ -394,6 +405,18 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
+    func saveAIExampleSentences(_ sentences: [String], for item: WordItem) {
+        item.aiExampleSentences = sentences
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIDefinitionNote(_ note: String?, for item: WordItem) {
+        item.aiDefinitionNote = note
+        touch(item)
+        persist(item)
+    }
+
     func waitForIdle() async {
         while isLookupRunning || !lookupQueue.isEmpty || wordCache.values.contains(where: { $0.isRefreshing }) {
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -530,6 +553,7 @@ final class WordListViewModel: ObservableObject {
             currentCollectionID = nil
             words = []
             wordCache = [:]
+            wordChangeCancellables = [:]
         }
     }
 
@@ -538,6 +562,7 @@ final class WordListViewModel: ObservableObject {
         let allWords = try store.loadAllWords()
         self.collections = collections
         self.wordCache = Dictionary(uniqueKeysWithValues: allWords.map { ($0.id, $0.makeWordItem()) })
+        rebindWordObservers()
         if let currentCollectionID, collections.contains(where: { $0.id == currentCollectionID }) {
             self.currentCollectionID = currentCollectionID
         } else {
@@ -566,6 +591,7 @@ final class WordListViewModel: ObservableObject {
         let allWords = (try? store.loadAllWords()) ?? []
         let ids = Set(allWords.map(\.id))
         wordCache = wordCache.filter { ids.contains($0.key) }
+        wordChangeCancellables = wordChangeCancellables.filter { ids.contains($0.key) }
         for record in allWords {
             upsertCachedWord(record)
         }
@@ -595,7 +621,23 @@ final class WordListViewModel: ObservableObject {
             existing.updatedAt = record.updatedAt
             existing.lastRefreshedAt = record.lastRefreshedAt
         } else {
-            wordCache[record.id] = record.makeWordItem()
+            let item = record.makeWordItem()
+            wordCache[record.id] = item
+            observeWordChanges(for: item)
+        }
+    }
+
+    private func observeWordChanges(for item: WordItem) {
+        guard wordChangeCancellables[item.id] == nil else { return }
+        wordChangeCancellables[item.id] = item.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    private func rebindWordObservers() {
+        wordChangeCancellables.removeAll()
+        for item in wordCache.values {
+            observeWordChanges(for: item)
         }
     }
 
@@ -613,6 +655,7 @@ final class WordListViewModel: ObservableObject {
 
         try? store.removeWord(id: item.id, from: collectionID)
         wordCache[item.id] = nil
+        wordChangeCancellables[item.id] = nil
         reloadCurrentWords()
         return true
     }

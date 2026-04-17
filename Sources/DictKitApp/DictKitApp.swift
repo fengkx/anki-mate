@@ -38,7 +38,9 @@ struct DictKitApp: App {
         guard syncScheduler == nil else { return }
         guard let store = viewModel.wordListStore else { return }
 
-        let engine = SyncEngine(store: store, status: syncStatus)
+        let engine = SyncEngine(store: store, status: syncStatus) {
+            viewModel.reloadFromStore()
+        }
         let scheduler = SyncScheduler(engine: engine, status: syncStatus)
 
         let isConfigured = WebDAVCredentials.hasBeenConfigured
@@ -58,6 +60,7 @@ struct DictKitApp: App {
         // Wire up AppDelegate for quit-time sync
         appDelegate.syncScheduler = scheduler
         appDelegate.syncStatus = syncStatus
+        appDelegate.llmService = llmService
     }
 
     private func syncNow() async {

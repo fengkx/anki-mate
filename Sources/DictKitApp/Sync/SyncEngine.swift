@@ -4,12 +4,18 @@ import Foundation
 final class SyncEngine {
     private let store: WordListStore
     private let status: SyncStatus
+    private let onStoreChanged: @MainActor () -> Void
 
     private var deviceId: String = ""
 
-    init(store: WordListStore, status: SyncStatus) {
+    init(
+        store: WordListStore,
+        status: SyncStatus,
+        onStoreChanged: @escaping @MainActor () -> Void = {}
+    ) {
         self.store = store
         self.status = status
+        self.onStoreChanged = onStoreChanged
     }
 
     // MARK: - Public
@@ -27,6 +33,7 @@ final class SyncEngine {
     func sync() async {
         guard status.state == .idle || status.state == .error else { return }
         status.state = .syncing(phase: "Preparing...")
+        var didApplyRemoteChanges = false
 
         do {
             let credentials = WebDAVCredentials.load()
@@ -79,6 +86,7 @@ final class SyncEngine {
                     words: mergeResult.wordsToApplyLocally,
                     audioData: audioData
                 )
+                didApplyRemoteChanges = true
             } else if !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
                 await updatePhase("Applying changes...")
                 try store.applySyncBatch(
@@ -86,6 +94,7 @@ final class SyncEngine {
                     words: mergeResult.wordsToApplyLocally,
                     audioData: [:]
                 )
+                didApplyRemoteChanges = true
             }
 
             // 7. Upload new local audio
@@ -118,6 +127,10 @@ final class SyncEngine {
                 status.lastSyncDate = Date()
                 status.lastError = nil
                 status.hasPendingChanges = false
+            }
+
+            if didApplyRemoteChanges {
+                onStoreChanged()
             }
         } catch {
             await MainActor.run {

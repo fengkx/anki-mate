@@ -101,7 +101,6 @@ struct CollectionsSidebarView: View {
     @ViewBuilder
     private var aiModelButtonContent: some View {
         if let summary = llmService.downloadManager.activeDownloadSummary {
-            // Show download progress inline
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle")
@@ -117,11 +116,15 @@ struct CollectionsSidebarView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                Text(summary.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
                 ProgressView(value: summary.fraction)
                     .controlSize(.mini)
             }
         } else if hasPausedDownload {
-            // Show paused indicator
             HStack(spacing: 6) {
                 Image(systemName: "pause.circle")
                     .foregroundStyle(.orange)
@@ -131,8 +134,24 @@ struct CollectionsSidebarView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             }
+        } else if let notice = llmService.downloadManager.latestNotice {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: notice.kind == .success ? "checkmark.circle" : "exclamationmark.triangle")
+                        .foregroundStyle(notice.kind == .success ? .green : .orange)
+                        .font(.caption)
+                    Text(notice.title)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                Text(notice.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         } else {
-            // Default state
             HStack(spacing: 6) {
                 Image(systemName: "cpu")
                     .foregroundStyle(llmService.serverState.isRunning ? .green : .secondary)

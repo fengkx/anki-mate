@@ -23,6 +23,7 @@ struct LLMSettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     mirrorSection
                     serverStatusSection
+                    noticeSection
                     modelListSection
                 }
                 .padding()
@@ -110,6 +111,41 @@ struct LLMSettingsView: View {
     // MARK: - Model List
 
     @ViewBuilder
+    private var noticeSection: some View {
+        if let notice = llmService.downloadManager.latestNotice {
+            GroupBox {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: notice.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(notice.kind == .success ? .green : .orange)
+                        .font(.title3)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(notice.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(notice.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    noticeActions(notice)
+
+                    Button {
+                        llmService.downloadManager.dismissLatestNotice()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Dismiss")
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var modelListSection: some View {
         GroupBox("Available Models") {
             VStack(spacing: 8) {
@@ -190,10 +226,14 @@ struct LLMSettingsView: View {
     @ViewBuilder
     private func downloadingView(_ model: ModelInfo, progress: ModelDownloadManager.DownloadProgress) -> some View {
         HStack(spacing: 8) {
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: 3) {
                 ProgressView(value: progress.fractionCompleted)
-                    .frame(width: 100)
+                    .frame(width: 120)
                 Text(progress.formattedProgress)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Text(progress.transferStatusText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -201,8 +241,7 @@ struct LLMSettingsView: View {
             Text("\(Int(progress.fractionCompleted * 100))%")
                 .font(.caption)
                 .monospacedDigit()
-                .frame(width: 30, alignment: .trailing)
-            // Pause button
+                .frame(width: 36, alignment: .trailing)
             Button {
                 llmService.downloadManager.pause(modelId: model.id)
             } label: {
@@ -210,7 +249,6 @@ struct LLMSettingsView: View {
             }
             .buttonStyle(.borderless)
             .help("Pause download")
-            // Cancel button
             Button {
                 llmService.downloadManager.cancel(modelId: model.id)
             } label: {
@@ -227,7 +265,7 @@ struct LLMSettingsView: View {
         HStack(spacing: 8) {
             VStack(alignment: .trailing, spacing: 2) {
                 ProgressView(value: progress.fractionCompleted)
-                    .frame(width: 100)
+                    .frame(width: 120)
                     .tint(.orange)
                 Text("Paused \u{00B7} \(progress.formattedProgress)")
                     .font(.caption2)
@@ -259,8 +297,8 @@ struct LLMSettingsView: View {
     private func failedView(_ model: ModelInfo, message: String) -> some View {
         HStack(spacing: 6) {
             VStack(alignment: .trailing, spacing: 2) {
-                Text("Failed")
-                    .foregroundColor(.red)
+                Text("Download interrupted")
+                    .foregroundColor(.orange)
                     .font(.caption)
                 Text(message)
                     .font(.caption2)
@@ -268,8 +306,15 @@ struct LLMSettingsView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 180)
+                if let suggestion = llmService.downloadManager.downloads[model.id]?.recoverySuggestion {
+                    Text(suggestion)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 180)
+                }
             }
-            // Retry / Resume
             Button {
                 llmService.downloadManager.download(model: model)
             } label: {
@@ -278,6 +323,14 @@ struct LLMSettingsView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+
+            if shouldOfferMirrorShortcut(for: model.id) {
+                Button("Use Mirror") {
+                    llmService.downloadManager.hfMirror = "hf-mirror.com"
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
     }
 
@@ -307,5 +360,47 @@ struct LLMSettingsView: View {
             .buttonStyle(.borderless)
             .foregroundColor(.red)
         }
+    }
+
+    @ViewBuilder
+    private func noticeActions(_ notice: ModelDownloadManager.DownloadNotice) -> some View {
+        switch notice.kind {
+        case .success:
+            if let model = llmService.registry.models.first(where: { $0.id == notice.modelId }),
+               llmService.selectedModelId != model.id,
+               llmService.downloadManager.isDownloaded(model) {
+                Button("Select") {
+                    llmService.selectedModelId = model.id
+                    llmService.downloadManager.dismissLatestNotice()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        case .error:
+            if let model = llmService.registry.models.first(where: { $0.id == notice.modelId }) {
+                Button(llmService.downloadManager.canResume(modelId: model.id) ? "Resume" : "Retry") {
+                    llmService.downloadManager.download(model: model)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if shouldOfferMirrorShortcut(for: model.id) {
+                    Button("Use Mirror") {
+                        llmService.downloadManager.hfMirror = "hf-mirror.com"
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func shouldOfferMirrorShortcut(for modelId: String) -> Bool {
+        guard llmService.downloadManager.hfMirror.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let progress = llmService.downloadManager.downloads[modelId],
+              let suggestion = progress.recoverySuggestion?.lowercased() else {
+            return false
+        }
+        return suggestion.contains("mirror")
     }
 }

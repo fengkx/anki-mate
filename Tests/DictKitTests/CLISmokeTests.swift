@@ -5,6 +5,7 @@ final class CLISmokeTests: XCTestCase {
     // MARK: - Existing tests
 
     func testCLIPrintsStructuredJSON() throws {
+        try SystemDictionaryTestSupport.requirePublicLookup(for: "apple")
         let result = try run("--json", "apple")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
@@ -22,15 +23,18 @@ final class CLISmokeTests: XCTestCase {
     // MARK: - Default human-readable lookup
 
     func testCLIDefaultHumanReadableLookup() throws {
+        try SystemDictionaryTestSupport.requirePublicLookup(for: "apple")
         let result = try run("apple")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertFalse(result.stdout.contains("No entry found"), result.stdout)
         XCTAssertTrue(result.stdout.contains("apple"), "Expected headword 'apple' in output")
     }
 
     // MARK: - HTML-JSON lookup
 
     func testCLIHtmlJsonLookup() throws {
+        try SystemDictionaryTestSupport.requirePrivateHTMLLookup(for: "apple")
         let result = try run("--html-json", "apple")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
@@ -43,6 +47,7 @@ final class CLISmokeTests: XCTestCase {
     // MARK: - Raw HTML lookup
 
     func testCLIRawHtmlLookup() throws {
+        try SystemDictionaryTestSupport.requirePrivateHTMLLookup(for: "apple")
         let result = try run("--raw-html", "apple")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
@@ -89,6 +94,7 @@ final class CLISmokeTests: XCTestCase {
     // MARK: - Speech synthesis end-to-end
 
     func testCLISpeechWritesValidWavFile() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -104,6 +110,7 @@ final class CLISmokeTests: XCTestCase {
     }
 
     func testCLISpeechJsonOutputIncludesMetadata() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -120,6 +127,7 @@ final class CLISmokeTests: XCTestCase {
     }
 
     func testCLISpeechProducesPronunciationNotSpelling() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -155,6 +163,7 @@ final class CLISmokeTests: XCTestCase {
     }
 
     func testCLISpeechWithSourceOption() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -181,6 +190,7 @@ final class CLISmokeTests: XCTestCase {
     // MARK: - Speech IPA mode vs plain text mode
 
     func testCLISpeechDefaultUsesPlainText() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "artifact")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -198,6 +208,7 @@ final class CLISmokeTests: XCTestCase {
     func testCLISpeechIPAFlagUsesRealIPA() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
                       "System dictionary IPA data varies on CI runners")
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "dictionary")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -217,6 +228,7 @@ final class CLISmokeTests: XCTestCase {
 
     func testCLIJsonLookupMultipleWords() throws {
         let words = ["hello", "run", "elaborate", "beautiful", "dictionary"]
+        try SystemDictionaryTestSupport.requirePublicLookups(for: words)
         for word in words {
             let result = try run("--json", word)
             XCTAssertEqual(result.exitCode, 0, "Failed for '\(word)': \(result.stderr)")
@@ -227,9 +239,11 @@ final class CLISmokeTests: XCTestCase {
 
     func testCLIHumanReadableLookupMultipleWords() throws {
         let words = ["world", "computer", "language", "swift"]
+        try SystemDictionaryTestSupport.requirePublicLookups(for: words)
         for word in words {
             let result = try run(word)
             XCTAssertEqual(result.exitCode, 0, "Failed for '\(word)': \(result.stderr)")
+            XCTAssertFalse(result.stdout.contains("No entry found"), "Lookup unexpectedly failed for '\(word)': \(result.stdout)")
             XCTAssertFalse(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                            "Empty output for '\(word)'")
         }
@@ -239,6 +253,7 @@ final class CLISmokeTests: XCTestCase {
 
     func testCLISpeechMultipleWords() throws {
         let words = ["hello", "run", "elaborate", "beautiful", "dictionary"]
+        try SystemDictionaryTestSupport.requireAutomaticLookups(for: words)
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -257,6 +272,7 @@ final class CLISmokeTests: XCTestCase {
 
     func testCLISpeechMultipleWordsNotSpelledOut() throws {
         let words = ["hello", "elaborate", "beautiful", "dictionary"]
+        try SystemDictionaryTestSupport.requireAutomaticLookups(for: words)
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }

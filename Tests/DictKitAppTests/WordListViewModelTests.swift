@@ -1,6 +1,7 @@
 import DictKit
 import DictKitSystemDictionary
 import Foundation
+import Combine
 import XCTest
 @testable import DictKitApp
 
@@ -149,6 +150,95 @@ final class WordListViewModelTests: XCTestCase {
 
         XCTAssertTrue(try store.loadWords(in: defaultCollection.id).isEmpty)
         XCTAssertEqual(try store.loadWords(in: otherCollection.id).map(\.word), ["Apple"])
+    }
+
+    func testReloadFromStoreReflectsExternalChangesImmediately() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let viewModel = try makeViewModel(store: store)
+
+        XCTAssertTrue(viewModel.words.isEmpty)
+
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        viewModel.reloadFromStore()
+
+        XCTAssertEqual(viewModel.words.map(\.word), ["Apple"])
+    }
+
+    func testWordItemChangesTriggerViewModelUpdatesForDerivedUIState() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .pending,
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let viewModel = try makeViewModel(store: store)
+        let item = try XCTUnwrap(viewModel.words.only)
+        let changed = expectation(description: "ViewModel forwards nested word changes")
+        var cancellables = Set<AnyCancellable>()
+
+        viewModel.objectWillChange
+            .sink { _ in changed.fulfill() }
+            .store(in: &cancellables)
+
+        item.lookupState = .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: []))
+
+        wait(for: [changed], timeout: 1.0)
+        XCTAssertEqual(viewModel.readyCount, 1)
+        XCTAssertEqual(viewModel.wordsColumnSummary, "1 of 1 ready")
+        XCTAssertEqual(viewModel.exportableWordCount(for: defaultCollection.id), 1)
+    }
+
+    func testAIContentPersistsAcrossReload() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let viewModel = try makeViewModel(store: store)
+        let item = try XCTUnwrap(viewModel.words.only)
+
+        viewModel.saveAIExampleSentences(["An apple a day keeps the doctor away."], for: item)
+        viewModel.saveAIDefinitionNote("A learner-friendly definition.", for: item)
+        viewModel.reloadFromStore()
+
+        let reloaded = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(reloaded.aiExampleSentences, ["An apple a day keeps the doctor away."])
+        XCTAssertEqual(reloaded.aiDefinitionNote, "A learner-friendly definition.")
     }
 
     func testAddWordUsesPublicResultWhenExamplesExist() async throws {

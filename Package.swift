@@ -150,7 +150,8 @@ let package = Package(
             name: "DictKitAppTests",
             dependencies: [
                 "DictKit",
-                "DictKitApp"
+                "DictKitApp",
+                "AnkiMateLLM"
             ],
             path: "Tests/DictKitAppTests"
         )

@@ -6,6 +6,7 @@ import DictKit
 
 final class SystemDictionaryIntegrationTests: XCTestCase {
     func testAutomaticLookupReturnsStructuredEntries() throws {
+        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
         let client = SystemDictionaryClient()
         let result = try client.lookup("apple", source: .automatic, includeSource: false)
 
@@ -30,6 +31,7 @@ final class SystemDictionaryIntegrationTests: XCTestCase {
         // Validates that CoreServices APIs work correctly without reentrancy.
         let client = SystemDictionaryClient()
         let words = ["apple", "banana", "hello", "world"]
+        try SystemDictionaryTestSupport.requireAutomaticLookups(for: words)
         for word in words {
             let result = try client.lookup(word, source: .automatic, includeSource: false)
             XCTAssertEqual(result.query, word)

@@ -1,27 +1,43 @@
 import AppKit
 import SwiftUI
+import AnkiMateLLM
 
 /// Handles app termination: shows a sync progress window if there are pending changes.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var syncScheduler: SyncScheduler?
     var syncStatus: SyncStatus?
+    var llmService: LLMService?
     private var syncWindow: NSWindow?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let shouldPauseDownloads = llmService?.downloadManager.hasActiveDownloads == true
         guard let scheduler = syncScheduler,
               let status = syncStatus,
               WebDAVCredentials.hasBeenConfigured,
-              status.hasPendingChanges
+              status.hasPendingChanges || shouldPauseDownloads
         else {
+            if shouldPauseDownloads {
+                Task { @MainActor in
+                    await self.llmService?.downloadManager.pauseAllActiveDownloads()
+                    NSApplication.shared.reply(toApplicationShouldTerminate: true)
+                }
+                return .terminateLater
+            }
             return .terminateNow
         }
 
-        // Show sync progress window
-        showSyncProgressWindow(status: status)
+        if status.hasPendingChanges {
+            showSyncProgressWindow(status: status)
+        }
 
         // Run sync, then terminate
         Task { @MainActor in
-            await scheduler.syncNow()
+            if shouldPauseDownloads {
+                await self.llmService?.downloadManager.pauseAllActiveDownloads()
+            }
+            if status.hasPendingChanges {
+                await scheduler.syncNow()
+            }
             self.closeSyncProgressWindow()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }

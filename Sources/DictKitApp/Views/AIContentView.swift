@@ -5,6 +5,7 @@ import AnkiMateLLM
 struct AIContentView: View {
     @ObservedObject var item: WordItem
     @EnvironmentObject private var llmService: LLMService
+    @EnvironmentObject private var viewModel: WordListViewModel
 
     @State private var errorMessage: String?
 
@@ -84,7 +85,7 @@ struct AIContentView: View {
                         .font(.subheadline.bold())
                     Spacer()
                     Button(role: .destructive) {
-                        item.aiExampleSentences = []
+                        viewModel.saveAIExampleSentences([], for: item)
                     } label: {
                         Image(systemName: "xmark.circle")
                             .font(.caption)
@@ -111,7 +112,7 @@ struct AIContentView: View {
                         .font(.subheadline.bold())
                     Spacer()
                     Button(role: .destructive) {
-                        item.aiDefinitionNote = nil
+                        viewModel.saveAIDefinitionNote(nil, for: item)
                     } label: {
                         Image(systemName: "xmark.circle")
                             .font(.caption)
@@ -143,7 +144,7 @@ struct AIContentView: View {
                     definition: definition,
                     partOfSpeech: pos
                 )
-                item.aiExampleSentences = sentences
+                viewModel.saveAIExampleSentences(sentences, for: item)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -163,7 +164,7 @@ struct AIContentView: View {
                     word: item.word,
                     rawDefinition: def
                 )
-                item.aiDefinitionNote = optimized
+                viewModel.saveAIDefinitionNote(optimized, for: item)
             } catch {
                 errorMessage = error.localizedDescription
             }
