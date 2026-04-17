@@ -153,9 +153,8 @@ struct CollectionsSidebarView: View {
             }
         } else {
             HStack(spacing: 6) {
-                Image(systemName: "cpu")
-                    .foregroundStyle(llmService.serverState.isRunning ? .green : .secondary)
-                Text("AI Model")
+                StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
+                Text(serverStatusLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -165,6 +164,41 @@ struct CollectionsSidebarView: View {
 
     private var hasPausedDownload: Bool {
         llmService.downloadManager.downloads.values.contains { $0.state == .paused }
+    }
+
+    private var serverStatusLabel: String {
+        switch llmService.serverState {
+        case .running:
+            return "Inference Server Running"
+        case .starting:
+            return "Inference Server Starting..."
+        case .stopped:
+            return "Inference Server Stopped"
+        case .failed:
+            return "Inference Server Failed"
+        }
+    }
+
+    private var serverStatusColor: Color {
+        switch llmService.serverState {
+        case .running:
+            return .green
+        case .starting:
+            return .blue
+        case .stopped:
+            return .secondary
+        case .failed:
+            return .red
+        }
+    }
+
+    private var shouldPulseServerStatus: Bool {
+        switch llmService.serverState {
+        case .starting, .running:
+            return true
+        case .stopped, .failed:
+            return false
+        }
     }
 
     private var syncStatusColor: Color {

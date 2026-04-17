@@ -5,6 +5,8 @@ import AnkiMateRPC
 struct LLMSettingsView: View {
     @EnvironmentObject private var llmService: LLMService
     @Environment(\.dismiss) private var dismiss
+    @State private var isTogglingServer = false
+    @AppStorage(LLMDebugSettings.streamDebugEnabledKey) private var streamDebugEnabled = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +25,7 @@ struct LLMSettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     mirrorSection
                     serverStatusSection
+                    debugSection
                     noticeSection
                     modelListSection
                 }
@@ -72,30 +75,66 @@ struct LLMSettingsView: View {
     private var serverStatusSection: some View {
         GroupBox("Inference Server") {
             HStack {
-                Circle()
-                    .fill(serverStatusColor)
-                    .frame(width: 8, height: 8)
+                StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
                 Text(serverStatusText)
                     .font(.subheadline)
                 Spacer()
-
-                if llmService.serverState.isRunning {
-                    Button("Stop") {
-                        Task { await llmService.stopServer() }
-                    }
-                    .buttonStyle(.bordered)
-                }
+                serverActionButton
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var serverActionButton: some View {
+        switch llmService.serverState {
+        case .running:
+            Button("Stop") {
+                toggleServer(start: false)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isTogglingServer)
+        case .stopped, .failed:
+            Button("Start") {
+                toggleServer(start: true)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isTogglingServer)
+        case .starting:
+            Button("Starting...") {}
+                .buttonStyle(.bordered)
+                .disabled(true)
+        }
+    }
+
+    private func toggleServer(start: Bool) {
+        guard !isTogglingServer else { return }
+        isTogglingServer = true
+        Task {
+            if start {
+                await llmService.startServer()
+            } else {
+                await llmService.stopServer()
+            }
+            isTogglingServer = false
         }
     }
 
     private var serverStatusColor: Color {
         switch llmService.serverState {
         case .running: return .green
-        case .starting: return .orange
+        case .starting: return .blue
         case .stopped: return .secondary
         case .failed: return .red
+        }
+    }
+
+    private var shouldPulseServerStatus: Bool {
+        switch llmService.serverState {
+        case .starting, .running:
+            return true
+        case .stopped, .failed:
+            return false
         }
     }
 
@@ -109,6 +148,19 @@ struct LLMSettingsView: View {
     }
 
     // MARK: - Model List
+
+    @ViewBuilder
+    private var debugSection: some View {
+        GroupBox("Debug") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Enable streaming debug logs", isOn: $streamDebugEnabled)
+                Text("When enabled, stream chunk diagnostics are written to app logs (RPCClient category).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
 
     @ViewBuilder
     private var noticeSection: some View {

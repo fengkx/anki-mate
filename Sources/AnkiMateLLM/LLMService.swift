@@ -82,6 +82,11 @@ public final class LLMService: ObservableObject {
         loadedModelId = nil
     }
 
+    /// Start the server without triggering model load.
+    public func startServer() async {
+        await serverManager.start()
+    }
+
     // MARK: - High-Level Generation
 
     /// Generate example sentences for a word.
@@ -116,6 +121,36 @@ public final class LLMService: ObservableObject {
         return parseSentences(result.text)
     }
 
+    public func generateExampleSentencesStreaming(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> [String] {
+        try await ensureReady()
+        guard let port = serverState.port else {
+            throw LLMServiceError.serverNotAvailable
+        }
+
+        let prompt = LLMPrompt.exampleSentences(
+            word: word,
+            partOfSpeech: partOfSpeech,
+            definition: definition
+        )
+
+        let result = try await rpcClient.streamGenerate(
+            params: GenerateParams(
+                prompt: prompt.user,
+                systemPrompt: prompt.system,
+                maxTokens: 360,
+                temperature: 0.7
+            ),
+            port: port,
+            onDelta: onDelta
+        )
+        return parseSentences(result.text)
+    }
+
     /// Generate an optimized definition.
     public func optimizeDefinition(
         word: String,
@@ -142,6 +177,34 @@ public final class LLMService: ObservableObject {
             port: port
         )
 
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func optimizeDefinitionStreaming(
+        word: String,
+        rawDefinition: String,
+        onDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> String {
+        try await ensureReady()
+        guard let port = serverState.port else {
+            throw LLMServiceError.serverNotAvailable
+        }
+
+        let prompt = LLMPrompt.optimizeDefinition(
+            word: word,
+            rawDefinition: rawDefinition
+        )
+
+        let result = try await rpcClient.streamGenerate(
+            params: GenerateParams(
+                prompt: prompt.user,
+                systemPrompt: prompt.system,
+                maxTokens: 240,
+                temperature: 0.5
+            ),
+            port: port,
+            onDelta: onDelta
+        )
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

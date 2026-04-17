@@ -10,9 +10,9 @@ public enum LLMPrompt {
         definition: String
     ) -> (system: String, user: String) {
         let system = """
-        You are a language learning assistant. Generate natural English example sentences \
-        that help learners understand vocabulary in context. Use clear, everyday language \
-        at B1-B2 level.
+        You are a bilingual language learning assistant.
+        Generate natural English example sentences with concise Chinese translations.
+        Keep English at B1-B2 level and Chinese idiomatic.
         """
 
         let user = """
@@ -23,7 +23,8 @@ public enum LLMPrompt {
         - Each sentence should demonstrate a different context
         - Use natural, everyday language
         - Each sentence should be 8-20 words
-        - Return ONLY the sentences, one per line, numbered 1-3
+        - For each item, output in this format: English sentence — Chinese translation
+        - Return ONLY the 3 lines, numbered 1-3
         """
 
         return (system, user)
@@ -34,8 +35,8 @@ public enum LLMPrompt {
         rawDefinition: String
     ) -> (system: String, user: String) {
         let system = """
-        You are a language learning assistant. Your task is to rewrite dictionary definitions \
-        to be clearer and more helpful for language learners.
+        You are a bilingual language learning assistant.
+        Rewrite dictionary definitions to be clear and learner-friendly in both English and Chinese.
         """
 
         let user = """
@@ -45,10 +46,13 @@ public enum LLMPrompt {
         Original definition: \(rawDefinition)
 
         Rules:
-        - Keep it concise (1-2 sentences)
+        - Keep it concise (1-2 short lines)
         - Use simple vocabulary
-        - Include a brief note about common usage if helpful
-        - Return ONLY the improved definition, nothing else
+        - Include usage hint if helpful
+        - Output exactly two lines:
+          EN: <learner-friendly explanation>
+          ZH: <中文解释/用法提示>
+        - Return ONLY these two lines
         """
 
         return (system, user)

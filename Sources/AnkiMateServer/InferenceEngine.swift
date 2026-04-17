@@ -158,6 +158,7 @@ final class InferenceEngine {
 
         // Generate tokens one by one
         var outputTokens: [llama_token] = []
+        var streamedText = ""
         let eosToken = llama_vocab_eos(vocab)
         let eotToken = llama_vocab_eot(vocab)
 
@@ -174,6 +175,13 @@ final class InferenceEngine {
 
             outputTokens.append(newToken)
 
+            var buf = [CChar](repeating: 0, count: 256)
+            let len = llama_token_to_piece(vocab, newToken, &buf, 256, 0, true)
+            if len > 0 {
+                buf[Int(len)] = 0
+                streamedText += String(cString: buf)
+            }
+
             // Prepare next token for decoding
             var singleToken = [newToken]
             batch = llama_batch_get_one(&singleToken, 1)
@@ -184,20 +192,103 @@ final class InferenceEngine {
             }
         }
 
-        // Detokenize
+        let endTime = DispatchTime.now()
+        let durationMs = Int((endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000)
+
+        return GenerateResult(
+            text: streamedText.trimmingCharacters(in: .whitespacesAndNewlines),
+            tokensUsed: outputTokens.count,
+            durationMs: durationMs
+        )
+    }
+
+    func generateStreaming(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        temperature: Float,
+        onToken: (String) -> Void
+    ) throws -> GenerateResult {
+        guard let model = model, let context = context else {
+            throw InferenceError.modelNotLoaded
+        }
+
+        let startTime = DispatchTime.now()
+        let fullPrompt: String
+        if let sys = systemPrompt, !sys.isEmpty {
+            fullPrompt = "<start_of_turn>user\n\(sys)\n\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
+        } else {
+            fullPrompt = "<start_of_turn>user\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
+        }
+
+        let promptCStr = fullPrompt.cString(using: .utf8)!
+        let vocab = llama_model_get_vocab(model)
+        let maxTokenCount = Int32(fullPrompt.utf8.count + 128)
+        var tokens = [llama_token](repeating: 0, count: Int(maxTokenCount))
+        let nTokens = llama_tokenize(vocab, promptCStr, Int32(promptCStr.count - 1), &tokens, maxTokenCount, true, true)
+        guard nTokens >= 0 else {
+            throw InferenceError.generationFailed("Tokenization failed")
+        }
+        tokens = Array(tokens.prefix(Int(nTokens)))
+
+        llama_memory_clear(llama_get_memory(context), true)
+
+        if let s = sampler {
+            llama_sampler_free(s)
+        }
+        let samplerChainParams = llama_sampler_chain_default_params()
+        guard let chain = llama_sampler_chain_init(samplerChainParams) else {
+            throw InferenceError.generationFailed("Failed to create sampler chain")
+        }
+        if temperature > 0 {
+            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95, 1))
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
+        } else {
+            llama_sampler_chain_add(chain, llama_sampler_init_greedy())
+        }
+        sampler = chain
+
+        var batch = llama_batch_get_one(&tokens, Int32(tokens.count))
+        var decodeResult = llama_decode(context, batch)
+        guard decodeResult == 0 else {
+            throw InferenceError.generationFailed("llama_decode failed on prompt (code: \(decodeResult))")
+        }
+
+        var outputTokens: [llama_token] = []
         var outputText = ""
-        for token in outputTokens {
+        let eosToken = llama_vocab_eos(vocab)
+        let eotToken = llama_vocab_eot(vocab)
+
+        for _ in 0..<maxTokens {
+            let newToken = llama_sampler_sample(chain, context, -1)
+            if newToken == eosToken || newToken == eotToken || llama_vocab_is_eog(vocab, newToken) {
+                break
+            }
+
+            outputTokens.append(newToken)
+
             var buf = [CChar](repeating: 0, count: 256)
-            let len = llama_token_to_piece(vocab, token, &buf, 256, 0, true)
+            let len = llama_token_to_piece(vocab, newToken, &buf, 256, 0, true)
             if len > 0 {
                 buf[Int(len)] = 0
-                outputText += String(cString: buf)
+                let piece = String(cString: buf)
+                outputText += piece
+                onToken(piece)
+            }
+
+            var singleToken = [newToken]
+            batch = llama_batch_get_one(&singleToken, 1)
+            decodeResult = llama_decode(context, batch)
+            if decodeResult != 0 {
+                fputs("Warning: llama_decode returned \(decodeResult) during generation\n", stderr)
+                break
             }
         }
 
         let endTime = DispatchTime.now()
         let durationMs = Int((endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000)
-
         return GenerateResult(
             text: outputText.trimmingCharacters(in: .whitespacesAndNewlines),
             tokensUsed: outputTokens.count,

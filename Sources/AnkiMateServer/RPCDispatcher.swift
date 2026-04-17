@@ -10,6 +10,26 @@ final class RPCDispatcher {
         self.engine = engine
     }
 
+    var isModelLoaded: Bool {
+        engine.isModelLoaded
+    }
+
+    func generateStreaming(
+        params: GenerateParams,
+        onToken: (String) -> Void
+    ) throws -> GenerateResult {
+        guard engine.isModelLoaded else {
+            throw InferenceError.modelNotLoaded
+        }
+        return try engine.generateStreaming(
+            prompt: params.prompt,
+            systemPrompt: params.systemPrompt,
+            maxTokens: params.maxTokens,
+            temperature: params.temperature,
+            onToken: onToken
+        )
+    }
+
     func dispatch(_ request: JSONRPCRawRequest, uptimeSeconds: Int) -> JSONRPCResponseEnvelope {
         let id = request.id
 
