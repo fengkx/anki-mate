@@ -2,7 +2,7 @@
 
 ## 1. 文档定位
 
-本文档记录 anki-mate 跨设备同步功能的技术选型、架构设计和关键决策。目标场景：用户在多台 Mac 上使用 anki-mate 管理词汇，通过 WebDAV 服务（坚果云、Synology、Nextcloud 等）自动同步数据。
+本文档记录 Anki Mate 跨设备同步功能的技术选型、架构设计和关键决策。目标场景：用户在多台 Mac 上使用 Anki Mate 管理词汇，通过 WebDAV 服务（坚果云、Synology、Nextcloud 等）自动同步数据。
 
 ---
 
@@ -202,15 +202,95 @@ CREATE TABLE sync_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 ---
 
-## 4. 凭据存储
+## 4. 凭据存储与迁移
 
-WebDAV 的 server URL、username、password 存储在 **macOS Keychain** 中：
+### 4.1 用户可选的存储方式
+
+WebDAV 的 `serverURL`、`username`、`password` 作为一个整体凭据对象保存。UI 只暴露一个开关：
+
+- `Use macOS Keychain` 开启：保存到 Keychain
+- `Use macOS Keychain` 关闭：保存到本地加密文件
+
+设计目标：
+
+- 用户只理解为“要不要用 Keychain”
+- 切换存储方式时，凭据自动迁移到新的位置
+- 不向用户暴露“迁移开关”或“是否删除旧副本”的额外交互
+
+### 4.2 Keychain 模式
+
+Keychain 模式使用单条 generic password 记录保存完整 JSON 凭据：
 
 - `kSecClass`: `kSecClassGenericPassword`
-- `kSecAttrService`: `"com.anki-mate.webdav"`
-- `kSecAttrAccount`: `"webdav-url"` / `"webdav-username"` / `"webdav-password"`
+- `kSecAttrService`: `"dev.ankimate.app.webdav"`
+- `kSecAttrAccount`: `"credentials"`
 
-写入采用 upsert 模式：先 `SecItemUpdate`，失败则 `SecItemAdd`。用户可在「钥匙串访问.app」中查看和管理这些条目。
+写入采用 upsert 模式：先 `SecItemUpdate`，失败则 `SecItemAdd`。
+
+用户体验权衡：
+
+- 好处：安全性最高，凭据受 macOS Keychain 保护
+- 代价：首次保存或后续读取时，系统可能弹出密码/权限提示
+
+### 4.3 非 Keychain 模式
+
+关闭 Keychain 后，凭据不会明文落盘，而是保存为本地加密文件：
+
+- 目录：`~/Library/Application Support/Anki Mate/`
+- 密文文件：`webdav-credentials.enc`
+- 密钥文件：`webdav-credentials.key`
+- 算法：`CryptoKit` `AES.GCM`
+- 密钥：本地随机生成的 256-bit 对称密钥
+
+存储流程：
+
+1. 先把完整凭据编码为 JSON
+2. 使用 `AES.GCM` 加密 JSON
+3. 将密文写入 `.enc`
+4. 将随机对称密钥写入 `.key`
+
+额外保护：
+
+- 目录权限设为 `0700`
+- 文件权限设为 `0600`
+
+安全边界：
+
+- 这能避免明文密码直接出现在磁盘上
+- 但密钥也保存在本地应用目录中，因此安全强度低于 Keychain
+- 该模式的价值主要是减少 Keychain 系统弹窗，而不是提供与 Keychain 等级相同的保护
+
+### 4.4 自动迁移行为
+
+凭据存储方式切换时，保存操作默认自动迁移：
+
+- 从 Keychain 切到本地加密存储：把凭据写入本地加密文件，并删除 Keychain 副本
+- 从本地加密存储切到 Keychain：把凭据写入 Keychain，并删除本地加密副本
+
+读取时按“首选模式优先，其他模式回退”的顺序加载，避免用户切换存储方式后短暂看到空配置。
+
+### 4.5 当前设备上的历史数据迁移
+
+应用启动时会执行一次当前设备的迁移逻辑，把旧的 DictKit/旧 bundle id 遗留数据搬到新的 Anki Mate 命名空间：
+
+- `UserDefaults` domain：`dev.dictkit.app` → `dev.ankimate.app`
+- Application Support：`~/Library/Application Support/DictKit` → `~/Library/Application Support/Anki Mate`
+- WebDAV Keychain service：
+  - `com.anki-mate.webdav`
+  - `dev.dictkit.app.webdav`
+  - `com.dictkit.webdav`
+  - 统一迁到 `dev.ankimate.app.webdav`
+
+迁移策略：
+
+- 目标位置不存在时优先直接 rename / move
+- 目标位置已存在时做目录级 merge，避免覆盖已有新数据
+- Keychain 迁移成功后清理旧 service 条目
+
+这里的边界是：
+
+- App 的用户可见品牌统一为 `Anki Mate`
+- 与系统词典、语音合成交互的底层 library / module 继续保留 `DictKit` 命名
 
 ---
 
@@ -225,7 +305,7 @@ Sources/DictKitApp/Sync/
 ├── SyncScheduler.swift       # 定时（10 分钟）+ NWPathMonitor 网络恢复触发
 ├── SyncStatus.swift          # @MainActor ObservableObject，UI 绑定同步状态
 ├── WebDAVClient.swift        # URLSession 封装（GET/PUT/DELETE/MKCOL/HEAD）
-├── WebDAVCredentials.swift   # Keychain 凭据读写
+├── WebDAVCredentials.swift   # Keychain / encrypted-local 凭据读写与自动迁移
 └── WordListStore+Sync.swift  # WordListStore 的同步扩展（导出/导入/audio hash）
 
 Sources/DictKitApp/Views/
@@ -257,7 +337,19 @@ Sources/DictKitApp/Views/
 - `exclamationmark.icloud`（红色）— 同步出错
 - `icloud.slash`（灰色）— 未配置
 
-SyncSettingsView sheet 包含：WebDAV URL / 用户名 / 密码输入、Test Connection 按钮、Sync Now 按钮、同步状态和错误信息。
+SyncSettingsView sheet 包含：
+
+- WebDAV URL / 用户名 / 密码输入
+- `Use macOS Keychain` 开关
+- Test Connection 按钮
+- Sync Now 按钮
+- 同步状态和错误信息
+
+其中存储方式切换是“无感迁移”：
+
+- 用户只改一个开关
+- 保存时自动迁移凭据
+- 不再暴露单独的“迁移已有凭据”设置项
 
 ---
 

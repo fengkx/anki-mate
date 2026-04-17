@@ -33,6 +33,10 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "AnkiMateShared",
+            path: "Sources/AnkiMateShared"
+        ),
+        .target(
             name: "DictPrivate",
             path: "Sources/DictPrivate",
             publicHeadersPath: "include",
@@ -81,6 +85,7 @@ let package = Package(
         .executableTarget(
             name: "DictKitApp",
             dependencies: [
+                "AnkiMateShared",
                 "DictKit",
                 "DictKitSystemDictionary",
                 "DictKitAnkiExport",
@@ -100,6 +105,7 @@ let package = Package(
         .target(
             name: "AnkiMateLLM",
             dependencies: [
+                "AnkiMateShared",
                 "DictKit",
                 "AnkiMateRPC",
             ],
@@ -149,6 +155,7 @@ let package = Package(
         .testTarget(
             name: "DictKitAppTests",
             dependencies: [
+                "AnkiMateShared",
                 "DictKit",
                 "DictKitApp",
                 "AnkiMateLLM"

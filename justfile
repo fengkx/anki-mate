@@ -171,11 +171,11 @@ run-app: prepare-swiftpm
         <key>CFBundleExecutable</key>
         <string>anki-mate</string>
         <key>CFBundleIdentifier</key>
-        <string>dev.dictkit.app</string>
+        <string>dev.ankimate.app</string>
         <key>CFBundleName</key>
-        <string>anki-mate</string>
+        <string>Anki Mate</string>
         <key>CFBundleDisplayName</key>
-        <string>anki-mate</string>
+        <string>Anki Mate</string>
         <key>CFBundleIconFile</key>
         <string>AppIcon.png</string>
         <key>CFBundlePackageType</key>
@@ -187,7 +187,7 @@ run-app: prepare-swiftpm
         <key>NSHighResolutionCapable</key>
         <true/>
         <key>NSSpeechRecognitionUsageDescription</key>
-        <string>DictKit uses speech synthesis for word pronunciation.</string>
+        <string>Anki Mate uses speech synthesis for word pronunciation.</string>
     </dict>
     </plist>
     PLIST

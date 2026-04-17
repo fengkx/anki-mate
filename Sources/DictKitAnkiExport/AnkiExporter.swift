@@ -35,7 +35,7 @@ public struct AnkiExporter: Sendable {
 
     public static func export(
         words: [ExportInput],
-        deckName: String = "DictKit Vocabulary",
+        deckName: String = "Anki Mate Vocabulary",
         to outputURL: URL
     ) throws -> ExportResult {
         try export(

@@ -4,10 +4,17 @@ import AnkiMateLLM
 @main
 struct DictKitApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var viewModel = WordListViewModel()
-    @StateObject private var syncStatus = SyncStatus()
-    @StateObject private var llmService = LLMService()
+    @StateObject private var viewModel: WordListViewModel
+    @StateObject private var syncStatus: SyncStatus
+    @StateObject private var llmService: LLMService
     @State private var syncScheduler: SyncScheduler?
+
+    init() {
+        AppStorageMigrator.migrateCurrentDeviceData()
+        _viewModel = StateObject(wrappedValue: WordListViewModel())
+        _syncStatus = StateObject(wrappedValue: SyncStatus())
+        _llmService = StateObject(wrappedValue: LLMService())
+    }
 
     var body: some Scene {
         WindowGroup {

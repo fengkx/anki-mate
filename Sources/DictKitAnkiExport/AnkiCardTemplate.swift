@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AnkiCardTemplate {
-    public static let modelName = "DictKit Basic"
+    public static let modelName = "Anki Mate Basic"
 
     public static let fields = ["Word", "Phonetic", "Definitions", "Audio"]
 

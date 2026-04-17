@@ -6,7 +6,9 @@ struct SyncSettingsView: View {
     @State private var serverURL: String = ""
     @State private var username: String = ""
     @State private var password: String = ""
+    @State private var storageMode: WebDAVCredentialStorageMode = .keychain
     @State private var testResult: TestResult?
+    @State private var saveError: String?
     @State private var isTesting: Bool = false
     @State private var syncInterval: SyncInterval = .tenMinutes
     @Environment(\.dismiss) private var dismiss
@@ -31,6 +33,21 @@ struct SyncSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
+                Section("Credential Storage") {
+                    Toggle("Use macOS Keychain", isOn: useKeychainBinding)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(storageMode.summary)
+                            .font(.subheadline.weight(.medium))
+                        Text(storageMode.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(WebDAVCredentials.currentStorageSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Status") {
                     HStack {
                         Image(systemName: syncStatus.systemImage)
@@ -39,7 +56,7 @@ struct SyncSettingsView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Sync Now") {
-                            saveCredentials()
+                            guard saveCredentials() else { return }
                             Task {
                                 await onSyncNow?()
                             }
@@ -75,6 +92,16 @@ struct SyncSettingsView: View {
                 .padding(.horizontal)
             }
 
+            if let saveError {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(saveError)
+                        .font(.caption)
+                }
+                .padding(.horizontal)
+            }
+
             HStack {
                 Button("Test Connection") {
                     testConnection()
@@ -88,7 +115,7 @@ struct SyncSettingsView: View {
                 }
 
                 Button("Save") {
-                    saveCredentials()
+                    guard saveCredentials() else { return }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -97,12 +124,13 @@ struct SyncSettingsView: View {
             .padding(.horizontal)
         }
         .padding()
-        .frame(width: 420, height: 400)
+        .frame(width: 520, height: 520)
         .onAppear {
             let creds = WebDAVCredentials.load()
             serverURL = creds.serverURL
             username = creds.username
             password = creds.password
+            storageMode = WebDAVCredentials.preferredStorageMode
             syncInterval = SyncInterval.load()
         }
     }
@@ -124,14 +152,30 @@ struct SyncSettingsView: View {
         return true
     }
 
-    private func saveCredentials() {
+    private var useKeychainBinding: Binding<Bool> {
+        Binding(
+            get: { storageMode == .keychain },
+            set: { useKeychain in
+                storageMode = useKeychain ? .keychain : .encryptedLocalFile
+            }
+        )
+    }
+
+    @discardableResult
+    private func saveCredentials() -> Bool {
+        saveError = nil
         var creds = WebDAVCredentials(serverURL: serverURL, username: username, password: password)
         // Normalize URL
         if !serverURL.hasSuffix("/") {
             creds.serverURL += "/"
         }
-        creds.save()
+        serverURL = creds.serverURL
+        guard creds.save(storageMode: storageMode) else {
+            saveError = "Could not save WebDAV credentials with the selected storage option."
+            return false
+        }
         syncStatus.isConfigured = creds.isConfigured
+        return true
     }
 
     private func testConnection() {

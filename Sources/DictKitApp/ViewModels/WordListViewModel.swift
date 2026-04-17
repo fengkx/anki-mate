@@ -1,6 +1,7 @@
 import DictKit
 import DictKitAnkiExport
 import DictKitSystemDictionary
+import AnkiMateShared
 import Foundation
 import SwiftUI
 import Combine
@@ -685,7 +686,7 @@ final class WordListViewModel: ObservableObject {
         let applicationSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         return applicationSupportURL
-            .appendingPathComponent("DictKit", isDirectory: true)
+            .appendingPathComponent(AnkiMateIdentity.applicationSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("word-list.sqlite3")
     }
 }

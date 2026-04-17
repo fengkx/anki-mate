@@ -2,6 +2,7 @@
 // Supports background download (continues when settings sheet is closed),
 // pause/resume via URLSession resume data, and HuggingFace mirror configuration.
 
+import AnkiMateShared
 import Foundation
 import AnkiMateRPC
 
@@ -186,7 +187,7 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
 
     public static var defaultBaseDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("DictKit", isDirectory: true)
+        return appSupport.appendingPathComponent(AnkiMateIdentity.applicationSupportDirectoryName, isDirectory: true)
     }
 
     public var modelsDirectory: URL {
