@@ -293,6 +293,25 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: dyldFallbackRuntimePath).resolvingSymlinksInPath().path, expectedFrameworksPath)
     }
 
+    func testGpuLayersOverrideDefaultsToMetalFriendlyValue() {
+        XCTAssertEqual(LLMService.gpuLayersOverride(environment: [:]), 99)
+    }
+
+    func testGpuLayersOverrideReadsEnvironmentAndClampsToZero() {
+        XCTAssertEqual(
+            LLMService.gpuLayersOverride(environment: ["DICTKIT_LLM_GPU_LAYERS": "0"]),
+            0
+        )
+        XCTAssertEqual(
+            LLMService.gpuLayersOverride(environment: ["DICTKIT_LLM_GPU_LAYERS": "-4"]),
+            0
+        )
+        XCTAssertEqual(
+            LLMService.gpuLayersOverride(environment: ["DICTKIT_LLM_GPU_LAYERS": "12"]),
+            12
+        )
+    }
+
     func testDecodeStructuredRecallDraftsPreservesAnchorSnapshotWithoutRemapping() throws {
         let payload = """
         ```json

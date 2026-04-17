@@ -9,6 +9,7 @@ import AnkiMateRPC
 public final class LLMService: ObservableObject {
     private static let selectedModelIdDefaultsKey = "ankimate.selectedModelId"
     private static let lastSuccessfulModelIdDefaultsKey = "ankimate.lastSuccessfullyLoadedModelId"
+    private static let gpuLayersEnvironmentKey = "DICTKIT_LLM_GPU_LAYERS"
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var loadedModelId: String?
@@ -95,7 +96,11 @@ public final class LLMService: ObservableObject {
             let modelPath = downloadManager.localPath(for: model).path
             let _: LoadModelResult = try await rpcClient.call(
                 method: RPCMethod.loadModel,
-                params: LoadModelParams(modelPath: modelPath, contextSize: model.contextSize),
+                params: LoadModelParams(
+                    modelPath: modelPath,
+                    contextSize: model.contextSize,
+                    gpuLayers: Self.gpuLayersOverride()
+                ),
                 port: port
             )
 
@@ -183,6 +188,46 @@ public final class LLMService: ObservableObject {
 
         // Parse numbered sentences
         return parseSentences(result.text)
+    }
+
+    public func generateExampleSentenceArtifacts(
+        word: String,
+        definition: String,
+        partOfSpeech: String
+    ) async throws -> [LLMExampleSentence] {
+        try await generateExampleSentenceArtifacts(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ]
+        )
+    }
+
+    public func generateExampleSentenceArtifacts(
+        word: String,
+        senses: [LLMSensePromptInput]
+    ) async throws -> [LLMExampleSentence] {
+        let prompt = LLMPrompt.exampleSentenceArtifacts(
+            word: word,
+            senses: senses
+        )
+        let desiredCount = LLMPrompt.exampleSentenceCount(for: senses)
+
+        let response: ExampleSentenceEnvelope = try await generateStructuredOutput(
+            type: ExampleSentenceEnvelope.self,
+            prompt: prompt,
+            maxTokens: max(420, desiredCount * 150),
+            temperature: 0.45
+        )
+
+        return normalizeExampleSentences(
+            response.examples,
+            senseCount: max(1, senses.count),
+            desiredCount: desiredCount
+        )
     }
 
     public func generateExampleSentencesStreaming(
@@ -510,6 +555,35 @@ public final class LLMService: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
+    private func normalizeExampleSentences(
+        _ examples: [LLMExampleSentence],
+        senseCount: Int,
+        desiredCount: Int
+    ) -> [LLMExampleSentence] {
+        examples.compactMap { example in
+            let english = normalizeGeneratedLine(example.english)
+            let translation = normalizeGeneratedLine(example.translation)
+            guard !english.isEmpty, !translation.isEmpty else { return nil }
+
+            let normalizedSenseIndex: Int?
+            if let senseIndex = example.senseIndex, (1...senseCount).contains(senseIndex) {
+                normalizedSenseIndex = senseIndex
+            } else if senseCount == 1 {
+                normalizedSenseIndex = 1
+            } else {
+                normalizedSenseIndex = nil
+            }
+
+            return LLMExampleSentence(
+                english: english,
+                translation: translation,
+                senseIndex: normalizedSenseIndex
+            )
+        }
+        .prefix(desiredCount)
+        .map { $0 }
+    }
+
     private func normalizeUsageHint(_ text: String) -> String {
         text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { normalizeGeneratedLine(String($0), convertBilingualLabels: true) }
@@ -613,6 +687,15 @@ public final class LLMService: ObservableObject {
             await self.autoActivateInferenceServerIfPossible()
         }
     }
+
+    static func gpuLayersOverride(environment: [String: String] = ProcessInfo.processInfo.environment) -> Int {
+        guard let rawValue = environment[gpuLayersEnvironmentKey],
+              let parsed = Int(rawValue) else {
+            return 99
+        }
+
+        return max(parsed, 0)
+    }
 }
 
 struct RecallCardDraftEnvelope: Decodable {
@@ -625,6 +708,19 @@ struct RecallCardDraftEnvelope: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.drafts = try container.decodeIfPresent([RecallCardDraftPayload].self, forKey: .drafts) ?? []
+    }
+}
+
+struct ExampleSentenceEnvelope: Decodable {
+    let examples: [LLMExampleSentence]
+
+    private enum CodingKeys: String, CodingKey {
+        case examples
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.examples = try container.decodeIfPresent([LLMExampleSentence].self, forKey: .examples) ?? []
     }
 }
 

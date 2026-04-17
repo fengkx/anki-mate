@@ -44,6 +44,7 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       DICTKIT_LLM_E2E_MODEL_ID: gemma-4-e2b-it-q6k
+      DICTKIT_LLM_GPU_LAYERS: 0
     steps:
       - uses: actions/checkout@v4
 
