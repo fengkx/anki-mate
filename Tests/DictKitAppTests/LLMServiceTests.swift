@@ -224,6 +224,75 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(resolved, "b")
     }
 
+    func testServerLaunchEnvironmentPrependsResolvedLlamaLibraryDirectory() throws {
+        let tempRoot = makeTemporaryDirectory()
+        let serverBinaryURL = tempRoot
+            .appendingPathComponent(".build/debug", isDirectory: true)
+            .appendingPathComponent("AnkiMateServer")
+        let runtimeLibraryDirectory = tempRoot
+            .appendingPathComponent("vendor/llama-install/lib", isDirectory: true)
+
+        try FileManager.default.createDirectory(
+            at: runtimeLibraryDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: runtimeLibraryDirectory.appendingPathComponent("libllama.0.dylib"))
+
+        let originalDirectoryPath = FileManager.default.currentDirectoryPath
+        FileManager.default.changeCurrentDirectoryPath(tempRoot.path)
+        defer {
+            FileManager.default.changeCurrentDirectoryPath(originalDirectoryPath)
+        }
+
+        let environment = ServerProcessManager.launchEnvironment(
+            forServerBinaryAt: serverBinaryURL,
+            baseEnvironment: [
+                "DYLD_LIBRARY_PATH": "/existing/lib",
+                "DYLD_FALLBACK_LIBRARY_PATH": "/fallback/lib"
+            ]
+        )
+
+        let expectedRuntimePath = runtimeLibraryDirectory.resolvingSymlinksInPath().path
+        let dyldRuntimePath = try XCTUnwrap(environment["DYLD_LIBRARY_PATH"]?.split(separator: ":").first.map(String.init))
+        let dyldFallbackRuntimePath = try XCTUnwrap(environment["DYLD_FALLBACK_LIBRARY_PATH"]?.split(separator: ":").first.map(String.init))
+
+        XCTAssertEqual(URL(fileURLWithPath: dyldRuntimePath).resolvingSymlinksInPath().path, expectedRuntimePath)
+        XCTAssertEqual(URL(fileURLWithPath: dyldFallbackRuntimePath).resolvingSymlinksInPath().path, expectedRuntimePath)
+        XCTAssertTrue(environment["DYLD_LIBRARY_PATH"]?.hasSuffix(":/existing/lib") == true)
+        XCTAssertTrue(environment["DYLD_FALLBACK_LIBRARY_PATH"]?.hasSuffix(":/fallback/lib") == true)
+    }
+
+    func testServerLaunchEnvironmentPrefersBundledFrameworksForAppBundleServer() throws {
+        let tempRoot = makeTemporaryDirectory()
+        let serverBinaryURL = tempRoot
+            .appendingPathComponent("Anki Mate.app", isDirectory: true)
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("anki-mate-server")
+        let frameworksDirectory = tempRoot
+            .appendingPathComponent("Anki Mate.app", isDirectory: true)
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Frameworks", isDirectory: true)
+
+        try FileManager.default.createDirectory(
+            at: frameworksDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: frameworksDirectory.appendingPathComponent("libllama.0.dylib"))
+
+        let environment = ServerProcessManager.launchEnvironment(
+            forServerBinaryAt: serverBinaryURL,
+            baseEnvironment: [:]
+        )
+
+        let dyldRuntimePath = try XCTUnwrap(environment["DYLD_LIBRARY_PATH"]?.split(separator: ":").first.map(String.init))
+        let dyldFallbackRuntimePath = try XCTUnwrap(environment["DYLD_FALLBACK_LIBRARY_PATH"]?.split(separator: ":").first.map(String.init))
+        let expectedFrameworksPath = frameworksDirectory.resolvingSymlinksInPath().path
+
+        XCTAssertEqual(URL(fileURLWithPath: dyldRuntimePath).resolvingSymlinksInPath().path, expectedFrameworksPath)
+        XCTAssertEqual(URL(fileURLWithPath: dyldFallbackRuntimePath).resolvingSymlinksInPath().path, expectedFrameworksPath)
+    }
+
     func testDecodeStructuredRecallDraftsPreservesAnchorSnapshotWithoutRemapping() throws {
         let payload = """
         ```json

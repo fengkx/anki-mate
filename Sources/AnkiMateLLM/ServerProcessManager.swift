@@ -54,6 +54,10 @@ public final class ServerProcessManager: ObservableObject {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: serverPath)
         proc.arguments = ["0"] // auto-assign port
+        proc.environment = Self.launchEnvironment(
+            forServerBinaryAt: URL(fileURLWithPath: serverPath),
+            baseEnvironment: ProcessInfo.processInfo.environment
+        )
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -127,6 +131,29 @@ public final class ServerProcessManager: ObservableObject {
 
     // MARK: - Private
 
+    static func launchEnvironment(
+        forServerBinaryAt serverBinaryURL: URL,
+        baseEnvironment: [String: String]
+    ) -> [String: String] {
+        var environment = baseEnvironment
+
+        guard let runtimeLibraryDirectory = locateRuntimeLibraryDirectory(forServerBinaryAt: serverBinaryURL) else {
+            return environment
+        }
+
+        let runtimeLibraryPath = runtimeLibraryDirectory.path
+        environment["DYLD_LIBRARY_PATH"] = prependSearchPath(
+            runtimeLibraryPath,
+            to: environment["DYLD_LIBRARY_PATH"]
+        )
+        environment["DYLD_FALLBACK_LIBRARY_PATH"] = prependSearchPath(
+            runtimeLibraryPath,
+            to: environment["DYLD_FALLBACK_LIBRARY_PATH"]
+        )
+
+        return environment
+    }
+
     private func locateServerBinary() -> String? {
         // In app bundle
         if let bundlePath = Bundle.main.executableURL?.deletingLastPathComponent()
@@ -147,6 +174,52 @@ public final class ServerProcessManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private static func locateRuntimeLibraryDirectory(forServerBinaryAt serverBinaryURL: URL) -> URL? {
+        let fileManager = FileManager.default
+        let frameworksDirectory = serverBinaryURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Frameworks", isDirectory: true)
+
+        if fileManager.fileExists(atPath: frameworksDirectory.appendingPathComponent("libllama.0.dylib").path) {
+            return frameworksDirectory
+        }
+
+        let searchRoots = [
+            URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
+            serverBinaryURL.deletingLastPathComponent(),
+            serverBinaryURL.deletingLastPathComponent().deletingLastPathComponent(),
+            serverBinaryURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(),
+        ]
+
+        for root in searchRoots {
+            let candidate = root
+                .appendingPathComponent("vendor", isDirectory: true)
+                .appendingPathComponent("llama-install", isDirectory: true)
+                .appendingPathComponent("lib", isDirectory: true)
+
+            if fileManager.fileExists(atPath: candidate.appendingPathComponent("libllama.0.dylib").path) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private static func prependSearchPath(_ value: String, to existing: String?) -> String {
+        let separator = ":"
+        let currentValues = (existing ?? "")
+            .split(separator: Character(separator))
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        if currentValues.contains(value) {
+            return ([value] + currentValues.filter { $0 != value }).joined(separator: separator)
+        }
+
+        return ([value] + currentValues).joined(separator: separator)
     }
 
     private func readPortFromStdout(pipe: Pipe) async -> Int? {
