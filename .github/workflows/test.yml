@@ -9,11 +9,16 @@ on:
 jobs:
   test:
     runs-on: macos-26
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install just
-        run: brew install just
+      - name: Install CI tools
+        run: brew install just cmake openssl@3
+
+      - name: Build llama.cpp
+        run: just build-llama
 
       - name: Build & Test
         run: just ci

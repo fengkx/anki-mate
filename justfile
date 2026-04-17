@@ -7,6 +7,8 @@ llama_header := "vendor/llama-install/include/llama.h"
 llama_lib_dir := "vendor/llama-install/lib"
 cert_name := "AnkiMateDev"
 cert_dir := ".build/certs"
+llm_e2e_lockfile := "ci/llm-e2e-model.lock.json"
+default_llm_e2e_model_id := "gemma-4-e2b-it-q6k"
 
 # List available recipes
 default:
@@ -115,11 +117,22 @@ test-core: prepare-swiftpm assert-llama
 test-speech: prepare-swiftpm assert-llama
     DICTKIT_RUN_SPEECH_TESTS=1 {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter Speech
 
+# Run focused LLM prompt/service tests without optional local-model E2E coverage.
+test-llm: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter 'LLMPromptTests|LLMServiceTests'
+
+# Download the pinned model used by LLM end-to-end tests.
+prepare-llm-e2e-model:
+    ./scripts/prepare-llm-e2e-model.sh {{llm_e2e_lockfile}}
+
 # Run optional LLM end-to-end tests with a downloaded local model.
 # Optional env:
 #   DICTKIT_LLM_E2E_MODEL_ID=<model-id>
 test-llm-e2e: prepare-swiftpm assert-llama
-    DICTKIT_RUN_LLM_E2E_TESTS=1 {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter LLMServiceE2ETests
+    DICTKIT_RUN_LLM_E2E_TESTS=1 DICTKIT_LLM_E2E_MODEL_ID="${DICTKIT_LLM_E2E_MODEL_ID:-{{default_llm_e2e_model_id}}}" {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter LLMServiceE2ETests
+
+# CI helper for the pinned LLM end-to-end path.
+ci-llm-e2e: build-llama prepare-llm-e2e-model test-llm-e2e
 
 # ── Run ────────────────────────────────────────────────
 

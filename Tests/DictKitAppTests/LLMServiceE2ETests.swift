@@ -51,16 +51,53 @@ final class LLMServiceE2ETests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.contains("EN:") || $0.contains("ZH:") })
     }
 
+    func testE2ERecallDraftGenerationReturnsStructuredModesWhenEnabled() async throws {
+        let service = try configuredServiceOrSkip()
+        defer { Task { await service.stopServer() } }
+
+        let drafts = try await service.generateRecallCardDrafts(
+            word: "take off",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "verb", definition: "leave the ground and begin to fly"),
+                LLMSensePromptInput(partOfSpeech: "verb", definition: "remove clothing")
+            ],
+            modes: [.fullSpelling, .targetedLetterCloze, .phraseRecall],
+            anchor: LLMAnchorSnapshot(text: "take ___", note: "optional snapshot")
+        )
+
+        XCTAssertFalse(drafts.isEmpty)
+        XCTAssertTrue(Set(drafts.map(\.mode)).count == drafts.count)
+        XCTAssertTrue(drafts.allSatisfy { !$0.front.isEmpty && !$0.back.isEmpty })
+    }
+
+    func testE2ELearningAidsReturnStructuredSectionsWhenEnabled() async throws {
+        let service = try configuredServiceOrSkip()
+        defer { Task { await service.stopServer() } }
+
+        let aids = try await service.generateLearningAids(
+            word: "charge",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation"),
+                LLMSensePromptInput(partOfSpeech: "verb", definition: "ask someone to pay a price")
+            ],
+            anchor: LLMAnchorSnapshot(text: "charge", note: "snapshot only")
+        )
+
+        XCTAssertFalse(aids.pitfalls.isEmpty)
+        XCTAssertFalse(aids.mnemonics.isEmpty)
+        XCTAssertFalse(aids.collocations.isEmpty)
+    }
+
     private func configuredServiceOrSkip() throws -> LLMService {
         let environment = ProcessInfo.processInfo.environment
         guard environment[runFlag] == "1" else {
-            throw XCTSkip("Set \(runFlag)=1 to run optional LLM end-to-end tests.")
+            throw XCTSkip("Set \(runFlag)=1 or run `just test-llm-e2e` to execute optional LLM end-to-end tests.")
         }
 
         let service = LLMService()
         let downloadedModels = service.registry.models.filter { service.downloadManager.isDownloaded($0) }
         guard !downloadedModels.isEmpty else {
-            throw XCTSkip("No downloaded LLM model found for optional end-to-end tests.")
+            throw XCTSkip("No downloaded LLM model found. Run `just prepare-llm-e2e-model` first, or point \(modelFlag) at an already-downloaded model.")
         }
 
         if let requestedModelId = environment[modelFlag], !requestedModelId.isEmpty {

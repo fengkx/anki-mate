@@ -17,6 +17,7 @@ So the first triage question is: is this a real regression, or a missing llama b
 just test
 just test-verbose
 just test-filter WordListViewModelTests
+just test-llm
 just test-core
 just test-anki
 just test-speech
@@ -44,12 +45,25 @@ just test-speech
 
 ### LLM prompt / inference changes
 
+- `just test-llm`
 - `just test-filter LLMPromptTests`
 - `just test-filter LLMServiceTests`
+- focus coverage:
+  - structured JSON prompt shape for recall drafts and learning aids
+  - structured-output decoding and normalization
+  - auto-start model selection priority (`last successfully loaded` -> `selected` -> first downloaded)
 - optional end-to-end run with a downloaded model:
-  - `just test-llm-e2e`
-  - optionally pin a specific model:
+  - first-time setup for the pinned CI model:
+    - `just prepare-llm-e2e-model`
+  - run the end-to-end suite:
+    - `just test-llm-e2e`
+  - CI-equivalent local loop:
+    - `just ci-llm-e2e`
+  - optionally pin a different downloaded model:
     - `DICTKIT_LLM_E2E_MODEL_ID=<model-id> just test-llm-e2e`
+
+The pinned CI model is defined in `ci/llm-e2e-model.lock.json`.
+Keep it to a single GGUF by default. GitHub Actions cache is limited and large model churn will evict unrelated caches.
 
 ### App persistence / sync / UI state
 
@@ -86,6 +100,13 @@ Typical reasons:
 - narrow one failing test suite
 - pass explicit include/link flags
 - avoid rerunning the entire graph during fast iteration
+
+## GitHub Actions Notes
+
+- General CI now builds `llama.cpp` before `just ci`, so clean macOS runners can execute the full test graph.
+- LLM integration tests live in a separate workflow: `.github/workflows/llm-e2e.yml`
+- That workflow caches only the pinned model file, not the whole Hugging Face cache tree, to stay within GitHub's cache budget more reliably.
+- Cache keys are derived from `ci/llm-e2e-model.lock.json`; change that file intentionally when rotating the model.
 
 ## Test Placement Rule
 

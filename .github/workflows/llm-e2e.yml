@@ -1,0 +1,77 @@
+name: LLM E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/llm-e2e.yml
+      - ci/llm-e2e-model.lock.json
+      - justfile
+      - Package.swift
+      - scripts/build-llama.sh
+      - scripts/patch-llama-openssl.sh
+      - scripts/prepare-llm-e2e-model.sh
+      - Sources/AnkiMateLLM/**
+      - Sources/AnkiMateRPC/**
+      - Sources/AnkiMateServer/**
+      - Tests/DictKitAppTests/LLMServiceE2ETests.swift
+  pull_request:
+    branches: [master]
+    paths:
+      - .github/workflows/llm-e2e.yml
+      - ci/llm-e2e-model.lock.json
+      - justfile
+      - Package.swift
+      - scripts/build-llama.sh
+      - scripts/patch-llama-openssl.sh
+      - scripts/prepare-llm-e2e-model.sh
+      - Sources/AnkiMateLLM/**
+      - Sources/AnkiMateRPC/**
+      - Sources/AnkiMateServer/**
+      - Tests/DictKitAppTests/LLMServiceE2ETests.swift
+
+concurrency:
+  group: llm-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-e2e:
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      DICTKIT_LLM_E2E_MODEL_ID: gemma-4-e2b-it-q6k
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CI tools
+        run: brew install just cmake openssl@3
+
+      # Keep the cache scope narrow so the 4.5 GB GGUF does not crowd out unrelated caches.
+      - name: Restore pinned LLM model cache
+        id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/Library/Application Support/Anki Mate/models/gemma-4-E2B-it-Q6_K.gguf
+          key: llm-e2e-model-${{ runner.os }}-gemma-4-e2b-it-q6k-${{ hashFiles('ci/llm-e2e-model.lock.json') }}
+
+      - name: Build llama.cpp
+        run: just build-llama
+
+      - name: Prepare pinned LLM E2E model
+        run: just prepare-llm-e2e-model
+
+      - name: Save pinned LLM model cache
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/Library/Application Support/Anki Mate/models/gemma-4-E2B-it-Q6_K.gguf
+          key: ${{ steps.model-cache.outputs.cache-primary-key }}
+
+      - name: Run LLM end-to-end tests
+        run: just test-llm-e2e
