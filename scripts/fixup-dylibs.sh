@@ -7,40 +7,54 @@ LIB_DIR="$1"
 FRAMEWORKS_DIR="$2"
 SERVER_BIN="$3"
 
-# Dylibs to embed — order matters for inter-lib dependencies
-DYLIBS=(libllama.dylib libggml.dylib libggml-base.dylib libggml-metal.dylib libggml-cpu.dylib)
+# Dylib families to embed. Copying all matching names keeps the
+# soname chain intact (e.g. libllama.dylib -> libllama.0.dylib -> real file).
+DYLIB_PATTERNS=(
+    libllama*.dylib
+    libllama-common*.dylib
+    libggml*.dylib
+    libmtmd*.dylib
+)
 
 echo "==> Copying and fixing dylibs..."
 
-for dylib in "${DYLIBS[@]}"; do
-    src="$LIB_DIR/$dylib"
-    [ -f "$src" ] || continue
-
-    dst="$FRAMEWORKS_DIR/$dylib"
-    cp "$src" "$dst"
-
-    # Set the dylib's own install name to @rpath
-    install_name_tool -id "@rpath/$dylib" "$dst"
-
-    # Fix the server binary's reference to this dylib
-    current=$(otool -L "$SERVER_BIN" | grep "$dylib" | head -1 | awk '{print $1}' || true)
-    if [ -n "$current" ] && [ "$current" != "@rpath/$dylib" ]; then
-        install_name_tool -change "$current" "@rpath/$dylib" "$SERVER_BIN"
-    fi
+for pattern in "${DYLIB_PATTERNS[@]}"; do
+    for src in "$LIB_DIR"/$pattern; do
+        [ -e "$src" ] || continue
+        cp -P "$src" "$FRAMEWORKS_DIR/"
+    done
 done
 
-# Fix inter-dylib references (e.g. libllama depends on libggml)
-for dylib in "${DYLIBS[@]}"; do
-    target="$FRAMEWORKS_DIR/$dylib"
-    [ -f "$target" ] || continue
+# Set each real dylib's own install name to @rpath/<basename>.
+for target in "$FRAMEWORKS_DIR"/*.dylib; do
+    [ -e "$target" ] || continue
+    [ -L "$target" ] && continue
+    dylib="$(basename "$target")"
+    install_name_tool -id "@rpath/$dylib" "$target"
+done
 
-    for dep in "${DYLIBS[@]}"; do
-        [ "$dylib" = "$dep" ] && continue
-        current=$(otool -L "$target" | grep "$dep" | head -1 | awk '{print $1}' || true)
-        if [ -n "$current" ] && [ "$current" != "@rpath/$dep" ]; then
+# Normalize server references to bundled @rpath libs.
+while IFS= read -r current; do
+    [ -n "$current" ] || continue
+    dep="$(basename "$current")"
+    [ -e "$FRAMEWORKS_DIR/$dep" ] || continue
+    if [ "$current" != "@rpath/$dep" ]; then
+        install_name_tool -change "$current" "@rpath/$dep" "$SERVER_BIN"
+    fi
+done < <(otool -L "$SERVER_BIN" | awk 'NR>1 {print $1}' | rg 'lib[^/]+\.dylib$' || true)
+
+# Normalize inter-dylib references for every bundled real dylib.
+for target in "$FRAMEWORKS_DIR"/*.dylib; do
+    [ -e "$target" ] || continue
+    [ -L "$target" ] && continue
+    while IFS= read -r current; do
+        [ -n "$current" ] || continue
+        dep="$(basename "$current")"
+        [ -e "$FRAMEWORKS_DIR/$dep" ] || continue
+        if [ "$current" != "@rpath/$dep" ]; then
             install_name_tool -change "$current" "@rpath/$dep" "$target"
         fi
-    done
+    done < <(otool -L "$target" | awk 'NR>1 {print $1}' | rg 'lib[^/]+\.dylib$' || true)
 done
 
 # Add @rpath to server binary pointing to Frameworks dir

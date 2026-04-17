@@ -75,6 +75,14 @@ build-llama:
         echo "Initializing llama.cpp submodule..."
         git submodule update --init vendor/llama.cpp
     fi
+    if command -v brew >/dev/null 2>&1 && brew --prefix openssl@3 >/dev/null 2>&1; then
+        OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+        export OPENSSL_ROOT_DIR
+        export CMAKE_PREFIX_PATH="$OPENSSL_ROOT_DIR${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+        export PKG_CONFIG_PATH="$OPENSSL_ROOT_DIR/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        echo "Using OpenSSL from $OPENSSL_ROOT_DIR"
+    fi
+    ./scripts/patch-llama-openssl.sh
     ./scripts/build-llama.sh
 
 # Build the inference server (requires build-llama first)
@@ -106,6 +114,12 @@ test-core: prepare-swiftpm assert-llama
 # Run speech integration tests (requires DICTKIT_RUN_SPEECH_TESTS=1)
 test-speech: prepare-swiftpm assert-llama
     DICTKIT_RUN_SPEECH_TESTS=1 {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter Speech
+
+# Run optional LLM end-to-end tests with a downloaded local model.
+# Optional env:
+#   DICTKIT_LLM_E2E_MODEL_ID=<model-id>
+test-llm-e2e: prepare-swiftpm assert-llama
+    DICTKIT_RUN_LLM_E2E_TESTS=1 {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter LLMServiceE2ETests
 
 # ── Run ────────────────────────────────────────────────
 

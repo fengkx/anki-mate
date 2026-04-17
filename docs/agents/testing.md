@@ -42,6 +42,15 @@ just test-speech
 - `just test-filter Speech`
 - enable integration-only flows with `DICTKIT_RUN_SPEECH_TESTS=1`
 
+### LLM prompt / inference changes
+
+- `just test-filter LLMPromptTests`
+- `just test-filter LLMServiceTests`
+- optional end-to-end run with a downloaded model:
+  - `just test-llm-e2e`
+  - optionally pin a specific model:
+    - `DICTKIT_LLM_E2E_MODEL_ID=<model-id> just test-llm-e2e`
+
 ### App persistence / sync / UI state
 
 - `just test-filter WordList`
