@@ -430,6 +430,54 @@ final class WordListViewModel: ObservableObject {
         persist(item)
     }
 
+    func saveAISuggestedRecallCardDrafts(_ drafts: [RecallCardDraft], for item: WordItem) {
+        item.aiSuggestedRecallCardDrafts = drafts
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIAcceptedRecallCardDrafts(_ drafts: [RecallCardDraft], for item: WordItem) {
+        item.aiAcceptedRecallCardDrafts = drafts
+        touch(item)
+        persist(item)
+    }
+
+    func saveAISuggestedPitfalls(_ values: [String], for item: WordItem) {
+        item.aiSuggestedPitfalls = values
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIAcceptedPitfalls(_ values: [String], for item: WordItem) {
+        item.aiAcceptedPitfalls = values
+        touch(item)
+        persist(item)
+    }
+
+    func saveAISuggestedMnemonics(_ values: [String], for item: WordItem) {
+        item.aiSuggestedMnemonics = values
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIAcceptedMnemonics(_ values: [String], for item: WordItem) {
+        item.aiAcceptedMnemonics = values
+        touch(item)
+        persist(item)
+    }
+
+    func saveAISuggestedCollocations(_ values: [String], for item: WordItem) {
+        item.aiSuggestedCollocations = values
+        touch(item)
+        persist(item)
+    }
+
+    func saveAIAcceptedCollocations(_ values: [String], for item: WordItem) {
+        item.aiAcceptedCollocations = values
+        touch(item)
+        persist(item)
+    }
+
     func waitForIdle() async {
         while isLookupRunning || !lookupQueue.isEmpty || wordCache.values.contains(where: { $0.isRefreshing }) {
             try? await Task.sleep(nanoseconds: 10_000_000)

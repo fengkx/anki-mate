@@ -297,6 +297,14 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         definitionNote.accepted?.text
     }
 
+    public var suggestedRecallCardDrafts: [RecallCardDraft] {
+        recallCardDrafts.suggested ?? []
+    }
+
+    public var acceptedRecallCardDrafts: [RecallCardDraft] {
+        recallCardDrafts.accepted ?? []
+    }
+
     public var suggestedPitfallTexts: [String] {
         pitfalls.suggested?.map(\.text) ?? []
     }

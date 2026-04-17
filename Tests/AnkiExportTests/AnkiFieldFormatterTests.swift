@@ -134,7 +134,7 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("fill a battery"))
     }
 
-    func testDefinitionsHTMLRendersUnifiedArtifactSections() {
+    func testAIArtifactsDefinitionsHTMLRendersUnifiedArtifactSections() {
         let result = makeLookupResult(
             word: "consensus",
             pronunciations: [],
@@ -165,6 +165,69 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("Consensus sounds like many voices settling down."))
         XCTAssertTrue(html.contains("reach a consensus"))
         XCTAssertTrue(html.contains("AI-generated"))
+    }
+
+    func testAIArtifactsDefinitionsHTMLRendersEmptyAcceptedArtifactSectionsAsOmitted() {
+        let result = makeLookupResult(
+            word: "consensus",
+            pronunciations: [],
+            senses: [("noun", "general agreement", [])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiArtifacts: AIArtifacts(
+                recallCardDrafts: AIArtifactSlot(accepted: []),
+                pitfalls: AIArtifactSlot(accepted: []),
+                mnemonics: AIArtifactSlot(accepted: []),
+                collocations: AIArtifactSlot(accepted: [])
+            )
+        )
+
+        XCTAssertFalse(html.contains("Recall Cards"))
+        XCTAssertFalse(html.contains("Pitfalls"))
+        XCTAssertFalse(html.contains("Mnemonics"))
+        XCTAssertFalse(html.contains("Collocations"))
+    }
+
+    func testAIArtifactsDefinitionsHTMLEscapesArtifactContentAndKeepsModeLabels() {
+        let result = makeLookupResult(
+            word: "consensus",
+            pronunciations: [],
+            senses: [("noun", "general agreement", [])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiArtifacts: AIArtifacts(
+                recallCardDrafts: AIArtifactSlot(
+                    accepted: [
+                        RecallCardDraft(
+                            mode: .targetedLetterCloze,
+                            front: "reach a <blank>",
+                            back: "consensus",
+                            hint: "use <c>"
+                        )
+                    ]
+                ),
+                pitfalls: AIArtifactSlot(
+                    accepted: [PitfallArtifact(text: "Do not confuse <consent> with consensus & agreement.")]
+                ),
+                mnemonics: AIArtifactSlot(
+                    accepted: [MnemonicArtifact(text: "Think of many voices saying \"yes\".")]
+                ),
+                collocations: AIArtifactSlot(
+                    accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common <academic> usage")]
+                )
+            )
+        )
+
+        XCTAssertTrue(html.contains("Targeted Letter Cloze"))
+        XCTAssertTrue(html.contains("&lt;blank&gt;"))
+        XCTAssertTrue(html.contains("&lt;consent&gt;"))
+        XCTAssertTrue(html.contains("&amp; agreement"))
+        XCTAssertTrue(html.contains("&quot;yes&quot;"))
+        XCTAssertTrue(html.contains("common &lt;academic&gt; usage"))
     }
 
     // MARK: - Helpers

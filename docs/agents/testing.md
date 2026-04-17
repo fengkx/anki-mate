@@ -77,6 +77,9 @@ Keep it to a single GGUF by default. GitHub Actions cache is limited and large m
 ### Export changes
 
 - `just test-anki`
+- focused AI artifact contract coverage:
+  - `just test-ai-contract`
+  - use when touching the unified `AIArtifacts` schema, `RecallCardDraft`, or export formatting for pitfalls / mnemonics / collocations
 
 ## State Bug Test SOP
 

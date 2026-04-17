@@ -298,6 +298,129 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiAcceptedCollocations, ["reach a consensus"])
     }
 
+    func testAIArtifactSaveHelpersPersistUnifiedSlots() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "Consensus")
+        _ = try store.upsertWord(PersistedWordRecord(item: item), into: defaultCollection.id)
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        viewModel.saveAISuggestedRecallCardDrafts([
+            RecallCardDraft(mode: .phraseRecall, front: "The committee reached a ____.", back: "consensus")
+        ], for: reloadedItem)
+        viewModel.saveAIAcceptedRecallCardDrafts([
+            RecallCardDraft(mode: .fullSpelling, front: "c_nse_sus", back: "consensus", hint: "noun")
+        ], for: reloadedItem)
+        viewModel.saveAISuggestedPitfalls(["Do not confuse it with consent."], for: reloadedItem)
+        viewModel.saveAIAcceptedPitfalls(["Avoid using it for general agreement in every context."], for: reloadedItem)
+        viewModel.saveAISuggestedMnemonics(["Consensus sounds like everyone says yes together."], for: reloadedItem)
+        viewModel.saveAIAcceptedMnemonics(["Say it together, then settle on consensus."], for: reloadedItem)
+        viewModel.saveAISuggestedCollocations(["reach a consensus"], for: reloadedItem)
+        viewModel.saveAIAcceptedCollocations(["arrive at a consensus"], for: reloadedItem)
+
+        viewModel.reloadFromStore()
+
+        let reloaded = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(reloaded.aiSuggestedRecallCardDrafts.count, 1)
+        XCTAssertEqual(reloaded.aiAcceptedRecallCardDrafts.count, 1)
+        XCTAssertEqual(reloaded.aiSuggestedPitfalls, ["Do not confuse it with consent."])
+        XCTAssertEqual(reloaded.aiAcceptedPitfalls, ["Avoid using it for general agreement in every context."])
+        XCTAssertEqual(reloaded.aiSuggestedMnemonics, ["Consensus sounds like everyone says yes together."])
+        XCTAssertEqual(reloaded.aiAcceptedMnemonics, ["Say it together, then settle on consensus."])
+        XCTAssertEqual(reloaded.aiSuggestedCollocations, ["reach a consensus"])
+        XCTAssertEqual(reloaded.aiAcceptedCollocations, ["arrive at a consensus"])
+    }
+
+    func testAIArtifactsRoundTripUnifiedSchemaAndLegacyCompatibility() throws {
+        let artifacts = AIArtifacts(
+            schemaVersion: 1,
+            exampleSentences: AIArtifactSlot(
+                suggested: [
+                    ExampleSentenceArtifact(text: "Suggested example.", note: "keep it short")
+                ],
+                accepted: [
+                    ExampleSentenceArtifact(
+                        text: "Accepted example.",
+                        translation: "示例句"
+                    )
+                ]
+            ),
+            definitionNote: AIArtifactSlot(
+                accepted: DefinitionNoteArtifact(text: "Keep the learner-facing note brief.")
+            ),
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [
+                    RecallCardDraft(
+                        mode: .phraseRecall,
+                        front: "The committee reached a ____.",
+                        back: "consensus",
+                        hint: "noun",
+                        anchor: AIArtifactAnchorSnapshot(
+                            headword: "consensus",
+                            lexicalEntryIndex: 0,
+                            senseIndex: 0,
+                            exampleIndex: nil,
+                            excerpt: "reached a consensus"
+                        )
+                    )
+                ]
+            ),
+            pitfalls: AIArtifactSlot(
+                accepted: [PitfallArtifact(text: "Do not confuse it with consent.")]
+            ),
+            mnemonics: AIArtifactSlot(
+                accepted: [MnemonicArtifact(text: "Consensus sounds like everyone says yes together.")]
+            ),
+            collocations: AIArtifactSlot(
+                accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common academic collocation")]
+            )
+        )
+
+        let encoded = try JSONEncoder().encode(artifacts)
+        let decoded = try JSONDecoder().decode(AIArtifacts.self, from: encoded)
+
+        XCTAssertEqual(decoded, artifacts)
+        XCTAssertEqual(decoded.schemaVersion, AIArtifacts.currentSchemaVersion)
+        XCTAssertEqual(decoded.acceptedExampleSentences, ["Accepted example."])
+        XCTAssertEqual(decoded.acceptedDefinitionNoteText, "Keep the learner-facing note brief.")
+        XCTAssertEqual(decoded.acceptedPitfallTexts, ["Do not confuse it with consent."])
+        XCTAssertEqual(decoded.acceptedMnemonicTexts, ["Consensus sounds like everyone says yes together."])
+        XCTAssertEqual(decoded.acceptedCollocationPhrases, ["reach a consensus"])
+        XCTAssertFalse(decoded.isEmpty)
+    }
+
+    func testAIArtifactsFillsMissingSlotsFromLegacyFieldsWithoutClobberingUnifiedValues() {
+        let unified = AIArtifacts(
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [
+                    RecallCardDraft(mode: .fullSpelling, front: "take ___", back: "off")
+                ]
+            )
+        )
+
+        let merged = unified.fillingMissingSlots(
+            legacyAcceptedExampleSentences: ["Legacy example."],
+            legacyAcceptedDefinitionNote: "Legacy definition note.",
+            legacyAcceptedRecallCardDrafts: [
+                RecallCardDraft(mode: .phraseRecall, front: "do not use", back: "legacy")
+            ],
+            legacyAcceptedPitfalls: ["Legacy pitfall."],
+            legacyAcceptedMnemonics: ["Legacy mnemonic."],
+            legacyAcceptedCollocations: ["Legacy collocation."]
+        )
+
+        XCTAssertEqual(merged.acceptedExampleSentences, ["Legacy example."])
+        XCTAssertEqual(merged.acceptedDefinitionNoteText, "Legacy definition note.")
+        XCTAssertEqual(merged.acceptedRecallCardDrafts.count, 1)
+        XCTAssertEqual(merged.acceptedRecallCardDrafts.first?.mode, .fullSpelling)
+        XCTAssertEqual(merged.acceptedRecallCardDrafts.first?.front, "take ___")
+        XCTAssertEqual(merged.acceptedPitfallTexts, ["Legacy pitfall."])
+        XCTAssertEqual(merged.acceptedMnemonicTexts, ["Legacy mnemonic."])
+        XCTAssertEqual(merged.acceptedCollocationPhrases, ["Legacy collocation."])
+    }
+
     func testLegacyAIColumnsMigrateIntoUnifiedSchema() throws {
         let databaseURL = try makeLegacySchemaDatabase(
             suggestedExamples: ["Suggested example."],

@@ -109,6 +109,10 @@ test-filter filter: prepare-swiftpm assert-llama
 test-anki: prepare-swiftpm assert-llama
     {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter AnkiExportTests
 
+# Run focused AI artifact contract tests across app and export layers
+test-ai-contract: prepare-swiftpm assert-llama
+    {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter AIArtifacts
+
 # Run only DictKit core tests
 test-core: prepare-swiftpm assert-llama
     {{swiftpm_env}} swift test {{swiftpm_flags}} {{llama_swiftpm_flags}} --filter DictKitTests

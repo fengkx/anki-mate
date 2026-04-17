@@ -6,6 +6,7 @@ struct CardPreviewView: View {
     @ObservedObject var item: WordItem
     @EnvironmentObject var viewModel: WordListViewModel
     @State private var showBack: Bool = true
+    @State private var previewFamily: PreviewFamily = .standard
     @AppStorage("cardPreview.aiPanelRatio") private var aiPanelRatio: Double = 0.38
     @State private var aiPanelHeight: CGFloat = 320
     @State private var dragStartHeight: CGFloat?
@@ -16,79 +17,82 @@ struct CardPreviewView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                // Header
                 VStack(alignment: .leading, spacing: 8) {
-                // Row 1: Word title + retry + spacer + Front/Back picker
-                HStack {
-                    Text(item.word)
-                        .font(.title2.bold())
+                    HStack {
+                        Text(item.word)
+                            .font(.title2.bold())
 
-                    if item.isReady {
-                        Button(action: {
-                            viewModel.retryLookup(item)
-                        }) {
-                            Image(systemName: "arrow.clockwise")
+                        if item.isReady {
+                            Button(action: { viewModel.retryLookup(item) }) {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Re-lookup with current dictionary")
                         }
-                        .buttonStyle(.borderless)
-                        .help("Re-lookup with current dictionary")
+
+                        Spacer()
+
+                        Picker("", selection: $previewFamily) {
+                            Text("Standard").tag(PreviewFamily.standard)
+                            Text("Recall").tag(PreviewFamily.recall)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+
+                        Picker("", selection: $showBack) {
+                            Text("Front").tag(false)
+                            Text("Back").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 140)
                     }
 
-                    Spacer()
-
-                    Picker("", selection: $showBack) {
-                        Text("Front").tag(false)
-                        Text("Back").tag(true)
+                    if let sourceDescription = item.sourceDescription {
+                        Text(sourceDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 140)
-                }
 
-                if let sourceDescription = item.sourceDescription {
-                    Text(sourceDescription)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                    if let inflectionDescription = item.inflectionDescription {
+                        Text(inflectionDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-                if let inflectionDescription = item.inflectionDescription {
-                    Text(inflectionDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                // Row 2: Phonetics with dialect badges (AmE first, then BrE)
-                let phonetics = item.phoneticsByDialect.sorted { a, b in
-                    let order = ["AmE": 0, "BrE": 1]
-                    return (order[a.dialect] ?? 2) < (order[b.dialect] ?? 2)
-                }
-                if !phonetics.isEmpty {
-                    HStack(spacing: 20) {
-                        ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
-                            HStack(spacing: 4) {
-                                if !entry.dialect.isEmpty {
-                                    Text(entry.dialect)
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
-                                        )
+                    let phonetics = item.phoneticsByDialect.sorted {
+                        let order = ["AmE": 0, "BrE": 1]
+                        return (order[$0.dialect] ?? 2) < (order[$1.dialect] ?? 2)
+                    }
+                    if !phonetics.isEmpty {
+                        HStack(spacing: 20) {
+                            ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
+                                HStack(spacing: 4) {
+                                    if !entry.dialect.isEmpty {
+                                        Text(entry.dialect)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(
+                                                Capsule()
+                                                    .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
+                                            )
+                                    }
+                                    Text("/\(entry.ipa)/")
+                                        .font(.body)
+                                        .foregroundStyle(.secondary)
+                                    Button(action: {
+                                        Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
+                                    }) {
+                                        Image(systemName: "speaker.wave.2.fill")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.borderless)
                                 }
-                                Text("/\(entry.ipa)/")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-                                Button(action: {
-                                    Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
-                                }) {
-                                    Image(systemName: "speaker.wave.2.fill")
-                                        .font(.caption)
-                                }
-                                .buttonStyle(.borderless)
                             }
                         }
-
-                        if phonetics.isEmpty {
+                    } else {
+                        HStack {
                             Button(action: {
                                 Task { await viewModel.playPronunciation(for: item) }
                             }) {
@@ -98,80 +102,22 @@ struct CardPreviewView: View {
                             .disabled(!item.isReady)
                         }
                     }
-                } else {
-                    HStack {
-                        Button(action: {
-                            Task { await viewModel.playPronunciation(for: item) }
-                        }) {
-                            Image(systemName: "speaker.wave.2.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(!item.isReady)
-                    }
-                }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
                 Divider()
 
-            // Card preview
                 Group {
-                if let result = item.lookupResult {
-                    let note = AnkiNoteData(
-                        word: item.word,
-                        phonetic: AnkiFieldFormatter.phonetic(from: result),
-                        definitions: AnkiFieldFormatter.definitionsHTML(
-                            from: result,
-                            aiAcceptedExampleSentences: item.aiAcceptedExampleSentences,
-                            aiAcceptedDefinitionNote: item.aiAcceptedDefinitionNote
-                        ),
-                        audioFilename: nil,
-                        audioData: nil
-                    )
-                    let html = AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack)
-                    AnkiCardWebView(html: html)
-                } else if case .loading = item.lookupState {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("Looking up...")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
+                    switch previewFamily {
+                    case .standard:
+                        standardPreview
+                    case .recall:
+                        recallPreview
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if case .failed(let msg) = item.lookupState {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.orange)
-                        Text("Lookup failed")
-                            .font(.headline)
-                        Text(msg)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Button("Retry") {
-                            viewModel.retryLookup(item)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .padding(.top, 40)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.tertiary)
-                        Text("Pending...")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // AI Content
                 if item.isReady {
                     Divider()
                     resizeHandle(availableHeight: geometry.size.height)
@@ -182,16 +128,135 @@ struct CardPreviewView: View {
                 }
             }
             .onAppear {
-                aiPanelHeight = clampHeight(
-                    CGFloat(aiPanelRatio) * geometry.size.height,
-                    availableHeight: geometry.size.height
-                )
+                aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * geometry.size.height, availableHeight: geometry.size.height)
             }
             .onChange(of: geometry.size.height) { newHeight in
                 aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * newHeight, availableHeight: newHeight)
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var standardPreview: some View {
+        Group {
+            if let result = item.lookupResult {
+                let note = AnkiNoteData(
+                    word: item.word,
+                    phonetic: AnkiFieldFormatter.phonetic(from: result),
+                    definitions: AnkiFieldFormatter.definitionsHTML(
+                        from: result,
+                        aiArtifacts: item.aiArtifacts
+                    ),
+                    audioFilename: nil,
+                    audioData: nil
+                )
+                AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
+            } else if case .loading = item.lookupState {
+                loadingView(text: "Looking up...")
+            } else if case .failed(let msg) = item.lookupState {
+                failureView(message: msg)
+            } else {
+                loadingView(text: "Pending...")
+            }
+        }
+    }
+
+    private var recallPreview: some View {
+        Group {
+            if let draft = item.aiAcceptedRecallCardDrafts.first {
+                AnkiCardWebView(html: recallPreviewHTML(for: draft, showBack: showBack))
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.tertiary)
+                    Text("No accepted recall draft yet.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func loadingView(text: String) -> some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func failureView(message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 40))
+                .foregroundStyle(.orange)
+            Text("Lookup failed")
+                .font(.headline)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button("Retry") { viewModel.retryLookup(item) }
+                .buttonStyle(.bordered)
+        }
+        .padding(.top, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func recallPreviewHTML(for draft: RecallCardDraft, showBack: Bool) -> String {
+        let front = """
+        <div class="front">
+          <div class="word">\(escapeHTML(draft.front))</div>
+          <div class="phonetic">\(escapeHTML(draft.mode.displayName))</div>
+        </div>
+        """
+
+        let body: String
+        if showBack {
+            body = """
+            \(front)
+            <hr id="answer">
+            <div class="back">
+              <div class="recall-back">\(escapeHTMLPreservingLineBreaks(draft.back))</div>
+              \(draft.hint.map { hint in "<div class=\"recall-hint\">\(escapeHTMLPreservingLineBreaks(hint))</div>" } ?? "")
+            </div>
+            """
+        } else {
+            body = front
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>\(AnkiCardTemplate.css)
+        .recall-back { font-size: 24px; font-weight: 700; line-height: 1.4; }
+        .recall-hint { margin-top: 12px; color: #6b7280; font-size: 16px; }
+        </style>
+        </head>
+        <body class="card">
+        \(body)
+        </body>
+        </html>
+        """
+    }
+
+    private func escapeHTML(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func escapeHTMLPreservingLineBreaks(_ text: String) -> String {
+        escapeHTML(text)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "<br>")
     }
 
     private func resizeHandle(availableHeight: CGFloat) -> some View {
@@ -209,22 +274,23 @@ struct CardPreviewView: View {
             DragGesture(minimumDistance: 2)
                 .onChanged { value in
                     let start = dragStartHeight ?? aiPanelHeight
-                    if dragStartHeight == nil {
-                        dragStartHeight = aiPanelHeight
-                    }
+                    if dragStartHeight == nil { dragStartHeight = aiPanelHeight }
                     let next = clampHeight(start - value.translation.height, availableHeight: availableHeight)
                     aiPanelHeight = next
                     aiPanelRatio = Double((next / max(availableHeight, 1)).clamped(to: 0.2...0.75))
                 }
-                .onEnded { _ in
-                    dragStartHeight = nil
-                }
+                .onEnded { _ in dragStartHeight = nil }
         )
     }
 
     private func clampHeight(_ value: CGFloat, availableHeight: CGFloat) -> CGFloat {
         min(max(value, minAIPanelHeight), min(maxAIPanelHeight, availableHeight * 0.75))
     }
+}
+
+private enum PreviewFamily: String, CaseIterable, Hashable {
+    case standard
+    case recall
 }
 
 private extension CGFloat {
