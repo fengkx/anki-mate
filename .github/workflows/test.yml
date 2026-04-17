@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   test:
@@ -12,8 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
-        run: swift build
+      - name: Install just
+        run: brew install just
 
-      - name: Run tests
-        run: swift test
+      - name: Build & Test
+        run: just ci
