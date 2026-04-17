@@ -3,11 +3,11 @@ import AnkiMateLLM
 
 @main
 struct DictKitApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = WordListViewModel()
     @StateObject private var syncStatus = SyncStatus()
     @StateObject private var llmService = LLMService()
     @State private var syncScheduler: SyncScheduler?
-    @State private var terminationObserver: Any?
 
     var body: some Scene {
         WindowGroup {
@@ -55,14 +55,9 @@ struct DictKitApp: App {
         scheduler.start()
         syncScheduler = scheduler
 
-        // Sync before app quit
-        terminationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: nil
-        ) { [scheduler] _ in
-            scheduler.syncBeforeQuit()
-        }
+        // Wire up AppDelegate for quit-time sync
+        appDelegate.syncScheduler = scheduler
+        appDelegate.syncStatus = syncStatus
     }
 
     private func syncNow() async {

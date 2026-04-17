@@ -68,15 +68,4 @@ final class SyncScheduler {
         guard WebDAVCredentials.load().isConfigured else { return }
         await engine.sync()
     }
-
-    /// Synchronous sync for app termination. Blocks up to `timeout` seconds.
-    nonisolated func syncBeforeQuit(timeout: TimeInterval = 15) {
-        guard WebDAVCredentials.load().isConfigured else { return }
-        let semaphore = DispatchSemaphore(value: 0)
-        Task { @MainActor [weak self] in
-            await self?.engine.sync()
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + timeout)
-    }
 }
