@@ -2,7 +2,11 @@ import SwiftUI
 
 struct CollectionsSidebarView: View {
     @EnvironmentObject var viewModel: WordListViewModel
+    @EnvironmentObject var syncStatus: SyncStatus
     @Binding var collectionEditorMode: CollectionEditorMode?
+    @State private var showSyncSettings = false
+    var onSyncNow: (() async -> Void)?
+    var onIntervalChanged: ((SyncInterval) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +51,41 @@ struct CollectionsSidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+
+            Divider()
+
+            Button {
+                showSyncSettings = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: syncStatus.systemImage)
+                        .foregroundStyle(syncStatusColor)
+                    Text(syncStatus.statusDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+            .help("Sync settings")
+            .sheet(isPresented: $showSyncSettings) {
+                SyncSettingsView(onSyncNow: onSyncNow, onIntervalChanged: onIntervalChanged)
+            }
+        }
+    }
+
+    private var syncStatusColor: Color {
+        switch syncStatus.state {
+        case .idle:
+            if syncStatus.hasPendingChanges { return .orange }
+            return syncStatus.isConfigured ? .green : .secondary
+        case .syncing:
+            return .blue
+        case .error:
+            return .red
         }
     }
 }

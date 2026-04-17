@@ -3,10 +3,12 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: WordListViewModel
     @State private var collectionEditorMode: CollectionEditorMode?
+    var onSyncNow: (() async -> Void)?
+    var onIntervalChanged: ((SyncInterval) -> Void)?
 
     var body: some View {
         NavigationSplitView {
-            CollectionsSidebarView(collectionEditorMode: $collectionEditorMode)
+            CollectionsSidebarView(collectionEditorMode: $collectionEditorMode, onSyncNow: onSyncNow, onIntervalChanged: onIntervalChanged)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
         } content: {
             WordsColumnView()

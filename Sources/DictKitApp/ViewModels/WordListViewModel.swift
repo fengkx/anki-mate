@@ -30,6 +30,14 @@ final class WordListViewModel: ObservableObject {
     @Published var showBatchInput: Bool = false
 
     private let store: any WordListStoring
+    /// Exposed for sync engine. Returns nil if the store is a NoOpWordListStore.
+    var wordListStore: WordListStore? { store as? WordListStore }
+    /// Called when data is mutated (add/remove/update word or collection).
+    var onDataChanged: (() -> Void)?
+
+    private func notifyDataChanged() {
+        onDataChanged?()
+    }
     private let rawLookup: @Sendable (String, DictionaryLookupSource) async throws -> LookupResult
     private let resolvedLookupService: ResolvedLookupService
     private let speak: @Sendable (SpeechRequest) async throws -> Void
@@ -160,6 +168,7 @@ final class WordListViewModel: ObservableObject {
             collections.append(record)
             currentCollectionID = record.id
             collectionEditorErrorMessage = nil
+            notifyDataChanged()
             return true
         } catch {
             collectionEditorErrorMessage = error.localizedDescription
@@ -189,6 +198,7 @@ final class WordListViewModel: ObservableObject {
             )
             collections = collections.map { $0.id == updated.id ? updated : $0 }
             collectionEditorErrorMessage = nil
+            notifyDataChanged()
             return true
         } catch {
             collectionEditorErrorMessage = error.localizedDescription
@@ -199,6 +209,7 @@ final class WordListViewModel: ObservableObject {
     func deleteCurrentCollection() {
         guard let currentCollection else { return }
         try? store.deleteCollection(id: currentCollection.id)
+        notifyDataChanged()
         restoreState()
     }
 
@@ -241,6 +252,7 @@ final class WordListViewModel: ObservableObject {
             let result = try store.upsertWord(PersistedWordRecord(item: item), into: currentCollectionID)
             upsertCachedWord(result.record)
             reloadCurrentWords()
+            notifyDataChanged()
             guard result.insertedWord else { return }
             enqueueLookup(id: result.record.id, mode: .initial, collectionID: currentCollectionID)
         } catch {
@@ -564,6 +576,7 @@ final class WordListViewModel: ObservableObject {
         guard let currentCollectionID else { return }
         do {
             try store.removeWord(id: id, from: currentCollectionID)
+            notifyDataChanged()
         } catch {
             syncCacheAndReload()
             return
@@ -610,6 +623,7 @@ final class WordListViewModel: ObservableObject {
 
     private func persist(_ item: WordItem) {
         try? store.saveWord(PersistedWordRecord(item: item))
+        notifyDataChanged()
     }
 
     private func sanitizedDeckDescription(_ description: String) -> String {
