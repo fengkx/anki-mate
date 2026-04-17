@@ -50,6 +50,8 @@ final class FinalSnapshotTests: XCTestCase {
     }
 
     func testLivePrivateHTMLMatchesCheckedInFixtures() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
+                      "System dictionary content varies on CI runners")
         for fixture in htmlFixtures {
             let liveHTML = try runPrivateHTMLLookup(query: fixture.query)
             if liveHTML.isEmpty || liveHTML.contains("私有词典 API 未找到") {

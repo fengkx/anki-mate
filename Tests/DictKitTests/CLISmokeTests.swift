@@ -196,6 +196,8 @@ final class CLISmokeTests: XCTestCase {
     }
 
     func testCLISpeechIPAFlagUsesRealIPA() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
+                      "System dictionary IPA data varies on CI runners")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
