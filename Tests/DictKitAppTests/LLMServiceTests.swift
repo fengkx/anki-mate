@@ -145,6 +145,66 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertNil(second.downloads["test-model"])
     }
 
+    func testDeleteModelRemovesLocalFileAndClearsDeletingState() async throws {
+        let baseDirectoryURL = makeTemporaryDirectory()
+        let manager = ModelDownloadManager(baseDirectoryURL: baseDirectoryURL)
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 1024,
+            quantization: "Q4_K_M",
+            contextSize: 4096,
+            recommended: false
+        )
+
+        let fileURL = manager.localPath(for: model)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("stub".utf8).write(to: fileURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        try await manager.deleteModel(model)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertFalse(manager.isDeleting(modelId: model.id))
+    }
+
+    func testResolveAutoSelectedModelPrefersCurrentDownloadedModel() {
+        let models = [
+            ModelInfo(id: "a", displayName: "A", fileName: "a.gguf", url: "https://example.com/a.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "b", displayName: "B", fileName: "b.gguf", url: "https://example.com/b.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048)
+        ]
+
+        let resolved = LLMService.resolveAutoSelectedModelId(
+            currentSelectedModelId: "b",
+            registryModels: models,
+            downloadedModelIDs: ["a", "b"]
+        )
+
+        XCTAssertEqual(resolved, "b")
+    }
+
+    func testResolveAutoSelectedModelFallsBackToFirstDownloadedRegistryModel() {
+        let models = [
+            ModelInfo(id: "a", displayName: "A", fileName: "a.gguf", url: "https://example.com/a.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "b", displayName: "B", fileName: "b.gguf", url: "https://example.com/b.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "c", displayName: "C", fileName: "c.gguf", url: "https://example.com/c.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048)
+        ]
+
+        let resolved = LLMService.resolveAutoSelectedModelId(
+            currentSelectedModelId: "missing",
+            registryModels: models,
+            downloadedModelIDs: ["c", "b"]
+        )
+
+        XCTAssertEqual(resolved, "b")
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

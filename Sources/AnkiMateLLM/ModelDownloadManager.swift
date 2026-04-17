@@ -123,6 +123,7 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
     }
 
     @Published public var downloads: [String: DownloadProgress] = [:]
+    @Published public private(set) var deletingModelIds: Set<String> = []
     @Published public private(set) var latestNotice: DownloadNotice?
 
     /// HuggingFace mirror domain. Empty string means use original huggingface.co.
@@ -356,11 +357,26 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         resumeDataByModelId[modelId] != nil
     }
 
+    public func isDeleting(modelId: String) -> Bool {
+        deletingModelIds.contains(modelId)
+    }
+
     /// Delete a downloaded model.
-    public func deleteModel(_ model: ModelInfo) throws {
+    public func deleteModel(_ model: ModelInfo) async throws {
+        guard !isDeleting(modelId: model.id) else { return }
+
+        deletingModelIds.insert(model.id)
+        defer { deletingModelIds.remove(model.id) }
+
+        cancel(modelId: model.id)
         let path = localPath(for: model)
         if FileManager.default.fileExists(atPath: path.path) {
-            try FileManager.default.removeItem(at: path)
+            try await Task.detached(priority: .utility) {
+                try FileManager.default.removeItem(at: path)
+            }.value
+        }
+        if latestNotice?.modelId == model.id {
+            latestNotice = nil
         }
     }
 

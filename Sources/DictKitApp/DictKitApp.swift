@@ -25,6 +25,7 @@ struct DictKitApp: App {
                 .environmentObject(syncStatus)
                 .environmentObject(llmService)
                 .onAppear {
+                    llmService.enableAutoStartOnAvailableModel()
                     setupSync()
                 }
         }
