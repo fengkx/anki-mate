@@ -18,12 +18,14 @@ extension PersistedWordRecord {
             audioData: item.audioData,
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
-            lastRefreshedAt: item.lastRefreshedAt
+            lastRefreshedAt: item.lastRefreshedAt,
+            aiExampleSentences: item.aiExampleSentences,
+            aiDefinitionNote: item.aiDefinitionNote
         )
     }
 
     func makeWordItem() -> WordItem {
-        WordItem(
+        let item = WordItem(
             id: id,
             word: displayWord,
             sourceForm: sourceForm,
@@ -35,6 +37,9 @@ extension PersistedWordRecord {
             updatedAt: updatedAt,
             lastRefreshedAt: lastRefreshedAt
         )
+        item.aiExampleSentences = aiExampleSentences
+        item.aiDefinitionNote = aiDefinitionNote
+        return item
     }
 }
 

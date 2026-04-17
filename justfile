@@ -26,6 +26,24 @@ build-anki:
 build-release:
     swift build -c release
 
+# ── LLM / Inference ──────────────────────────────────
+
+# Build llama.cpp from vendored submodule
+build-llama:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d vendor/llama.cpp/CMakeLists.txt ] && [ ! -f vendor/llama.cpp/CMakeLists.txt ]; then
+        echo "Initializing llama.cpp submodule..."
+        git submodule update --init vendor/llama.cpp
+    fi
+    ./scripts/build-llama.sh
+
+# Build the inference server (requires build-llama first)
+build-server:
+    swift build --product AnkiMateServer \
+        -Xcc -I./vendor/llama-install/include \
+        -Xlinker -L./vendor/llama-install/lib
+
 # ── Test ───────────────────────────────────────────────
 
 # Run all tests
@@ -76,8 +94,22 @@ run-app:
     set -euo pipefail
     # Kill any existing instance so macOS doesn't reuse a stale cached process
     pkill -9 -f 'anki-mate\.app' 2>/dev/null || true
+    pkill -9 -f 'anki-mate-server' 2>/dev/null || true
     sleep 0.5
     swift build --product anki-mate
+
+    # Build inference server if llama.cpp is available
+    HAS_LLAMA=false
+    if [ -d vendor/llama-install/lib ]; then
+        echo "Building inference server..."
+        swift build --product AnkiMateServer \
+            -Xcc -I./vendor/llama-install/include \
+            -Xlinker -L./vendor/llama-install/lib
+        HAS_LLAMA=true
+    else
+        echo "⚠️  vendor/llama-install not found. Run 'just build-llama' for LLM support."
+    fi
+
     # Sign if certificate is available
     if security find-identity -v -p codesigning | grep -q '{{cert_name}}'; then
         codesign -s '{{cert_name}}' -f .build/debug/anki-mate
@@ -86,11 +118,18 @@ run-app:
     APP_BUNDLE=".build/anki-mate.app"
     APP_DIR="$APP_BUNDLE/Contents/MacOS"
     APP_RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
+    APP_FRAMEWORKS_DIR="$APP_BUNDLE/Contents/Frameworks"
     # Remove old bundle to avoid any caching issues
     rm -rf "$APP_BUNDLE"
-    mkdir -p "$APP_DIR"
-    mkdir -p "$APP_RESOURCES_DIR"
+    mkdir -p "$APP_DIR" "$APP_RESOURCES_DIR" "$APP_FRAMEWORKS_DIR"
     cp .build/debug/anki-mate "$APP_DIR/"
+
+    # Copy inference server and dylibs if available
+    if [ "$HAS_LLAMA" = true ]; then
+        cp .build/debug/AnkiMateServer "$APP_DIR/anki-mate-server"
+        ./scripts/fixup-dylibs.sh vendor/llama-install/lib "$APP_FRAMEWORKS_DIR" "$APP_DIR/anki-mate-server"
+    fi
+
     cp .build/AppIcon.icns "$APP_RESOURCES_DIR/"
     cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <?xml version="1.0" encoding="UTF-8"?>

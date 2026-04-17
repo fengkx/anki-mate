@@ -36,6 +36,11 @@ final class WordItem: ObservableObject, Identifiable {
     @Published var updatedAt: Date
     @Published var lastRefreshedAt: Date?
 
+    // AI-generated content
+    @Published var aiExampleSentences: [String] = []
+    @Published var aiDefinitionNote: String?
+    @Published var isGeneratingAI: Bool = false
+
     var normalizedWord: String {
         WordListStore.normalizedWord(for: word)
     }

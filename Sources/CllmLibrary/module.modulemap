@@ -1,0 +1,9 @@
+module CllmLibrary [system] {
+    header "shim.h"
+    link "llama"
+    link "ggml"
+    link "ggml-base"
+    link "ggml-metal"
+    link "ggml-cpu"
+    export *
+}

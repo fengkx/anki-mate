@@ -156,6 +156,14 @@ struct CardPreviewView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            // AI Content
+            if item.isReady {
+                Divider()
+                AIContentView(item: item)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+            }
         }
     }
 }

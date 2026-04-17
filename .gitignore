@@ -13,3 +13,7 @@ xcuserdata/
 /dictdemo
 /dictkit
 /docs/superpowers/
+
+# llama.cpp build artifacts (source managed by git submodule)
+vendor/llama-build/
+vendor/llama-install/

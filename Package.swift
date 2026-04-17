@@ -25,7 +25,11 @@ let package = Package(
         .package(
             url: "https://github.com/scinfu/SwiftSoup",
             from: "2.7.0"
-        )
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio",
+            from: "2.65.0"
+        ),
     ],
     targets: [
         .target(
@@ -79,9 +83,44 @@ let package = Package(
             dependencies: [
                 "DictKit",
                 "DictKitSystemDictionary",
-                "DictKitAnkiExport"
+                "DictKitAnkiExport",
+                "AnkiMateLLM",
             ],
             path: "Sources/DictKitApp"
+        ),
+        // ── LLM / Inference targets ──────────────────────────
+        .systemLibrary(
+            name: "CllmLibrary",
+            path: "Sources/CllmLibrary"
+        ),
+        .target(
+            name: "AnkiMateRPC",
+            path: "Sources/AnkiMateRPC"
+        ),
+        .target(
+            name: "AnkiMateLLM",
+            dependencies: [
+                "DictKit",
+                "AnkiMateRPC",
+            ],
+            path: "Sources/AnkiMateLLM",
+            resources: [
+                .process("Resources")
+            ]
+        ),
+        .executableTarget(
+            name: "AnkiMateServer",
+            dependencies: [
+                "AnkiMateRPC",
+                "CllmLibrary",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ],
+            path: "Sources/AnkiMateServer",
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
+            ]
         ),
         .testTarget(
             name: "DictKitTests",
