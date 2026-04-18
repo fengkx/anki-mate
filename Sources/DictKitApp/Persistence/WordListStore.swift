@@ -229,7 +229,20 @@ enum PersistedLookupState: Codable, Equatable {
 }
 
 struct WordListStore: WordListStoring {
-    private static let schemaVersion = 10
+    private static let schemaVersion = 1
+    private static let applicationID = 0x414D5632
+    private static let requiredIndexNames = [
+        "collections_name_active_idx",
+        "words_collection_normalized_active_idx",
+        "collections_created_at_idx",
+        "collections_active_created_idx",
+        "collections_updated_at_idx",
+        "words_created_at_idx",
+        "words_collection_active_created_idx",
+        "words_active_created_idx",
+        "words_updated_at_idx",
+        "word_payloads_payload_updated_at_idx"
+    ]
 
     let databaseURL: URL
 
@@ -239,9 +252,11 @@ struct WordListStore: WordListStoring {
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        try Self.prepareDatabaseForCurrentGeneration(at: databaseURL)
 
         try withDatabase { db in
             try Self.exec(db: db, sql: "PRAGMA foreign_keys = ON;")
+            try Self.exec(db: db, sql: "PRAGMA application_id = \(Self.applicationID);")
             try Self.migrateIfNeeded(db: db)
             try Self.ensureDefaultCollection(db: db)
         }
@@ -256,7 +271,7 @@ struct WordListStore: WordListStoring {
             let sql = """
             SELECT id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at
             FROM collections
-            WHERE is_deleted = 0
+            WHERE deleted_at IS NULL
             ORDER BY created_at ASC
             """
             var stmt: OpaquePointer?
@@ -336,7 +351,7 @@ struct WordListStore: WordListStoring {
         try withDatabase { db in
             let sql = """
             UPDATE collections
-            SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, updated_at = ?
+            SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, updated_at = ?, deleted_at = NULL
             WHERE id = ?
             """
             var stmt: OpaquePointer?
@@ -372,7 +387,7 @@ struct WordListStore: WordListStoring {
         let now = Date().timeIntervalSince1970
         try withDatabase { db in
             // Soft-delete the collection
-            let colSQL = "UPDATE collections SET is_deleted = 1, updated_at = ? WHERE id = ?"
+            let colSQL = "UPDATE collections SET deleted_at = ?, updated_at = ? WHERE id = ?"
             var colStmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, colSQL, -1, &colStmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
@@ -380,14 +395,15 @@ struct WordListStore: WordListStoring {
             defer { sqlite3_finalize(colStmt) }
 
             sqlite3_bind_double(colStmt, 1, now)
-            sqlite3_bind_text(colStmt, 2, id.uuidString, -1, transientDestructor)
+            sqlite3_bind_double(colStmt, 2, now)
+            sqlite3_bind_text(colStmt, 3, id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(colStmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
             }
 
             // Soft-delete all words in the collection
-            let wordsSQL = "UPDATE words SET is_deleted = 1, updated_at = ? WHERE collection_id = ? AND is_deleted = 0"
+            let wordsSQL = "UPDATE words SET deleted_at = ?, updated_at = ? WHERE collection_id = ? AND deleted_at IS NULL"
             var wordsStmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, wordsSQL, -1, &wordsStmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
@@ -395,7 +411,8 @@ struct WordListStore: WordListStoring {
             defer { sqlite3_finalize(wordsStmt) }
 
             sqlite3_bind_double(wordsStmt, 1, now)
-            sqlite3_bind_text(wordsStmt, 2, id.uuidString, -1, transientDestructor)
+            sqlite3_bind_double(wordsStmt, 2, now)
+            sqlite3_bind_text(wordsStmt, 3, id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(wordsStmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
@@ -407,9 +424,12 @@ struct WordListStore: WordListStoring {
         _ = try collection(id: collectionID)
         return try withDatabase { db in
             let sql = """
-            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
-            FROM words
-            WHERE collection_id = ? AND is_deleted = 0
+            SELECT
+              w.id, w.normalized_word, w.display_word, w.source_form, w.inflection_kind, w.expected_part_of_speech,
+              p.lookup_state_json, p.audio_blob, w.created_at, w.updated_at, p.lookup_refreshed_at, p.ai_artifacts_json
+            FROM words w
+            LEFT JOIN word_payloads p ON p.word_id = w.id
+            WHERE w.collection_id = ? AND w.deleted_at IS NULL
             ORDER BY created_at ASC
             """
             var stmt: OpaquePointer?
@@ -426,9 +446,12 @@ struct WordListStore: WordListStoring {
     func loadAllWords() throws -> [PersistedWordRecord] {
         try withDatabase { db in
             let sql = """
-            SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
-            FROM words
-            WHERE is_deleted = 0
+            SELECT
+              w.id, w.normalized_word, w.display_word, w.source_form, w.inflection_kind, w.expected_part_of_speech,
+              p.lookup_state_json, p.audio_blob, w.created_at, w.updated_at, p.lookup_refreshed_at, p.ai_artifacts_json
+            FROM words w
+            LEFT JOIN word_payloads p ON p.word_id = w.id
+            WHERE w.deleted_at IS NULL
             ORDER BY created_at ASC
             """
             var stmt: OpaquePointer?
@@ -452,8 +475,8 @@ struct WordListStore: WordListStoring {
 
             let sql = """
             INSERT INTO words (
-              id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_artifacts_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, created_at, updated_at, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             """
             try bindAndInsertWord(record, collectionID: collectionID, db: db, sql: sql)
             return PersistedWordUpsertResult(record: record, insertedWord: true, insertedAssociation: false)
@@ -465,7 +488,7 @@ struct WordListStore: WordListStoring {
         try withDatabase { db in
             let sql = """
             UPDATE words
-            SET normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, lookup_state_json = ?, audio_data = ?, created_at = ?, updated_at = ?, last_refreshed_at = ?, ai_artifacts_json = ?
+            SET normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, created_at = ?, updated_at = ?, deleted_at = NULL
             WHERE id = ?
             """
             var stmt: OpaquePointer?
@@ -474,27 +497,31 @@ struct WordListStore: WordListStoring {
             }
             defer { sqlite3_finalize(stmt) }
 
-            try bindWordFields(record, stmt: stmt, startIndex: 1)
-            sqlite3_bind_text(stmt, 12, record.id.uuidString, -1, transientDestructor)
+            try bindWordCoreFields(record, stmt: stmt, startIndex: 1)
+            sqlite3_bind_text(stmt, 8, record.id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
             }
+
+            try upsertWordPayload(record, db: db)
         }
     }
 
     func removeWord(id: UUID, from collectionID: UUID) throws {
         try withDatabase { db in
-            let sql = "UPDATE words SET is_deleted = 1, updated_at = ? WHERE collection_id = ? AND id = ?"
+            let sql = "UPDATE words SET deleted_at = ?, updated_at = ? WHERE collection_id = ? AND id = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
             }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_double(stmt, 1, Date().timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 2, collectionID.uuidString, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 3, id.uuidString, -1, transientDestructor)
+            let now = Date().timeIntervalSince1970
+            sqlite3_bind_double(stmt, 1, now)
+            sqlite3_bind_double(stmt, 2, now)
+            sqlite3_bind_text(stmt, 3, collectionID.uuidString, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 4, id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
@@ -577,9 +604,12 @@ struct WordListStore: WordListStoring {
 
     private func existingWord(normalizedWord: String, collectionID: UUID, db: OpaquePointer?) throws -> PersistedWordRecord? {
         let sql = """
-        SELECT id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
-        FROM words
-        WHERE collection_id = ? AND normalized_word = ? AND is_deleted = 0
+        SELECT
+          w.id, w.normalized_word, w.display_word, w.source_form, w.inflection_kind, w.expected_part_of_speech,
+          p.lookup_state_json, p.audio_blob, w.created_at, w.updated_at, p.lookup_refreshed_at, p.ai_artifacts_json
+        FROM words w
+        LEFT JOIN word_payloads p ON p.word_id = w.id
+        WHERE w.collection_id = ? AND w.normalized_word = ? AND w.deleted_at IS NULL
         LIMIT 1
         """
         var stmt: OpaquePointer?
@@ -603,7 +633,7 @@ struct WordListStore: WordListStoring {
 
         sqlite3_bind_text(stmt, 1, record.id.uuidString, -1, transientDestructor)
         sqlite3_bind_text(stmt, 2, collectionID.uuidString, -1, transientDestructor)
-        try bindWordFields(record, stmt: stmt, startIndex: 3)
+        try bindWordCoreFields(record, stmt: stmt, startIndex: 3)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             if sqlite3_errcode(db) == SQLITE_CONSTRAINT {
@@ -611,6 +641,8 @@ struct WordListStore: WordListStoring {
             }
             throw sqliteError(db: db)
         }
+
+        try upsertWordPayload(record, db: db)
     }
 
     private func bindCollection(_ record: PersistedCollectionRecord, stmt: OpaquePointer?) {
@@ -623,45 +655,14 @@ struct WordListStore: WordListStoring {
         sqlite3_bind_double(stmt, 7, record.updatedAt.timeIntervalSince1970)
     }
 
-    private func bindWordFields(_ record: PersistedWordRecord, stmt: OpaquePointer?, startIndex: Int32) throws {
-        let lookupStateData = try JSONEncoder().encode(record.lookupState)
-        let aiArtifactsJSON = try encodeAIArtifacts(record.aiArtifacts)
-
+    private func bindWordCoreFields(_ record: PersistedWordRecord, stmt: OpaquePointer?, startIndex: Int32) throws {
         sqlite3_bind_text(stmt, startIndex + 0, record.normalizedWord, -1, transientDestructor)
         sqlite3_bind_text(stmt, startIndex + 1, record.displayWord, -1, transientDestructor)
-        if let sourceForm = record.sourceForm {
-            sqlite3_bind_text(stmt, startIndex + 2, sourceForm, -1, transientDestructor)
-        } else {
-            sqlite3_bind_null(stmt, startIndex + 2)
-        }
-        if let inflectionKind = record.inflectionKind {
-            sqlite3_bind_text(stmt, startIndex + 3, inflectionKind.rawValue, -1, transientDestructor)
-        } else {
-            sqlite3_bind_null(stmt, startIndex + 3)
-        }
-        if let expectedPartOfSpeech = record.expectedPartOfSpeech {
-            sqlite3_bind_text(stmt, startIndex + 4, expectedPartOfSpeech.rawValue, -1, transientDestructor)
-        } else {
-            sqlite3_bind_null(stmt, startIndex + 4)
-        }
-        _ = lookupStateData.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(stmt, startIndex + 5, buffer.baseAddress, Int32(buffer.count), transientDestructor)
-        }
-        if let audioData = record.audioData {
-            _ = audioData.withUnsafeBytes { buffer in
-                sqlite3_bind_blob(stmt, startIndex + 6, buffer.baseAddress, Int32(buffer.count), transientDestructor)
-            }
-        } else {
-            sqlite3_bind_null(stmt, startIndex + 6)
-        }
-        sqlite3_bind_double(stmt, startIndex + 7, record.createdAt.timeIntervalSince1970)
-        sqlite3_bind_double(stmt, startIndex + 8, record.updatedAt.timeIntervalSince1970)
-        if let lastRefreshedAt = record.lastRefreshedAt {
-            sqlite3_bind_double(stmt, startIndex + 9, lastRefreshedAt.timeIntervalSince1970)
-        } else {
-            sqlite3_bind_null(stmt, startIndex + 9)
-        }
-        sqlite3_bind_text(stmt, startIndex + 10, aiArtifactsJSON, -1, transientDestructor)
+        bindNullableText(record.sourceForm, stmt: stmt, index: startIndex + 2)
+        bindNullableText(record.inflectionKind?.rawValue, stmt: stmt, index: startIndex + 3)
+        bindNullableText(record.expectedPartOfSpeech?.rawValue, stmt: stmt, index: startIndex + 4)
+        sqlite3_bind_double(stmt, startIndex + 5, record.createdAt.timeIntervalSince1970)
+        sqlite3_bind_double(stmt, startIndex + 6, record.updatedAt.timeIntervalSince1970)
     }
 
     private func readWords(from stmt: OpaquePointer?) throws -> [PersistedWordRecord] {
@@ -685,20 +686,14 @@ struct WordListStore: WordListStoring {
             createdAt: dateColumn(stmt, index: 8),
             updatedAt: dateColumn(stmt, index: 9),
             lastRefreshedAt: sqlite3_column_type(stmt, 10) == SQLITE_NULL ? nil : dateColumn(stmt, index: 10),
-            aiArtifacts: decodeAIArtifacts(
-                json: nullableTextColumn(stmt, index: 11),
-                legacySuggestedExampleSentencesJSON: nullableTextColumn(stmt, index: 12),
-                legacyAcceptedExampleSentencesJSON: nullableTextColumn(stmt, index: 13),
-                legacySuggestedDefinitionNote: nullableTextColumn(stmt, index: 14),
-                legacyAcceptedDefinitionNote: nullableTextColumn(stmt, index: 15)
-            )
+            aiArtifacts: decodeAIArtifacts(json: nullableTextColumn(stmt, index: 11))
         )
         try validateWord(record)
         return record
     }
 
     private static func ensureDefaultCollection(db: OpaquePointer?) throws {
-        let sql = "SELECT COUNT(*) FROM collections WHERE is_deleted = 0"
+        let sql = "SELECT COUNT(*) FROM collections WHERE deleted_at IS NULL"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw WordListStoreError.sqlError("cannot prepare default collection count query")
@@ -739,40 +734,26 @@ struct WordListStore: WordListStoring {
         try exec(db: db, sql: "PRAGMA user_version = \(version);")
     }
 
-    private static func migrateIfNeeded(db: OpaquePointer?) throws {
-        let version = try currentSchemaVersion(db: db)
-        switch version {
-        case schemaVersion:
-            return
-        case 9:
-            try migrateFromVersion9(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
-        case 8:
-            try migrateFromVersion8(db: db)
-            try migrateFromVersion9(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
-        case 7:
-            try migrateFromVersion7(db: db)
-            try migrateFromVersion8(db: db)
-            try migrateFromVersion9(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
-        case 6:
-            try migrateFromVersion6(db: db)
-            try migrateFromVersion7(db: db)
-            try migrateFromVersion8(db: db)
-            try migrateFromVersion9(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
-        case 5:
-            try migrateFromVersion5(db: db)
-            try migrateFromVersion6(db: db)
-            try migrateFromVersion7(db: db)
-            try migrateFromVersion8(db: db)
-            try migrateFromVersion9(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
-        default:
-            try rebuildSchema(db: db)
-            try setSchemaVersion(schemaVersion, db: db)
+    private static func currentApplicationID(db: OpaquePointer?) throws -> Int {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA application_id;", -1, &stmt, nil) == SQLITE_OK else {
+            throw WordListStoreError.sqlError("cannot read application id")
         }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            throw WordListStoreError.sqlError("cannot step application id")
+        }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    private static func migrateIfNeeded(db: OpaquePointer?) throws {
+        if try hasCurrentGenerationArtifacts(db: db) {
+            return
+        }
+
+        try rebuildSchema(db: db)
+        try exec(db: db, sql: "PRAGMA application_id = \(applicationID);")
+        try setSchemaVersion(schemaVersion, db: db)
     }
 
     private static func rebuildSchema(db: OpaquePointer?) throws {
@@ -780,20 +761,20 @@ struct WordListStore: WordListStoring {
             db: db,
             sql: """
             PRAGMA foreign_keys = OFF;
-            DROP TABLE IF EXISTS collection_words;
             DROP TABLE IF EXISTS collections;
             DROP TABLE IF EXISTS words;
-            DROP TABLE IF EXISTS sync_metadata;
+            DROP TABLE IF EXISTS word_payloads;
+            DROP TABLE IF EXISTS sync_state;
 
             CREATE TABLE collections (
               id TEXT PRIMARY KEY,
-              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              name TEXT NOT NULL COLLATE NOCASE,
               dictionary_name TEXT NOT NULL,
               anki_deck_name TEXT NOT NULL,
               deck_description TEXT NOT NULL,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
-              is_deleted INTEGER NOT NULL DEFAULT 0
+              deleted_at REAL
             );
 
             CREATE TABLE words (
@@ -804,29 +785,91 @@ struct WordListStore: WordListStoring {
               source_form TEXT,
               inflection_kind TEXT,
               expected_part_of_speech TEXT,
-              lookup_state_json BLOB,
-              audio_data BLOB,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
-              last_refreshed_at REAL,
-              is_deleted INTEGER NOT NULL DEFAULT 0,
-              audio_hash TEXT,
-              ai_artifacts_json TEXT,
-              ai_suggested_example_sentences TEXT,
-              ai_accepted_example_sentences TEXT,
-              ai_suggested_definition_note TEXT,
-              ai_accepted_definition_note TEXT,
-              UNIQUE (collection_id, normalized_word),
+              deleted_at REAL,
               FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
             );
 
-            CREATE TABLE sync_metadata (
+            CREATE TABLE word_payloads (
+              word_id TEXT PRIMARY KEY,
+              lookup_state_json BLOB,
+              lookup_refreshed_at REAL,
+              audio_blob BLOB,
+              audio_sha256 TEXT,
+              ai_artifacts_json TEXT,
+              payload_updated_at REAL NOT NULL,
+              FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE sync_state (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+
+            CREATE UNIQUE INDEX collections_name_active_idx
+            ON collections(name COLLATE NOCASE)
+            WHERE deleted_at IS NULL;
+
+            CREATE UNIQUE INDEX words_collection_normalized_active_idx
+            ON words(collection_id, normalized_word)
+            WHERE deleted_at IS NULL;
+
+            CREATE INDEX collections_created_at_idx
+            ON collections(created_at);
+
+            CREATE INDEX collections_active_created_idx
+            ON collections(deleted_at, created_at);
+
+            CREATE INDEX collections_updated_at_idx
+            ON collections(updated_at);
+
+            CREATE INDEX words_created_at_idx
+            ON words(created_at);
+
+            CREATE INDEX words_collection_active_created_idx
+            ON words(collection_id, deleted_at, created_at);
+
+            CREATE INDEX words_active_created_idx
+            ON words(deleted_at, created_at);
+
+            CREATE INDEX words_updated_at_idx
+            ON words(updated_at);
+
+            CREATE INDEX word_payloads_payload_updated_at_idx
+            ON word_payloads(payload_updated_at);
+
             PRAGMA foreign_keys = ON;
             """
         )
+    }
+
+    private static func prepareDatabaseForCurrentGeneration(at databaseURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else {
+            return
+        }
+
+        var db: OpaquePointer?
+        guard sqlite3_open(databaseURL.path, &db) == SQLITE_OK else {
+            let message = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            sqlite3_close(db)
+            throw WordListStoreError.cannotOpenDatabase(message)
+        }
+        defer {
+            if let db {
+                sqlite3_close(db)
+            }
+        }
+
+        if try hasCurrentGenerationArtifacts(db: db) {
+            return
+        }
+
+        sqlite3_close(db)
+        db = nil
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let backupURL = databaseURL.deletingLastPathComponent().appendingPathComponent("word-list.legacy-\(timestamp).sqlite3")
+        try FileManager.default.moveItem(at: databaseURL, to: backupURL)
     }
 
     func withDatabase<T>(_ body: (OpaquePointer?) throws -> T) throws -> T {
@@ -884,41 +927,13 @@ struct WordListStore: WordListStoring {
         return json
     }
 
-    func decodeAIArtifacts(
-        json: String?,
-        legacySuggestedExampleSentencesJSON: String?,
-        legacyAcceptedExampleSentencesJSON: String?,
-        legacySuggestedDefinitionNote: String?,
-        legacyAcceptedDefinitionNote: String?
-    ) -> AIArtifacts {
-        let legacyArtifacts = AIArtifacts(
-            legacySuggestedExampleSentences: decodeStringArrayJSON(legacySuggestedExampleSentencesJSON),
-            legacyAcceptedExampleSentences: decodeStringArrayJSON(legacyAcceptedExampleSentencesJSON),
-            legacySuggestedDefinitionNote: legacySuggestedDefinitionNote,
-            legacyAcceptedDefinitionNote: legacyAcceptedDefinitionNote
-        )
-
+    func decodeAIArtifacts(json: String?) -> AIArtifacts {
         guard let json,
               let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(AIArtifacts.self, from: data) else {
-            return legacyArtifacts
+            return .empty
         }
-
-        return decoded.fillingMissingSlots(
-            legacySuggestedExampleSentences: legacyArtifacts.suggestedExampleSentences,
-            legacyAcceptedExampleSentences: legacyArtifacts.acceptedExampleSentences,
-            legacySuggestedDefinitionNote: legacyArtifacts.suggestedDefinitionNoteText,
-            legacyAcceptedDefinitionNote: legacyArtifacts.acceptedDefinitionNoteText
-        )
-    }
-
-    private func decodeStringArrayJSON(_ value: String?) -> [String] {
-        guard let value,
-              let data = value.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
-        }
-        return decoded
+        return decoded.normalized()
     }
 
     func sqliteError(db: OpaquePointer?) -> WordListStoreError {
@@ -926,107 +941,119 @@ struct WordListStore: WordListStoring {
         return .sqlError(message)
     }
 
-    private static func migrateFromVersion5(db: OpaquePointer?) throws {
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN source_form TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN inflection_kind TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN expected_part_of_speech TEXT;")
+    func nullableDateColumn(_ stmt: OpaquePointer?, index: Int32) -> Date? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return dateColumn(stmt, index: index)
     }
 
-    private static func migrateFromVersion6(db: OpaquePointer?) throws {
-        try exec(db: db, sql: "ALTER TABLE collections ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN audio_hash TEXT;")
-        try exec(db: db, sql: """
-            CREATE TABLE IF NOT EXISTS sync_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-        """)
-    }
-
-    private static func migrateFromVersion7(db: OpaquePointer?) throws {
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_example_sentences TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_definition_note TEXT;")
-    }
-
-    private static func migrateFromVersion8(db: OpaquePointer?) throws {
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_suggested_example_sentences TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_accepted_example_sentences TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_suggested_definition_note TEXT;")
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_accepted_definition_note TEXT;")
-        try exec(db: db, sql: """
-            UPDATE words
-            SET ai_suggested_example_sentences = ai_example_sentences,
-                ai_suggested_definition_note = ai_definition_note
-            WHERE ai_example_sentences IS NOT NULL OR ai_definition_note IS NOT NULL;
-        """)
-    }
-
-    private static func migrateFromVersion9(db: OpaquePointer?) throws {
-        try exec(db: db, sql: "ALTER TABLE words ADD COLUMN ai_artifacts_json TEXT;")
-        try backfillAIArtifactsJSON(db: db)
-    }
-
-    private static func backfillAIArtifactsJSON(db: OpaquePointer?) throws {
-        let selectSQL = """
-        SELECT id, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
-        FROM words
-        WHERE ai_artifacts_json IS NULL
-        """
-        var selectStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, selectSQL, -1, &selectStmt, nil) == SQLITE_OK else {
-            throw WordListStoreError.sqlError("cannot prepare ai artifact backfill query")
+    func bindNullableText(_ value: String?, stmt: OpaquePointer?, index: Int32) {
+        if let value {
+            sqlite3_bind_text(stmt, index, value, -1, transientDestructor)
+        } else {
+            sqlite3_bind_null(stmt, index)
         }
-        defer { sqlite3_finalize(selectStmt) }
+    }
 
-        let updateSQL = "UPDATE words SET ai_artifacts_json = ? WHERE id = ?"
-        var updateStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, updateSQL, -1, &updateStmt, nil) == SQLITE_OK else {
-            throw WordListStoreError.sqlError("cannot prepare ai artifact backfill update")
+    func rowExists(db: OpaquePointer?, sql: String, bind: (OpaquePointer?) -> Void) throws -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw sqliteError(db: db)
         }
-        defer { sqlite3_finalize(updateStmt) }
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
 
-        let encoder = JSONEncoder()
+    private func upsertWordPayload(_ record: PersistedWordRecord, db: OpaquePointer?) throws {
+        let exists = try Self.tableExists("word_payloads", db: db) && rowExists(
+            db: db,
+            sql: "SELECT 1 FROM word_payloads WHERE word_id = ?",
+            bind: { stmt in sqlite3_bind_text(stmt, 1, record.id.uuidString, -1, transientDestructor) }
+        )
 
-        while sqlite3_step(selectStmt) == SQLITE_ROW {
-            guard let idPtr = sqlite3_column_text(selectStmt, 0) else { continue }
-            let id = String(cString: idPtr)
+        let sql = exists
+            ? """
+            UPDATE word_payloads
+            SET lookup_state_json = ?, lookup_refreshed_at = ?, audio_blob = ?, audio_sha256 = ?, ai_artifacts_json = ?, payload_updated_at = ?
+            WHERE word_id = ?
+            """
+            : """
+            INSERT INTO word_payloads (lookup_state_json, lookup_refreshed_at, audio_blob, audio_sha256, ai_artifacts_json, payload_updated_at, word_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw sqliteError(db: db)
+        }
+        defer { sqlite3_finalize(stmt) }
 
-            let artifacts = AIArtifacts(
-                legacySuggestedExampleSentences: decodeStringArrayColumn(selectStmt, index: 2),
-                legacyAcceptedExampleSentences: decodeStringArrayColumn(selectStmt, index: 3),
-                legacySuggestedDefinitionNote: staticNullableTextColumn(selectStmt, index: 4),
-                legacyAcceptedDefinitionNote: staticNullableTextColumn(selectStmt, index: 5)
-            )
-            let data = try encoder.encode(artifacts)
-            guard let json = String(data: data, encoding: .utf8) else {
-                throw WordListStoreError.validationFailed("failed to encode ai artifact backfill json")
+        let lookupStateData = try JSONEncoder().encode(record.lookupState)
+        let aiArtifactsJSON = try encodeAIArtifacts(record.aiArtifacts)
+
+        _ = lookupStateData.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(stmt, 1, buffer.baseAddress, Int32(buffer.count), transientDestructor)
+        }
+        if let lastRefreshedAt = record.lastRefreshedAt {
+            sqlite3_bind_double(stmt, 2, lastRefreshedAt.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(stmt, 2)
+        }
+        if let audioData = record.audioData {
+            _ = audioData.withUnsafeBytes { buffer in
+                sqlite3_bind_blob(stmt, 3, buffer.baseAddress, Int32(buffer.count), transientDestructor)
             }
+            sqlite3_bind_text(stmt, 4, Self.computeAudioHash(audioData), -1, transientDestructor)
+        } else {
+            sqlite3_bind_null(stmt, 3)
+            sqlite3_bind_null(stmt, 4)
+        }
+        sqlite3_bind_text(stmt, 5, aiArtifactsJSON, -1, transientDestructor)
+        sqlite3_bind_double(stmt, 6, record.updatedAt.timeIntervalSince1970)
+        sqlite3_bind_text(stmt, 7, record.id.uuidString, -1, transientDestructor)
 
-            sqlite3_reset(updateStmt)
-            sqlite3_clear_bindings(updateStmt)
-            sqlite3_bind_text(updateStmt, 1, json, -1, transientDestructor)
-            sqlite3_bind_text(updateStmt, 2, id, -1, transientDestructor)
-
-            guard sqlite3_step(updateStmt) == SQLITE_DONE else {
-                let message = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
-                throw WordListStoreError.sqlError(message)
-            }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw sqliteError(db: db)
         }
     }
 
-    private static func decodeStringArrayColumn(_ stmt: OpaquePointer?, index: Int32) -> [String] {
-        guard let value = staticNullableTextColumn(stmt, index: index),
-              let data = value.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
+    static func tableExists(_ tableName: String, db: OpaquePointer?) throws -> Bool {
+        let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw WordListStoreError.sqlError("cannot query sqlite_master")
         }
-        return decoded
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, tableName, -1, transientDestructor)
+        return sqlite3_step(stmt) == SQLITE_ROW
     }
 
-    private static func staticNullableTextColumn(_ stmt: OpaquePointer?, index: Int32) -> String? {
-        guard let value = sqlite3_column_text(stmt, index) else { return nil }
-        return String(cString: value)
+    static func indexExists(_ indexName: String, db: OpaquePointer?) throws -> Bool {
+        let sql = "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw WordListStoreError.sqlError("cannot query sqlite_master")
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, indexName, -1, transientDestructor)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private static func hasCurrentGenerationArtifacts(db: OpaquePointer?) throws -> Bool {
+        let version = try currentSchemaVersion(db: db)
+        let appID = try currentApplicationID(db: db)
+        let hasCollections = try tableExists("collections", db: db)
+        let hasWords = try tableExists("words", db: db)
+        let hasPayloads = try tableExists("word_payloads", db: db)
+        let hasSyncState = try tableExists("sync_state", db: db)
+        let hasRequiredIndexes = try requiredIndexNames.allSatisfy { try indexExists($0, db: db) }
+
+        return version == schemaVersion &&
+            appID == applicationID &&
+            hasCollections &&
+            hasWords &&
+            hasPayloads &&
+            hasSyncState &&
+            hasRequiredIndexes
     }
 
     static func exec(db: OpaquePointer?, sql: String) throws {
@@ -1059,4 +1086,4 @@ struct NoOpWordListStore: WordListStoring {
     func removeWord(id: UUID, from collectionID: UUID) throws {}
 }
 
-private let transientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+fileprivate let transientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
