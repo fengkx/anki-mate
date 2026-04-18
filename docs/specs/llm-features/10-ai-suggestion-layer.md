@@ -51,14 +51,24 @@
 
 ### 4.2 UI 分层
 
-将当前 `AI Assistant` 扩展为稳定的信息架构：
+将当前 `AI Assistant` 扩展为稳定的信息架构。
 
-- Examples
-- Recall Card
-- Pitfalls
-- Usage
+顶层不按“模型输出类型”分，而按“用户任务”分：
 
-每个模块都遵循相同交互：
+- `Examples`
+- `Learning Aids`
+- `Usage`
+- `Recall Card`
+
+其中：
+
+- `Learning Aids` 内部再分：
+  - `Pitfalls`
+  - `Mnemonics`
+  - `Collocations`
+- `Recall Card` 是一级入口，但不是普通文本列表 section，而是展开后进入的小型卡片工作台
+
+各工作区的通用状态：
 
 - 空态
 - 生成中
@@ -66,7 +76,77 @@
 - 已采纳
 - 错误态
 
-### 4.3 交互动作
+### 4.3 顶层 section 呈现方式
+
+每个一级工作区都以“可折叠的 card”呈现，而不是：
+
+- tabs
+- 没有边界的纯标题分组
+- 完全展开的大长页
+
+每个 card 标题区包含：
+
+- 工作区标题
+- 一句短说明或状态摘要
+- 右侧主动作按钮
+- 折叠 / 展开控制
+
+折叠状态下只显示摘要，例如：
+
+- `Examples · 2 accepted`
+- `Learning Aids · empty`
+- `Usage · 1 accepted`
+- `Recall Card · suggested draft ready`
+
+### 4.4 Recall Card 的特殊形态
+
+`Recall Card` 虽然保留为一级入口，但它不复用普通建议列表的交互。
+
+折叠态：
+
+- 显示工作区标题
+- 显示状态摘要
+- 显示 `Generate Recall Card` 或 `Open`
+
+展开态：
+
+- 进入一个小型编辑工作台
+- 编辑字段包括：
+  - mode
+  - front
+  - back
+  - hint
+- 不使用普通文本建议的 `Accept / Reject`
+
+### 4.5 线框图
+
+```text
+AI Assistant
+========================================================================
+
+Examples                                  2 accepted             [v]
+See the word in natural context.
+
+  Suggested
+  [example item]
+
+  Accepted
+  [example item]
+
+
+Learning Aids                          1 pitfall, 1 mnemonic     [>]
+Spot spelling traps, memory hooks, and common collocations.
+
+
+Usage                                     1 accepted             [>]
+Generate a short learner-facing usage note.
+
+
+Recall Card                         suggested draft ready        [>]
+Turn this word into an active-recall card.
+```
+
+### 4.6 交互动作
 
 对每条建议提供统一动作：
 
@@ -76,13 +156,16 @@
 - 重生成
 - 清空已采纳内容
 
-### 4.4 导出挂接
+但 `Recall Card` 不适用这组文案，详见 `30-recall-card-draft.md`。
+
+### 4.7 导出挂接
 
 将已采纳 AI 内容挂接到卡片导出链路，确保 AI 结果不是只停留在 UI 展示。
 
 ## 5. 验收点
 
 - 单词详情页中的 AI 内容能区分“建议”和“已采纳”
+- 顶层工作区按 `Examples / Learning Aids / Usage / Recall Card` 组织
 - 用户可以逐条采纳、编辑、拒绝 AI 内容
 - 用户采纳后的内容在重新打开应用后仍然存在
 - 已采纳内容能进入卡片预览
