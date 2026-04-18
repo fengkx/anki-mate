@@ -1,26 +1,35 @@
 import Foundation
 
-/// Orchestrates the full sync flow: pull → merge → apply → push.
 final class SyncEngine {
     private let store: WordListStore
     private let status: SyncStatus
     private let onStoreChanged: @MainActor () -> Void
+    private let environment: Environment
 
     private var deviceId: String = ""
+
+    struct Environment {
+        var loadCredentials: @Sendable () -> WebDAVCredentials
+        var makeClient: @Sendable (WebDAVCredentials) throws -> any WebDAVClientProtocol
+
+        static let live = Environment(
+            loadCredentials: { WebDAVCredentials.load() },
+            makeClient: { credentials in try WebDAVClient(credentials: credentials) }
+        )
+    }
 
     init(
         store: WordListStore,
         status: SyncStatus,
+        environment: Environment = .live,
         onStoreChanged: @escaping @MainActor () -> Void = {}
     ) {
         self.store = store
         self.status = status
+        self.environment = environment
         self.onStoreChanged = onStoreChanged
     }
 
-    // MARK: - Public
-
-    /// Check if there are local changes not yet synced and update status.
     @MainActor
     func refreshPendingStatus() {
         if let hasPending = try? store.hasChangesAfterLastSync() {
@@ -28,209 +37,200 @@ final class SyncEngine {
         }
     }
 
-    /// Run a full sync cycle.
     @MainActor
     func sync() async {
         guard status.state == .idle || status.state == .error else { return }
         status.state = .syncing(phase: "Preparing...")
-        var didApplyRemoteChanges = false
 
         do {
-            let credentials = WebDAVCredentials.load()
+            let credentials = environment.loadCredentials()
             guard credentials.isConfigured else {
                 status.state = .idle
                 return
             }
-            let client = try WebDAVClient(credentials: credentials)
-
-            // Load or create device ID
+            let client = try environment.makeClient(credentials)
             deviceId = try loadOrCreateDeviceId()
+            let bootstrapLocalState = try store.isBootstrapLocalState()
 
-            await updatePhase("Connecting...")
+            updatePhase("Connecting...")
             try await client.ensureDirectoryStructure()
 
-            // 1. Acquire lock
-            await updatePhase("Acquiring lock...")
+            updatePhase("Acquiring lock...")
             try await acquireLock(client: client)
+            defer { Task { try? await self.releaseLock(client: client) } }
 
-            defer {
-                Task { try? await self.releaseLock(client: client) }
+            updatePhase("Downloading manifest...")
+            let remote = try await pullManifest(client: client)
+
+            if case .legacy(let legacyManifest) = remote {
+                updatePhase("Upgrading remote state...")
+                try await backupLegacyManifest(client: client)
+                let upgradedRemote = SyncManifest(legacyManifest: legacyManifest)
+                let audioData = try await downloadAudioIfNeeded(for: upgradedRemote.words, client: client)
+                if bootstrapLocalState {
+                    try store.resetLocalSyncContent()
+                }
+                try store.applySyncBatch(
+                    collections: upgradedRemote.collections,
+                    words: upgradedRemote.words,
+                    audioData: audioData
+                )
+                try await pushManifest(upgradedRemote, client: client)
+                try store.setSyncMetadata(String(Date().timeIntervalSince1970), forKey: "last_sync_timestamp")
+
+                status.state = .idle
+                status.lastSyncDate = Date()
+                status.lastError = nil
+                status.hasPendingChanges = false
+                onStoreChanged()
+                return
             }
 
-            // 2. Pull remote manifest
-            await updatePhase("Downloading manifest...")
-            let remoteManifest = try await pullManifest(client: client)
+            updatePhase("Building local state...")
+            let localManifest: SyncManifest
+            if bootstrapLocalState {
+                localManifest = SyncManifest(deviceId: deviceId, collections: [], words: [])
+            } else {
+                localManifest = try buildLocalManifest()
+            }
+            let remoteManifest: SyncManifest?
+            if case .current(let manifest) = remote {
+                remoteManifest = manifest
+            } else {
+                remoteManifest = nil
+            }
 
-            // 3. Build local manifest
-            await updatePhase("Building local state...")
-            let localManifest = try buildLocalManifest()
-
-            // 4. Merge
-            await updatePhase("Merging...")
+            updatePhase("Merging...")
             let mergeResult = SyncMerger.merge(local: localManifest, remote: remoteManifest)
 
-            // 5. Download new audio from remote
-            if !mergeResult.audioRefsToDownload.isEmpty {
-                await updatePhase("Downloading audio (\(mergeResult.audioRefsToDownload.count))...")
-                var audioData: [String: Data] = [:]
-                for ref in mergeResult.audioRefsToDownload {
-                    if let data = try await SyncAudioStore.download(hash: ref, client: client) {
-                        audioData[ref] = data
-                    }
+            if !mergeResult.audioRefsToDownload.isEmpty || !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
+                let audioData = try await downloadAudioIfNeeded(for: mergeResult.wordsToApplyLocally, refs: mergeResult.audioRefsToDownload, client: client)
+                updatePhase("Applying changes...")
+                if bootstrapLocalState, remoteManifest != nil {
+                    try store.resetLocalSyncContent()
                 }
-
-                // 6. Apply remote changes locally
-                await updatePhase("Applying changes...")
                 try store.applySyncBatch(
                     collections: mergeResult.collectionsToApplyLocally,
                     words: mergeResult.wordsToApplyLocally,
                     audioData: audioData
                 )
-                didApplyRemoteChanges = true
-            } else if !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
-                await updatePhase("Applying changes...")
-                try store.applySyncBatch(
-                    collections: mergeResult.collectionsToApplyLocally,
-                    words: mergeResult.wordsToApplyLocally,
-                    audioData: [:]
-                )
-                didApplyRemoteChanges = true
             }
 
-            // 7. Upload new local audio
             if !mergeResult.audioRefsToUpload.isEmpty {
-                await updatePhase("Uploading audio (\(mergeResult.audioRefsToUpload.count))...")
+                updatePhase("Uploading audio (\(mergeResult.audioRefsToUpload.count))...")
                 for (wordId, ref) in mergeResult.audioRefsToUpload {
-                    guard let uuid = UUID(uuidString: wordId) else { continue }
-                    if let audioData = try store.audioData(forWordId: uuid) {
-                        try await SyncAudioStore.upload(hash: ref, data: audioData, client: client)
-                    }
+                    guard let uuid = UUID(uuidString: wordId),
+                          let audioData = try store.audioData(forWordId: uuid) else { continue }
+                    try await SyncAudioStore.upload(hash: ref, data: audioData, client: client)
                 }
             }
 
-            // 8. Push merged manifest
-            await updatePhase("Uploading manifest...")
+            updatePhase("Uploading manifest...")
             try await pushManifest(mergeResult.mergedManifest, client: client)
-
-            // 9. Backup (best-effort)
             try? await backupManifest(client: client)
-
-            // 10. Orphan audio cleanup (best-effort, every 7 days)
             try? await cleanOrphanAudioIfNeeded(manifest: mergeResult.mergedManifest, client: client)
 
-            // 11. Update sync timestamp
             let ts = String(Date().timeIntervalSince1970)
             try store.setSyncMetadata(ts, forKey: "last_sync_timestamp")
 
-            await MainActor.run {
-                status.state = .idle
-                status.lastSyncDate = Date()
-                status.lastError = nil
-                status.hasPendingChanges = false
-            }
+            status.state = .idle
+            status.lastSyncDate = Date()
+            status.lastError = nil
+            status.hasPendingChanges = false
 
-            if didApplyRemoteChanges {
+            if !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
                 onStoreChanged()
             }
         } catch {
-            await MainActor.run {
-                status.state = .error
-                status.lastError = error.localizedDescription
-            }
+            status.state = .error
+            status.lastError = error.localizedDescription
         }
     }
 
-    // MARK: - Manifest
-
     private func buildLocalManifest() throws -> SyncManifest {
-        let allCollections = try store.loadAllCollectionsForSync()
-        let allWords = try store.loadAllWordsForSync()
-
-        let syncCollections = allCollections.map { (record, isDeleted) in
+        let collections = try store.loadAllCollectionsForSync().map { snapshot in
             SyncCollectionRecord(
-                id: record.id.uuidString,
-                name: record.name,
-                dictionaryName: record.dictionaryName,
-                ankiDeckName: record.ankiDeckName,
-                deckDescription: record.ankiDeckDescription,
-                createdAt: record.createdAt.timeIntervalSince1970,
-                updatedAt: record.updatedAt.timeIntervalSince1970,
-                isDeleted: isDeleted
+                id: snapshot.record.id.uuidString,
+                name: snapshot.record.name,
+                dictionaryName: snapshot.record.dictionaryName,
+                ankiDeckName: snapshot.record.ankiDeckName,
+                deckDescription: snapshot.record.ankiDeckDescription,
+                createdAt: snapshot.record.createdAt.timeIntervalSince1970,
+                updatedAt: snapshot.record.updatedAt.timeIntervalSince1970,
+                deletedAt: snapshot.deletedAt?.timeIntervalSince1970
             )
         }
 
-        let syncWords = allWords.map { (record, collectionId, isDeleted, audioHash) in
-            let lookupBase64: String? = {
-                guard case .loaded = record.lookupState else { return nil }
-                if let data = try? JSONEncoder().encode(record.lookupState) {
-                    return data.base64EncodedString()
-                }
-                return nil
-            }()
-
-            // Compute audio hash if needed
-            let ref: String? = {
-                if let hash = audioHash { return hash }
-                if let audio = record.audioData {
-                    let hash = SyncAudioStore.hash(audio)
-                    // Best-effort: update the hash in DB (ignore errors)
-                    _ = try? store.updateAudioHash(forWordId: record.id, audioData: audio)
-                    return hash
-                }
-                return nil
+        let words = try store.loadAllWordsForSync().map { snapshot in
+            let lookupBase64 = try? JSONEncoder().encode(snapshot.record.lookupState).base64EncodedString()
+            let audioRef: String? = {
+                if let hash = snapshot.audioHash { return hash }
+                guard let audioData = snapshot.record.audioData else { return nil }
+                return SyncAudioStore.hash(audioData)
             }()
 
             return SyncWordRecord(
-                id: record.id.uuidString,
-                collectionId: collectionId.uuidString,
-                normalizedWord: record.normalizedWord,
-                displayWord: record.displayWord,
-                sourceForm: record.sourceForm,
-                inflectionKind: record.inflectionKind?.rawValue,
-                expectedPartOfSpeech: record.expectedPartOfSpeech?.rawValue,
-                lookupStateBase64: lookupBase64,
-                audioRef: ref,
-                createdAt: record.createdAt.timeIntervalSince1970,
-                updatedAt: record.updatedAt.timeIntervalSince1970,
-                lastRefreshedAt: record.lastRefreshedAt?.timeIntervalSince1970,
-                isDeleted: isDeleted
+                id: snapshot.record.id.uuidString,
+                collectionId: snapshot.collectionId.uuidString,
+                normalizedWord: snapshot.record.normalizedWord,
+                displayWord: snapshot.record.displayWord,
+                sourceForm: snapshot.record.sourceForm,
+                inflectionKind: snapshot.record.inflectionKind?.rawValue,
+                expectedPartOfSpeech: snapshot.record.expectedPartOfSpeech?.rawValue,
+                createdAt: snapshot.record.createdAt.timeIntervalSince1970,
+                updatedAt: snapshot.record.updatedAt.timeIntervalSince1970,
+                deletedAt: snapshot.deletedAt?.timeIntervalSince1970,
+                payload: SyncWordPayloadRecord(
+                    lookupStateBase64: lookupBase64,
+                    lookupRefreshedAt: snapshot.record.lastRefreshedAt?.timeIntervalSince1970,
+                    payloadUpdatedAt: snapshot.payloadUpdatedAt.timeIntervalSince1970,
+                    audioRef: audioRef,
+                    aiArtifactsJSON: try? store.encodeAIArtifacts(snapshot.record.aiArtifacts)
+                )
             )
         }
 
-        return SyncManifest(
-            deviceId: deviceId,
-            collections: syncCollections,
-            words: syncWords
-        )
+        return SyncManifest(deviceId: deviceId, collections: collections, words: words)
     }
 
-    private func pullManifest(client: WebDAVClient) async throws -> SyncManifest? {
+    private func pullManifest(client: any WebDAVClientProtocol) async throws -> PulledManifest? {
         guard let data = try await client.get("anki-mate/manifest.json") else {
             return nil
         }
-        return try JSONDecoder().decode(SyncManifest.self, from: data)
+        if let manifest = try? JSONDecoder().decode(SyncManifest.self, from: data),
+           manifest.format == SyncManifest.currentFormat {
+            return .current(manifest)
+        }
+        return .legacy(try JSONDecoder().decode(LegacySyncManifest.self, from: data))
     }
 
-    private func pushManifest(_ manifest: SyncManifest, client: WebDAVClient) async throws {
+    private func pushManifest(_ manifest: SyncManifest, client: any WebDAVClientProtocol) async throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(manifest)
         try await client.put("anki-mate/manifest.json", data: data, contentType: "application/json")
     }
 
-    private func backupManifest(client: WebDAVClient) async throws {
+    private func backupLegacyManifest(client: any WebDAVClientProtocol) async throws {
+        guard let data = try await client.get("anki-mate/manifest.json") else { return }
         let formatter = ISO8601DateFormatter()
         let timestamp = formatter.string(from: Date())
-        // Copy current manifest to backup
+        try await client.put(
+            "anki-mate/backups/manifest-v1-\(timestamp).json",
+            data: data,
+            contentType: "application/json"
+        )
+    }
+
+    private func backupManifest(client: any WebDAVClientProtocol) async throws {
+        let formatter = ISO8601DateFormatter()
+        let timestamp = formatter.string(from: Date())
         if let data = try await client.get("anki-mate/manifest.json") {
             try await client.put("anki-mate/backups/manifest-\(timestamp).json", data: data, contentType: "application/json")
         }
     }
 
-    // MARK: - Orphan audio cleanup
-
-    private func cleanOrphanAudioIfNeeded(manifest: SyncManifest, client: WebDAVClient) async throws {
-        // Check if 7 days have passed since last cleanup
+    private func cleanOrphanAudioIfNeeded(manifest: SyncManifest, client: any WebDAVClientProtocol) async throws {
         let cleanupInterval: TimeInterval = 7 * 24 * 3600
         if let lastCleanup = try store.syncMetadata(forKey: "last_orphan_cleanup"),
            let ts = TimeInterval(lastCleanup),
@@ -238,67 +238,42 @@ final class SyncEngine {
             return
         }
 
-        // Collect all referenced audio hashes
-        let referencedRefs = Set(manifest.words.compactMap(\.audioRef))
-
-        // List all audio prefix directories (00-ff)
+        let referencedRefs = Set(manifest.words.compactMap(\.payload.audioRef))
         let prefixDirs = try await client.listFiles(in: "anki-mate/audio/")
-        // listFiles returns file names; for directories we need to also check sub-items
-        // Actually, prefix dirs show up as entries too. Let's iterate known 2-char hex prefixes
-        // that we can infer from referenced refs, plus scan for any extra files
-        var allRemoteHashes = Set<String>()
-
-        // Scan each prefix directory that might exist
         let knownPrefixes = Set(referencedRefs.map { String($0.prefix(2)) })
-        // Also check all prefixes returned by PROPFIND
         let allPrefixes = knownPrefixes.union(Set(prefixDirs))
 
+        var allRemoteHashes = Set<String>()
         for prefix in allPrefixes {
             let files = try await client.listFiles(in: "anki-mate/audio/\(prefix)/")
             for file in files {
-                // Extract hash from filename (remove .wav extension)
-                let hash = file.hasSuffix(".wav") ? String(file.dropLast(4)) : file
-                allRemoteHashes.insert(hash)
+                allRemoteHashes.insert(file.hasSuffix(".wav") ? String(file.dropLast(4)) : file)
             }
         }
 
-        // Find orphans: remote hashes not in referenced set
-        let orphans = allRemoteHashes.subtracting(referencedRefs)
-        for hash in orphans {
-            let path = SyncAudioStore.remotePath(for: hash)
-            try await client.delete(path)
+        for hash in allRemoteHashes.subtracting(referencedRefs) {
+            try await client.delete(SyncAudioStore.remotePath(for: hash))
         }
 
-        // Record cleanup time
         try store.setSyncMetadata(String(Date().timeIntervalSince1970), forKey: "last_orphan_cleanup")
     }
 
-    // MARK: - Lock
-
-    private func acquireLock(client: WebDAVClient) async throws {
+    private func acquireLock(client: any WebDAVClientProtocol) async throws {
         let lockPath = "anki-mate/manifest.lock"
-        // Check existing lock
-        if let lockData = try await client.get(lockPath) {
-            if let lockInfo = try? JSONDecoder().decode(LockInfo.self, from: lockData) {
-                let age = Date().timeIntervalSince1970 - lockInfo.lockedAt
-                if age < 120 {
-                    // Lock is fresh — abort
-                    throw WebDAVError.locked
-                }
-                // Lock is stale — steal it
+        if let lockData = try await client.get(lockPath),
+           let lockInfo = try? JSONDecoder().decode(LockInfo.self, from: lockData) {
+            let age = Date().timeIntervalSince1970 - lockInfo.lockedAt
+            if age < 120 {
+                throw WebDAVError.locked
             }
         }
-        // Create lock
         let lockInfo = LockInfo(deviceId: deviceId, lockedAt: Date().timeIntervalSince1970)
-        let data = try JSONEncoder().encode(lockInfo)
-        try await client.put(lockPath, data: data, contentType: "application/json")
+        try await client.put(lockPath, data: try JSONEncoder().encode(lockInfo), contentType: "application/json")
     }
 
-    private func releaseLock(client: WebDAVClient) async throws {
+    private func releaseLock(client: any WebDAVClientProtocol) async throws {
         try await client.delete("anki-mate/manifest.lock")
     }
-
-    // MARK: - Device ID
 
     private func loadOrCreateDeviceId() throws -> String {
         if let existing = try store.syncMetadata(forKey: "device_id") {
@@ -309,7 +284,16 @@ final class SyncEngine {
         return newId
     }
 
-    // MARK: - Helpers
+    private func downloadAudioIfNeeded(for words: [SyncWordRecord], refs: Set<String>? = nil, client: any WebDAVClientProtocol) async throws -> [String: Data] {
+        let targetRefs = refs ?? Set(words.compactMap(\.payload.audioRef))
+        var audioData: [String: Data] = [:]
+        for ref in targetRefs {
+            if let data = try await SyncAudioStore.download(hash: ref, client: client) {
+                audioData[ref] = data
+            }
+        }
+        return audioData
+    }
 
     @MainActor
     private func updatePhase(_ phase: String) {
@@ -320,4 +304,45 @@ final class SyncEngine {
 private struct LockInfo: Codable {
     let deviceId: String
     let lockedAt: TimeInterval
+}
+
+extension SyncManifest {
+    init(legacyManifest: LegacySyncManifest) {
+        self.init(
+            deviceId: legacyManifest.deviceId,
+            collections: legacyManifest.collections.map { record in
+                SyncCollectionRecord(
+                    id: record.id,
+                    name: record.name,
+                    dictionaryName: record.dictionaryName,
+                    ankiDeckName: record.ankiDeckName,
+                    deckDescription: record.deckDescription,
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt,
+                    deletedAt: record.isDeleted ? record.updatedAt : nil
+                )
+            },
+            words: legacyManifest.words.map { record in
+                SyncWordRecord(
+                    id: record.id,
+                    collectionId: record.collectionId,
+                    normalizedWord: record.normalizedWord,
+                    displayWord: record.displayWord,
+                    sourceForm: record.sourceForm,
+                    inflectionKind: record.inflectionKind,
+                    expectedPartOfSpeech: record.expectedPartOfSpeech,
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt,
+                    deletedAt: record.isDeleted ? record.updatedAt : nil,
+                    payload: SyncWordPayloadRecord(
+                        lookupStateBase64: record.lookupStateBase64,
+                        lookupRefreshedAt: record.lastRefreshedAt,
+                        payloadUpdatedAt: record.updatedAt,
+                        audioRef: record.audioRef,
+                        aiArtifactsJSON: nil
+                    )
+                )
+            }
+        )
+    }
 }

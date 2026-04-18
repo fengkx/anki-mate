@@ -5,16 +5,25 @@ import DictKitSystemDictionary
 import Foundation
 import SQLite3
 
-/// Methods on WordListStore used by the sync engine.
 extension WordListStore {
 
-    // MARK: - Export for sync
+    struct SyncCollectionSnapshot: Equatable {
+        let record: PersistedCollectionRecord
+        let deletedAt: Date?
+    }
 
-    /// Load all collections including soft-deleted ones.
-    func loadAllCollectionsForSync() throws -> [(record: PersistedCollectionRecord, isDeleted: Bool)] {
+    struct SyncWordSnapshot: Equatable {
+        let record: PersistedWordRecord
+        let collectionId: UUID
+        let deletedAt: Date?
+        let payloadUpdatedAt: Date
+        let audioHash: String?
+    }
+
+    func loadAllCollectionsForSync() throws -> [SyncCollectionSnapshot] {
         try withDatabase { db in
             let sql = """
-            SELECT id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, is_deleted
+            SELECT id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, deleted_at
             FROM collections
             ORDER BY created_at ASC
             """
@@ -24,7 +33,7 @@ extension WordListStore {
             }
             defer { sqlite3_finalize(stmt) }
 
-            var results: [(PersistedCollectionRecord, Bool)] = []
+            var results: [SyncCollectionSnapshot] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let record = PersistedCollectionRecord(
                     id: try uuidColumn(stmt, index: 0),
@@ -37,20 +46,23 @@ extension WordListStore {
                     createdAt: dateColumn(stmt, index: 5),
                     updatedAt: dateColumn(stmt, index: 6)
                 )
-                let isDeleted = sqlite3_column_int(stmt, 7) != 0
-                results.append((record, isDeleted))
+                let deletedAt = nullableDateColumn(stmt, index: 7)
+                results.append(SyncCollectionSnapshot(record: record, deletedAt: deletedAt))
             }
             return results
         }
     }
 
-    /// Load all words including soft-deleted ones, along with their collection IDs.
-    func loadAllWordsForSync() throws -> [(record: PersistedWordRecord, collectionId: UUID, isDeleted: Bool, audioHash: String?)] {
+    func loadAllWordsForSync() throws -> [SyncWordSnapshot] {
         try withDatabase { db in
             let sql = """
-            SELECT id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, is_deleted, audio_hash, ai_artifacts_json, ai_suggested_example_sentences, ai_accepted_example_sentences, ai_suggested_definition_note, ai_accepted_definition_note
-            FROM words
-            ORDER BY created_at ASC
+            SELECT
+              w.id, w.collection_id, w.normalized_word, w.display_word, w.source_form, w.inflection_kind,
+              w.expected_part_of_speech, w.created_at, w.updated_at, w.deleted_at,
+              p.lookup_state_json, p.lookup_refreshed_at, p.audio_blob, p.audio_sha256, p.ai_artifacts_json, p.payload_updated_at
+            FROM words w
+            LEFT JOIN word_payloads p ON p.word_id = w.id
+            ORDER BY w.created_at ASC
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -58,36 +70,54 @@ extension WordListStore {
             }
             defer { sqlite3_finalize(stmt) }
 
-            var results: [(PersistedWordRecord, UUID, Bool, String?)] = []
+            var results: [SyncWordSnapshot] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let record = try readWordFromSyncColumns(stmt)
+                let record = PersistedWordRecord(
+                    id: try uuidColumn(stmt, index: 0),
+                    displayWord: try textColumn(stmt, index: 3),
+                    normalizedWord: try textColumn(stmt, index: 2),
+                    sourceForm: nullableTextColumn(stmt, index: 4),
+                    inflectionKind: nullableTextColumn(stmt, index: 5).flatMap(InflectionKind.init(rawValue:)),
+                    expectedPartOfSpeech: nullableTextColumn(stmt, index: 6).flatMap(PartOfSpeech.init(rawValue:)),
+                    lookupState: try decodeLookupState(blobColumn(stmt, index: 10)),
+                    audioData: blobColumn(stmt, index: 12),
+                    createdAt: dateColumn(stmt, index: 7),
+                    updatedAt: dateColumn(stmt, index: 8),
+                    lastRefreshedAt: nullableDateColumn(stmt, index: 11),
+                    aiArtifacts: decodeAIArtifacts(json: nullableTextColumn(stmt, index: 14))
+                )
                 let collectionId = try uuidColumn(stmt, index: 1)
-                let isDeleted = sqlite3_column_int(stmt, 12) != 0
+                let deletedAt = nullableDateColumn(stmt, index: 9)
+                let payloadUpdatedAt = nullableDateColumn(stmt, index: 15) ?? record.updatedAt
                 let audioHash = nullableTextColumn(stmt, index: 13)
-                results.append((record, collectionId, isDeleted, audioHash))
+                results.append(
+                    SyncWordSnapshot(
+                        record: record,
+                        collectionId: collectionId,
+                        deletedAt: deletedAt,
+                        payloadUpdatedAt: payloadUpdatedAt,
+                        audioHash: audioHash
+                    )
+                )
             }
             return results
         }
     }
 
-    /// Read audio data for a specific word by ID.
     func audioData(forWordId id: UUID) throws -> Data? {
         try withDatabase { db in
-            let sql = "SELECT audio_data FROM words WHERE id = ?"
+            let sql = "SELECT audio_blob FROM word_payloads WHERE word_id = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
             }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, id.uuidString, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 1, id.uuidString, -1, syncTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return blobColumn(stmt, index: 0)
         }
     }
 
-    // MARK: - Import from sync
-
-    /// Apply a batch of sync changes within a single transaction.
     func applySyncBatch(
         collections: [SyncCollectionRecord],
         words: [SyncWordRecord],
@@ -96,11 +126,11 @@ extension WordListStore {
         try withDatabase { db in
             try Self.exec(db: db, sql: "BEGIN TRANSACTION;")
             do {
-                for col in collections {
-                    try applySyncCollection(col, db: db)
+                for collection in collections {
+                    try applySyncCollection(collection, db: db)
                 }
                 for word in words {
-                    let audio = word.audioRef.flatMap { audioData[$0] }
+                    let audio = word.payload.audioRef.flatMap { audioData[$0] }
                     try applySyncWord(word, audioData: audio, db: db)
                 }
                 try Self.exec(db: db, sql: "COMMIT;")
@@ -111,17 +141,30 @@ extension WordListStore {
         }
     }
 
-    // MARK: - Sync metadata
+    func resetLocalSyncContent() throws {
+        try withDatabase { db in
+            try Self.exec(db: db, sql: "BEGIN TRANSACTION;")
+            do {
+                try Self.exec(db: db, sql: "DELETE FROM word_payloads;")
+                try Self.exec(db: db, sql: "DELETE FROM words;")
+                try Self.exec(db: db, sql: "DELETE FROM collections;")
+                try Self.exec(db: db, sql: "COMMIT;")
+            } catch {
+                try? Self.exec(db: db, sql: "ROLLBACK;")
+                throw error
+            }
+        }
+    }
 
     func syncMetadata(forKey key: String) throws -> String? {
         try withDatabase { db in
-            let sql = "SELECT value FROM sync_metadata WHERE key = ?"
+            let sql = "SELECT value FROM sync_state WHERE key = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
             }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, key, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 1, key, -1, syncTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return nullableTextColumn(stmt, index: 0)
         }
@@ -129,29 +172,30 @@ extension WordListStore {
 
     func setSyncMetadata(_ value: String, forKey key: String) throws {
         try withDatabase { db in
-            let sql = "INSERT OR REPLACE INTO sync_metadata (key, value) VALUES (?, ?)"
+            let sql = "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
             }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, key, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 2, value, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 1, key, -1, syncTransientDestructor)
+            sqlite3_bind_text(stmt, 2, value, -1, syncTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
             }
         }
     }
 
-    // MARK: - Audio hash
-
-    /// Check if there are local changes since the last sync.
     func hasChangesAfterLastSync() throws -> Bool {
         guard let tsString = try syncMetadata(forKey: "last_sync_timestamp"),
               let ts = TimeInterval(tsString) else {
-            // Never synced — if there's any data, it's pending
             return try withDatabase { db in
-                let sql = "SELECT EXISTS(SELECT 1 FROM words WHERE is_deleted = 0)"
+                let sql = """
+                SELECT
+                    EXISTS(SELECT 1 FROM collections LIMIT 1) OR
+                    EXISTS(SELECT 1 FROM words LIMIT 1) OR
+                    EXISTS(SELECT 1 FROM word_payloads LIMIT 1)
+                """
                 var stmt: OpaquePointer?
                 guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                     throw sqliteError(db: db)
@@ -168,6 +212,8 @@ extension WordListStore {
                 SELECT 1 FROM collections WHERE updated_at > ?
                 UNION ALL
                 SELECT 1 FROM words WHERE updated_at > ?
+                UNION ALL
+                SELECT 1 FROM word_payloads WHERE payload_updated_at > ?
             )
             """
             var stmt: OpaquePointer?
@@ -177,23 +223,36 @@ extension WordListStore {
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_double(stmt, 1, ts)
             sqlite3_bind_double(stmt, 2, ts)
+            sqlite3_bind_double(stmt, 3, ts)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return false }
             return sqlite3_column_int(stmt, 0) != 0
         }
     }
 
-    /// Compute and store audio hash for a word. Returns the hash.
+    func isBootstrapLocalState() throws -> Bool {
+        let collections = try loadCollections()
+        let words = try loadAllWords()
+        let hasLastSync = try syncMetadata(forKey: "last_sync_timestamp") != nil
+        guard !hasLastSync, words.isEmpty, collections.count == 1 else { return false }
+        let collection = collections[0]
+        return collection.name == "Default" &&
+            collection.dictionaryName.isEmpty &&
+            collection.ankiDeckName == "Default" &&
+            collection.ankiDeckDescription.isEmpty
+    }
+
     func updateAudioHash(forWordId id: UUID, audioData: Data) throws -> String {
-        let hash = SHA256.hash(data: audioData).map { String(format: "%02x", $0) }.joined()
+        let hash = Self.computeAudioHash(audioData)
         try withDatabase { db in
-            let sql = "UPDATE words SET audio_hash = ? WHERE id = ?"
+            let sql = "UPDATE word_payloads SET audio_sha256 = ?, payload_updated_at = ? WHERE word_id = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw sqliteError(db: db)
             }
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, hash, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 2, id.uuidString, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 1, hash, -1, syncTransientDestructor)
+            sqlite3_bind_double(stmt, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 3, id.uuidString, -1, syncTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw sqliteError(db: db)
             }
@@ -205,203 +264,166 @@ extension WordListStore {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    // MARK: - Private helpers
+    private func applySyncCollection(_ collection: SyncCollectionRecord, db: OpaquePointer?) throws {
+        guard let uuid = UUID(uuidString: collection.id) else { return }
+        let deletedAt = collection.deletedAt ?? 0
 
-    private func readWordFromSyncColumns(_ stmt: OpaquePointer?) throws -> PersistedWordRecord {
-        // Columns: id(0), collection_id(1), normalized_word(2), display_word(3),
-        // source_form(4), inflection_kind(5), expected_part_of_speech(6),
-        // lookup_state_json(7), audio_data(8), created_at(9), updated_at(10),
-        // last_refreshed_at(11), is_deleted(12), audio_hash(13), ai_artifacts_json(14),
-        // ai_suggested_example_sentences(15), ai_accepted_example_sentences(16),
-        // ai_suggested_definition_note(17), ai_accepted_definition_note(18)
-
-        return PersistedWordRecord(
-            id: try uuidColumn(stmt, index: 0),
-            displayWord: try textColumn(stmt, index: 3),
-            normalizedWord: try textColumn(stmt, index: 2),
-            sourceForm: nullableTextColumn(stmt, index: 4),
-            inflectionKind: nullableTextColumn(stmt, index: 5).flatMap(InflectionKind.init(rawValue:)),
-            expectedPartOfSpeech: nullableTextColumn(stmt, index: 6).flatMap(PartOfSpeech.init(rawValue:)),
-            lookupState: try decodeLookupState(blobColumn(stmt, index: 7)),
-            audioData: blobColumn(stmt, index: 8),
-            createdAt: dateColumn(stmt, index: 9),
-            updatedAt: dateColumn(stmt, index: 10),
-            lastRefreshedAt: sqlite3_column_type(stmt, 11) == SQLITE_NULL ? nil : dateColumn(stmt, index: 11),
-            aiArtifacts: decodeAIArtifacts(
-                json: nullableTextColumn(stmt, index: 14),
-                legacySuggestedExampleSentencesJSON: nullableTextColumn(stmt, index: 15),
-                legacyAcceptedExampleSentencesJSON: nullableTextColumn(stmt, index: 16),
-                legacySuggestedDefinitionNote: nullableTextColumn(stmt, index: 17),
-                legacyAcceptedDefinitionNote: nullableTextColumn(stmt, index: 18)
-            )
+        let exists = try rowExists(
+            db: db,
+            sql: "SELECT 1 FROM collections WHERE id = ?",
+            bind: { stmt in sqlite3_bind_text(stmt, 1, uuid.uuidString, -1, syncTransientDestructor) }
         )
-    }
 
-    private func applySyncCollection(_ col: SyncCollectionRecord, db: OpaquePointer?) throws {
-        guard let uuid = UUID(uuidString: col.id) else { return }
-
-        // Check if it exists
-        let checkSQL = "SELECT id FROM collections WHERE id = ?"
-        var checkStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, checkSQL, -1, &checkStmt, nil) == SQLITE_OK else {
-            throw sqliteError(db: db)
-        }
-        defer { sqlite3_finalize(checkStmt) }
-        sqlite3_bind_text(checkStmt, 1, uuid.uuidString, -1, transientDestructor)
-        let exists = sqlite3_step(checkStmt) == SQLITE_ROW
-
+        let sql: String
         if exists {
-            let sql = """
-            UPDATE collections SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, created_at = ?, updated_at = ?, is_deleted = ?
+            sql = """
+            UPDATE collections
+            SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ?
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw sqliteError(db: db)
-            }
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, col.name, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 2, col.dictionaryName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 3, col.ankiDeckName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 4, col.deckDescription, -1, transientDestructor)
-            sqlite3_bind_double(stmt, 5, col.createdAt)
-            sqlite3_bind_double(stmt, 6, col.updatedAt)
-            sqlite3_bind_int(stmt, 7, col.isDeleted ? 1 : 0)
-            sqlite3_bind_text(stmt, 8, uuid.uuidString, -1, transientDestructor)
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw sqliteError(db: db)
-            }
         } else {
-            let sql = """
-            INSERT INTO collections (id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, is_deleted)
+            sql = """
+            INSERT INTO collections (name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, deleted_at, id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw sqliteError(db: db)
-            }
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, uuid.uuidString, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 2, col.name, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 3, col.dictionaryName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 4, col.ankiDeckName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 5, col.deckDescription, -1, transientDestructor)
-            sqlite3_bind_double(stmt, 6, col.createdAt)
-            sqlite3_bind_double(stmt, 7, col.updatedAt)
-            sqlite3_bind_int(stmt, 8, col.isDeleted ? 1 : 0)
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw sqliteError(db: db)
-            }
+        }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw sqliteError(db: db)
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, collection.name, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 2, collection.dictionaryName, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 3, collection.ankiDeckName, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 4, collection.deckDescription, -1, syncTransientDestructor)
+        sqlite3_bind_double(stmt, 5, collection.createdAt)
+        sqlite3_bind_double(stmt, 6, collection.updatedAt)
+        if collection.deletedAt != nil {
+            sqlite3_bind_double(stmt, 7, deletedAt)
+        } else {
+            sqlite3_bind_null(stmt, 7)
+        }
+        sqlite3_bind_text(stmt, 8, uuid.uuidString, -1, syncTransientDestructor)
+
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw sqliteError(db: db)
         }
     }
 
     private func applySyncWord(_ word: SyncWordRecord, audioData: Data?, db: OpaquePointer?) throws {
         guard let uuid = UUID(uuidString: word.id) else { return }
 
-        // Decode lookup state from base64
-        var lookupStateData: Data?
-        if let base64 = word.lookupStateBase64 {
-            lookupStateData = Data(base64Encoded: base64)
-        }
+        let exists = try rowExists(
+            db: db,
+            sql: "SELECT 1 FROM words WHERE id = ?",
+            bind: { stmt in sqlite3_bind_text(stmt, 1, uuid.uuidString, -1, syncTransientDestructor) }
+        )
 
-        // Check if it exists
-        let checkSQL = "SELECT id FROM words WHERE id = ?"
-        var checkStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, checkSQL, -1, &checkStmt, nil) == SQLITE_OK else {
-            throw sqliteError(db: db)
-        }
-        defer { sqlite3_finalize(checkStmt) }
-        sqlite3_bind_text(checkStmt, 1, uuid.uuidString, -1, transientDestructor)
-        let exists = sqlite3_step(checkStmt) == SQLITE_ROW
-
+        let wordSQL: String
         if exists {
-            let sql = """
-            UPDATE words SET collection_id = ?, normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, lookup_state_json = ?, audio_data = COALESCE(?, audio_data), created_at = ?, updated_at = ?, last_refreshed_at = ?, is_deleted = ?, audio_hash = ?
+            wordSQL = """
+            UPDATE words
+            SET collection_id = ?, normalized_word = ?, display_word = ?, source_form = ?, inflection_kind = ?, expected_part_of_speech = ?, created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ?
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw sqliteError(db: db)
-            }
-            defer { sqlite3_finalize(stmt) }
-            try bindSyncWordFields(word, audioData: audioData, lookupStateData: lookupStateData, stmt: stmt)
-            sqlite3_bind_text(stmt, 14, uuid.uuidString, -1, transientDestructor)
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw sqliteError(db: db)
-            }
         } else {
-            let sql = """
-            INSERT INTO words (id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, lookup_state_json, audio_data, created_at, updated_at, last_refreshed_at, is_deleted, audio_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            wordSQL = """
+            INSERT INTO words (collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, created_at, updated_at, deleted_at, id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw sqliteError(db: db)
-            }
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, uuid.uuidString, -1, transientDestructor)
-            try bindSyncWordFields(word, audioData: audioData, lookupStateData: lookupStateData, stmt: stmt, startIndex: 2)
-            guard sqlite3_step(stmt) == SQLITE_DONE else {
-                throw sqliteError(db: db)
-            }
+        }
+
+        var wordStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, wordSQL, -1, &wordStmt, nil) == SQLITE_OK else {
+            throw sqliteError(db: db)
+        }
+        defer { sqlite3_finalize(wordStmt) }
+
+        bindSyncWordCore(word, stmt: wordStmt)
+        guard sqlite3_step(wordStmt) == SQLITE_DONE else {
+            throw sqliteError(db: db)
+        }
+
+        let payloadExists = try rowExists(
+            db: db,
+            sql: "SELECT 1 FROM word_payloads WHERE word_id = ?",
+            bind: { stmt in sqlite3_bind_text(stmt, 1, uuid.uuidString, -1, syncTransientDestructor) }
+        )
+
+        let payloadSQL: String
+        if payloadExists {
+            payloadSQL = """
+            UPDATE word_payloads
+            SET lookup_state_json = ?, lookup_refreshed_at = ?, audio_blob = COALESCE(?, audio_blob), audio_sha256 = ?, ai_artifacts_json = ?, payload_updated_at = ?
+            WHERE word_id = ?
+            """
+        } else {
+            payloadSQL = """
+            INSERT INTO word_payloads (lookup_state_json, lookup_refreshed_at, audio_blob, audio_sha256, ai_artifacts_json, payload_updated_at, word_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+        }
+
+        var payloadStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, payloadSQL, -1, &payloadStmt, nil) == SQLITE_OK else {
+            throw sqliteError(db: db)
+        }
+        defer { sqlite3_finalize(payloadStmt) }
+
+        try bindSyncWordPayload(word, audioData: audioData, stmt: payloadStmt)
+        guard sqlite3_step(payloadStmt) == SQLITE_DONE else {
+            throw sqliteError(db: db)
         }
     }
 
-    private func bindSyncWordFields(
-        _ word: SyncWordRecord,
-        audioData: Data?,
-        lookupStateData: Data?,
-        stmt: OpaquePointer?,
-        startIndex: Int32 = 1
-    ) throws {
-        var i = startIndex
-        sqlite3_bind_text(stmt, i, word.collectionId, -1, transientDestructor); i += 1
-        sqlite3_bind_text(stmt, i, word.normalizedWord, -1, transientDestructor); i += 1
-        sqlite3_bind_text(stmt, i, word.displayWord, -1, transientDestructor); i += 1
+    private func bindSyncWordCore(_ word: SyncWordRecord, stmt: OpaquePointer?) {
+        sqlite3_bind_text(stmt, 1, word.collectionId, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 2, word.normalizedWord, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 3, word.displayWord, -1, syncTransientDestructor)
+        bindNullableText(word.sourceForm, stmt: stmt, index: 4)
+        bindNullableText(word.inflectionKind, stmt: stmt, index: 5)
+        bindNullableText(word.expectedPartOfSpeech, stmt: stmt, index: 6)
+        sqlite3_bind_double(stmt, 7, word.createdAt)
+        sqlite3_bind_double(stmt, 8, word.updatedAt)
+        if let deletedAt = word.deletedAt {
+            sqlite3_bind_double(stmt, 9, deletedAt)
+        } else {
+            sqlite3_bind_null(stmt, 9)
+        }
+        sqlite3_bind_text(stmt, 10, word.id, -1, syncTransientDestructor)
+    }
 
-        if let sf = word.sourceForm {
-            sqlite3_bind_text(stmt, i, sf, -1, transientDestructor)
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
-
-        if let ik = word.inflectionKind {
-            sqlite3_bind_text(stmt, i, ik, -1, transientDestructor)
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
-
-        if let pos = word.expectedPartOfSpeech {
-            sqlite3_bind_text(stmt, i, pos, -1, transientDestructor)
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
-
-        if let data = lookupStateData {
-            _ = data.withUnsafeBytes { buffer in
-                sqlite3_bind_blob(stmt, i, buffer.baseAddress, Int32(buffer.count), transientDestructor)
+    private func bindSyncWordPayload(_ word: SyncWordRecord, audioData: Data?, stmt: OpaquePointer?) throws {
+        let lookupStateData = word.payload.lookupStateBase64.flatMap { Data(base64Encoded: $0) }
+        if let lookupStateData {
+            _ = lookupStateData.withUnsafeBytes { buffer in
+                sqlite3_bind_blob(stmt, 1, buffer.baseAddress, Int32(buffer.count), syncTransientDestructor)
             }
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
 
-        if let audio = audioData {
-            _ = audio.withUnsafeBytes { buffer in
-                sqlite3_bind_blob(stmt, i, buffer.baseAddress, Int32(buffer.count), transientDestructor)
+        if let lookupRefreshedAt = word.payload.lookupRefreshedAt {
+            sqlite3_bind_double(stmt, 2, lookupRefreshedAt)
+        } else {
+            sqlite3_bind_null(stmt, 2)
+        }
+
+        if let audioData {
+            _ = audioData.withUnsafeBytes { buffer in
+                sqlite3_bind_blob(stmt, 3, buffer.baseAddress, Int32(buffer.count), syncTransientDestructor)
             }
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
+        } else {
+            sqlite3_bind_null(stmt, 3)
+        }
 
-        sqlite3_bind_double(stmt, i, word.createdAt); i += 1
-        sqlite3_bind_double(stmt, i, word.updatedAt); i += 1
-
-        if let lra = word.lastRefreshedAt {
-            sqlite3_bind_double(stmt, i, lra)
-        } else { sqlite3_bind_null(stmt, i) }
-        i += 1
-
-        sqlite3_bind_int(stmt, i, word.isDeleted ? 1 : 0); i += 1
-
-        if let hash = word.audioRef {
-            sqlite3_bind_text(stmt, i, hash, -1, transientDestructor)
-        } else { sqlite3_bind_null(stmt, i) }
+        bindNullableText(word.payload.audioRef, stmt: stmt, index: 4)
+        bindNullableText(word.payload.aiArtifactsJSON, stmt: stmt, index: 5)
+        sqlite3_bind_double(stmt, 6, word.payload.payloadUpdatedAt)
+        sqlite3_bind_text(stmt, 7, word.id, -1, syncTransientDestructor)
     }
 }
 
-private let transientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+private let syncTransientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

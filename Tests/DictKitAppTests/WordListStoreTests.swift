@@ -32,6 +32,42 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collections.only?.name, "Default")
         XCTAssertEqual(collections.only?.dictionaryName, "")
         XCTAssertTrue(try store.loadAllWords().isEmpty)
+        XCTAssertEqual(try readUserVersion(at: databaseURL), 1)
+        XCTAssertEqual(try readApplicationID(at: databaseURL), 0x414D5632)
+        XCTAssertEqual(try legacyBackupURLs(in: baseURL).count, 1)
+    }
+
+    func testInitCreatesPayloadTableForNewGeneration() throws {
+        let store = try makeStore()
+        let collection = try XCTUnwrap(try store.loadCollections().only)
+        let record = PersistedWordRecord(
+            id: UUID(),
+            displayWord: "Apple",
+            normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+            lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"])),
+            audioData: Data([0x01, 0x02, 0x03]),
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 20),
+            lastRefreshedAt: Date(timeIntervalSince1970: 30)
+        )
+
+        _ = try store.upsertWord(record, into: collection.id)
+
+        try store.withDatabase { db in
+            XCTAssertTrue(try WordListStore.tableExists("word_payloads", db: db))
+            for indexName in Self.requiredIndexNames {
+                XCTAssertTrue(try WordListStore.indexExists(indexName, db: db), "Missing index: \(indexName)")
+            }
+
+            let sql = "SELECT audio_sha256, ai_artifacts_json, payload_updated_at FROM word_payloads WHERE word_id = ?"
+            var stmt: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, record.id.uuidString, -1, testTransientDestructor)
+            XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+            XCTAssertEqual(String(cString: sqlite3_column_text(stmt, 0)), WordListStore.computeAudioHash(Data([0x01, 0x02, 0x03])))
+            XCTAssertEqual(Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2)), record.updatedAt)
+        }
     }
 
     func testCreateCollectionStoresDictionaryName() throws {
@@ -52,6 +88,12 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collection.ankiDeckDescription, "Reading vocabulary")
     }
 
+    func testHasChangesAfterLastSyncTreatsFreshCollectionStateAsPending() throws {
+        let store = try makeStore()
+
+        XCTAssertTrue(try store.hasChangesAfterLastSync())
+    }
+
     func testCreateCollectionUsesCollectionNameFallbackForBlankDeckName() throws {
         let store = try makeStore()
 
@@ -67,6 +109,29 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collection.name, "Study Set")
         XCTAssertEqual(collection.ankiDeckName, "Study Set")
         XCTAssertEqual(collection.ankiDeckDescription, "Custom description")
+    }
+
+    func testCreateCollectionAllowsReusingSoftDeletedName() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let collection = try store.createCollection(
+            name: "Reading",
+            exportSettings: CollectionExportSettings(deckName: "Reading", deckDescription: ""),
+            dictionaryName: ""
+        )
+
+        try store.deleteCollection(id: collection.id)
+
+        let recreated = try store.createCollection(
+            name: "Reading",
+            exportSettings: CollectionExportSettings(deckName: "Reading", deckDescription: "Updated"),
+            dictionaryName: "Oxford"
+        )
+
+        let collections = try store.loadCollections()
+        XCTAssertEqual(collections.map(\.id).sorted { $0.uuidString < $1.uuidString }, [defaultCollection.id, recreated.id].sorted { $0.uuidString < $1.uuidString })
+        XCTAssertEqual(recreated.name, "Reading")
+        XCTAssertEqual(recreated.dictionaryName, "Oxford")
     }
 
     func testRenameCollectionUpdatesDictionaryAndExportSettingsIndependently() throws {
@@ -220,6 +285,71 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(try store.loadAllWords().only?.id, record2.id)
     }
 
+    func testUpsertWordAllowsReusingSoftDeletedNormalizedWord() throws {
+        let store = try makeStore()
+        let collection = try XCTUnwrap(try store.loadCollections().only)
+        let original = PersistedWordRecord(
+            id: UUID(),
+            displayWord: "Apple",
+            normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+            lookupState: .pending,
+            audioData: nil,
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 10),
+            lastRefreshedAt: nil
+        )
+        let replacement = PersistedWordRecord(
+            id: UUID(),
+            displayWord: "apple",
+            normalizedWord: WordListStore.normalizedWord(for: "apple"),
+            lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "company", examples: [])),
+            audioData: nil,
+            createdAt: Date(timeIntervalSince1970: 20),
+            updatedAt: Date(timeIntervalSince1970: 30),
+            lastRefreshedAt: nil
+        )
+
+        _ = try store.upsertWord(original, into: collection.id)
+        try store.removeWord(id: original.id, from: collection.id)
+
+        let result = try store.upsertWord(replacement, into: collection.id)
+
+        XCTAssertTrue(result.insertedWord)
+        XCTAssertEqual(try store.loadWords(in: collection.id).only?.id, replacement.id)
+    }
+
+    func testHasChangesAfterLastSyncTracksPayloadUpdates() throws {
+        let store = try makeStore()
+        let collection = try XCTUnwrap(try store.loadCollections().only)
+        let original = PersistedWordRecord(
+            id: UUID(),
+            displayWord: "Apple",
+            normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+            lookupState: .pending,
+            audioData: nil,
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 10),
+            lastRefreshedAt: nil
+        )
+
+        _ = try store.upsertWord(original, into: collection.id)
+        try store.setSyncMetadata("15", forKey: "last_sync_timestamp")
+
+        let updated = PersistedWordRecord(
+            id: original.id,
+            displayWord: original.displayWord,
+            normalizedWord: original.normalizedWord,
+            lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+            audioData: Data([0xAB]),
+            createdAt: original.createdAt,
+            updatedAt: Date(timeIntervalSince1970: 20),
+            lastRefreshedAt: Date(timeIntervalSince1970: 20)
+        )
+        try store.saveWord(updated)
+
+        XCTAssertTrue(try store.hasChangesAfterLastSync())
+    }
+
     func testDeleteLastCollectionIsRejected() throws {
         let store = try makeStore()
         let collection = try XCTUnwrap(try store.loadCollections().only)
@@ -308,6 +438,35 @@ final class WordListStoreTests: XCTestCase {
         }
     }
 
+    private func readUserVersion(at url: URL) throws -> Int {
+        try readPragmaInt(at: url, pragma: "user_version")
+    }
+
+    private func readApplicationID(at url: URL) throws -> Int {
+        try readPragmaInt(at: url, pragma: "application_id")
+    }
+
+    private func readPragmaInt(at url: URL, pragma: String) throws -> Int {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+        guard let db else {
+            XCTFail("Failed to open sqlite database")
+            return 0
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "PRAGMA \(pragma);", -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    private func legacyBackupURLs(in directory: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("word-list.legacy-") }
+    }
+
     private static func makeLookupResult(query: String, definition: String, examples: [String]) -> LookupResult {
         LookupResult(
             query: query,
@@ -347,6 +506,19 @@ final class WordListStoreTests: XCTestCase {
             source: nil
         )
     }
+
+    private static let requiredIndexNames = [
+        "collections_name_active_idx",
+        "words_collection_normalized_active_idx",
+        "collections_created_at_idx",
+        "collections_active_created_idx",
+        "collections_updated_at_idx",
+        "words_created_at_idx",
+        "words_collection_active_created_idx",
+        "words_active_created_idx",
+        "words_updated_at_idx",
+        "word_payloads_payload_updated_at_idx"
+    ]
 }
 
 private extension Array {
@@ -354,3 +526,5 @@ private extension Array {
         count == 1 ? first : nil
     }
 }
+
+private let testTransientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
