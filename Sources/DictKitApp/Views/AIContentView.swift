@@ -1858,18 +1858,45 @@ private struct EditableRecallDraftCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let tagText {
-                HStack {
-                    Spacer()
-                    AIArtifactTag(text: tagText)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 12) {
+            header
             modePicker
-            frontField
-            backField
-            hintField
+            Text(modeDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            RecallDraftEditorField(
+                title: "Front",
+                prompt: frontPrompt,
+                text: Binding(
+                    get: { draft.front },
+                    set: { updateDraft(front: $0) }
+                ),
+                minHeight: 78
+            )
+
+            RecallDraftEditorField(
+                title: "Back",
+                prompt: "Put the canonical answer here.",
+                text: Binding(
+                    get: { draft.back },
+                    set: { updateDraft(back: $0) }
+                ),
+                minHeight: 64
+            )
+
+            RecallDraftEditorField(
+                title: "Hint",
+                prompt: "Optional: give the learner a small nudge, not the full answer.",
+                text: Binding(
+                    get: { draft.hint ?? "" },
+                    set: { next in
+                        let trimmed = next.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updateDraft(hint: trimmed.isEmpty ? nil : trimmed)
+                    }
+                ),
+                minHeight: 58
+            )
 
             HStack(spacing: 8) {
                 if let primaryButtonTitle {
@@ -1887,6 +1914,24 @@ private struct EditableRecallDraftCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.05), lineWidth: 1))
     }
 
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(draft.mode.displayName)
+                    .font(.headline)
+                Text("Edit this like a real study card, not a raw data row.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let tagText {
+                AIArtifactTag(text: tagText)
+            }
+        }
+    }
+
     private var modePicker: some View {
         Picker("Mode", selection: Binding(
             get: { draft.mode },
@@ -1897,30 +1942,6 @@ private struct EditableRecallDraftCard: View {
             }
         }
         .pickerStyle(.segmented)
-    }
-
-    private var frontField: some View {
-        TextField("Front", text: Binding(
-            get: { draft.front },
-            set: { updateDraft(front: $0) }
-        ))
-    }
-
-    private var backField: some View {
-        TextField("Back", text: Binding(
-            get: { draft.back },
-            set: { updateDraft(back: $0) }
-        ))
-    }
-
-    private var hintField: some View {
-        TextField("Hint", text: Binding(
-            get: { draft.hint ?? "" },
-            set: { next in
-                let hint = next.trimmingCharacters(in: .whitespacesAndNewlines)
-                updateDraft(hint: hint.isEmpty ? nil : hint)
-            }
-        ))
     }
 
     private func updateDraft(
@@ -1939,6 +1960,63 @@ private struct EditableRecallDraftCard: View {
         onDraftChange?(draft)
     }
 
+    private var modeDescription: String {
+        switch draft.mode {
+        case .fullSpelling:
+            return "Use a short cue that makes the learner recall the complete spelling."
+        case .targetedLetterCloze:
+            return "Keep the prompt focused on one missing segment so the learner knows what to repair."
+        case .phraseRecall:
+            return "Use a natural sentence cue and leave only the target word for retrieval."
+        }
+    }
+
+    private var frontPrompt: String {
+        switch draft.mode {
+        case .fullSpelling:
+            return "Example: start from a meaning cue or partial scaffold instead of copying the answer."
+        case .targetedLetterCloze:
+            return "Example: leave one clear blank such as le__atize, not a wall of text."
+        case .phraseRecall:
+            return "Example: use a short sentence with one obvious blank."
+        }
+    }
+
+}
+
+private struct RecallDraftEditorField: View {
+    let title: String
+    let prompt: String
+    @Binding var text: String
+    let minHeight: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.black.opacity(0.08))
+
+                if text.isEmpty {
+                    Text(prompt)
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                }
+
+                TextEditor(text: $text)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: minHeight)
+            }
+            .frame(minHeight: minHeight)
+        }
+    }
 }
 
 private struct AIArtifactTag: View {

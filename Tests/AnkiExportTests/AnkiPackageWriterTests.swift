@@ -1,6 +1,7 @@
 import DictKit
 import DictKitAnkiExport
 import Foundation
+import SQLite3
 import XCTest
 
 final class AnkiPackageWriterTests: XCTestCase {
@@ -30,6 +31,90 @@ final class AnkiPackageWriterTests: XCTestCase {
         XCTAssertGreaterThan(data.count, 0)
         XCTAssertEqual(data[0], 0x50) // 'P'
         XCTAssertEqual(data[1], 0x4B) // 'K'
+    }
+
+    func testSQLiteWriterKeepsGUIDStableForSameWordAcrossExports() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let deck = AnkiDeckConfig(deckId: 1, deckName: "Test Deck", deckDescription: "", modelId: 1)
+        let firstPath = tempDir.appendingPathComponent("first.anki2").path
+        let secondPath = tempDir.appendingPathComponent("second.anki2").path
+
+        try AnkiSQLiteWriter.write(
+            deck: deck,
+            notes: [
+                AnkiNoteData(
+                    word: "lemmatize",
+                    phonetic: "/ˈlemətaɪz/",
+                    definitions: "<div>first export</div>",
+                    audioFilename: nil,
+                    audioData: nil
+                )
+            ],
+            to: firstPath
+        )
+        try AnkiSQLiteWriter.write(
+            deck: deck,
+            notes: [
+                AnkiNoteData(
+                    word: "lemmatize",
+                    phonetic: "/ˈlemətaɪz/",
+                    definitions: "<div>second export with updated content</div>",
+                    audioFilename: nil,
+                    audioData: nil
+                )
+            ],
+            to: secondPath
+        )
+
+        // Re-exporting the same headword with updated card content should preserve
+        // the GUID so Anki can treat the import as an update instead of a new note.
+        XCTAssertEqual(try noteGUIDs(at: firstPath), try noteGUIDs(at: secondPath))
+    }
+
+    func testSQLiteWriterUsesDifferentGUIDsForDifferentWords() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let path = tempDir.appendingPathComponent("notes.anki2").path
+        let deck = AnkiDeckConfig(deckId: 1, deckName: "Test Deck", deckDescription: "", modelId: 1)
+
+        try AnkiSQLiteWriter.write(
+            deck: deck,
+            notes: [
+                AnkiNoteData(word: "lemmatize", phonetic: "", definitions: "<div>verb</div>", audioFilename: nil, audioData: nil),
+                AnkiNoteData(word: "tokenize", phonetic: "", definitions: "<div>verb</div>", audioFilename: nil, audioData: nil)
+            ],
+            to: path
+        )
+
+        let guids = try noteGUIDs(at: path)
+        XCTAssertEqual(guids.count, 2)
+        XCTAssertEqual(Set(guids).count, 2)
+    }
+
+    private func noteGUIDs(at path: String) throws -> [String] {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let sql = "SELECT guid FROM notes ORDER BY sfld ASC"
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+
+        var values: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let text = sqlite3_column_text(statement, 0) {
+                values.append(String(cString: text))
+            }
+        }
+        return values
     }
 }
 

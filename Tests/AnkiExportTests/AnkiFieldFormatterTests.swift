@@ -161,6 +161,8 @@ final class AnkiFieldFormatterTests: XCTestCase {
 
         XCTAssertTrue(html.contains("Recall Cards"))
         XCTAssertTrue(html.contains("Learning Aids"))
+        XCTAssertTrue(html.contains("Prompt"))
+        XCTAssertTrue(html.contains("Answer"))
         XCTAssertTrue(html.contains("reach a ____"))
         XCTAssertTrue(html.contains("Do not confuse it with consent."))
         XCTAssertTrue(html.contains("Consensus sounds like many voices settling down."))

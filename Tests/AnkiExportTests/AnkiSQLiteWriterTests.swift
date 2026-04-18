@@ -5,13 +5,22 @@ import XCTest
 
 final class AnkiSQLiteWriterTests: XCTestCase {
     func testGUIDLength() {
-        let guid = AnkiSQLiteWriter.ankiGUID()
+        let guid = AnkiSQLiteWriter.stableAnkiGUID(seed: "lemmatize")
         XCTAssertEqual(guid.count, 10)
     }
 
-    func testGUIDUniqueness() {
-        let guids = (0..<100).map { _ in AnkiSQLiteWriter.ankiGUID() }
-        XCTAssertEqual(Set(guids).count, guids.count, "GUIDs should be unique")
+    func testGUIDIsStableForSameSeed() {
+        XCTAssertEqual(
+            AnkiSQLiteWriter.stableAnkiGUID(seed: "lemmatize"),
+            AnkiSQLiteWriter.stableAnkiGUID(seed: "lemmatize")
+        )
+    }
+
+    func testGUIDDiffersForDifferentSeeds() {
+        XCTAssertNotEqual(
+            AnkiSQLiteWriter.stableAnkiGUID(seed: "lemmatize"),
+            AnkiSQLiteWriter.stableAnkiGUID(seed: "tokenize")
+        )
     }
 
     func testFieldChecksum() {

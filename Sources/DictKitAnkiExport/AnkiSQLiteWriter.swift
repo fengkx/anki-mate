@@ -189,7 +189,7 @@ public enum AnkiSQLiteWriter {
             for note in payload.notes {
                 let noteId = now * 1000 + Int64(noteIndex)
                 let cardId = noteId + 1_000_000
-                let guid = ankiGUID()
+                let guid = stableAnkiGUID(seed: note.guidSeed)
                 let flds = note.fieldsString
                 let sfld = note.sortField
                 let csum = fieldChecksum(sfld)
@@ -238,9 +238,24 @@ public enum AnkiSQLiteWriter {
         return .sqlError(msg)
     }
 
-    static func ankiGUID() -> String {
+    static func stableAnkiGUID(seed: String) -> String {
         let chars = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&()*+,-./:;<=>?@[]^_`{|}~")
-        return String((0..<10).map { _ in chars.randomElement()! })
+        let data = Array(seed.utf8)
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+        CC_SHA1(data, CC_LONG(data.count), &hash)
+
+        var guid = ""
+        guid.reserveCapacity(10)
+        for index in 0..<10 {
+            let first = Int(hash[(index * 2) % hash.count])
+            let second = Int(hash[(index * 2 + 1) % hash.count])
+            let combined = (first << 8) | second
+            // Anki GUIDs are short strings over a restricted character set, so we
+            // deterministically project the SHA1 bytes into that alphabet instead
+            // of storing a raw hex digest.
+            guid.append(chars[combined % chars.count])
+        }
+        return guid
     }
 
     static func fieldChecksum(_ field: String) -> Int64 {

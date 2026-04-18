@@ -368,8 +368,12 @@ public enum AnkiFieldFormatter {
         html += "<span class=\"ai-recall-mode\">\(escapeHTML(draft.mode.displayName))</span>"
         html += aiGeneratedTagHTML()
         html += "</div>"
-        html += recallFieldHTML(label: "Front", value: draft.front)
-        html += recallFieldHTML(label: "Back", value: draft.back)
+        html += "<div class=\"ai-recall-prompt-card\">"
+        html += recallFieldHTML(label: "Prompt", value: draft.front)
+        html += "</div>"
+        html += "<div class=\"ai-recall-answer-card\">"
+        html += recallFieldHTML(label: "Answer", value: draft.back)
+        html += "</div>"
         if let hint = draft.hint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
             html += recallFieldHTML(label: "Hint", value: hint)
         }

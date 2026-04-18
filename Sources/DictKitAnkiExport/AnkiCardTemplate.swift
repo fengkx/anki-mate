@@ -208,6 +208,22 @@ public enum AnkiCardTemplate {
     .ai-recall-field + .ai-recall-field {
       margin-top: 10px;
     }
+    .ai-recall-prompt-card,
+    .ai-recall-answer-card {
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+    }
+    .ai-recall-prompt-card {
+      background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+      border-color: #fdba74;
+      margin-bottom: 10px;
+    }
+    .ai-recall-answer-card {
+      background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+      border-color: #93c5fd;
+      margin-bottom: 10px;
+    }
     .ai-field-label {
       font-size: 11px;
       font-weight: 700;

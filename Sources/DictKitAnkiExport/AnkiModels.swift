@@ -50,6 +50,15 @@ public struct AnkiNoteData: Sendable {
         return [word, phonetic, definitions, audioRef].joined(separator: "\u{1f}")
     }
 
+    /// Keep the note identity stable so Anki can update an existing note on re-import.
+    /// We intentionally key this off the normalized headword instead of mutable card content.
+    var guidSeed: String {
+        word
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+    }
+
     /// The sort field (first field = word)
     var sortField: String { word }
 }

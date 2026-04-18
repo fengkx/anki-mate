@@ -424,10 +424,30 @@ struct CardPreviewView: View {
     }
 
     private func recallPreviewHTML(for draft: RecallCardDraft, showBack: Bool) -> String {
+        let hintHTML = draft.hint.flatMap { hint -> String? in
+            let trimmed = hint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return """
+            <div class="recall-support-card">
+              <div class="recall-section-label">Hint</div>
+              <div class="recall-support-text">\(escapeHTMLPreservingLineBreaks(trimmed))</div>
+            </div>
+            """
+        } ?? ""
+
         let front = """
-        <div class="front">
-          <div class="word">\(escapeHTML(draft.front))</div>
-          <div class="phonetic">\(escapeHTML(draft.mode.displayName))</div>
+        <div class="front recall-shell">
+          <div class="recall-eyebrow">Recall Card</div>
+          <div class="recall-topline">
+            <div class="recall-mode-chip">\(escapeHTML(draft.mode.displayName))</div>
+            <div class="recall-stage-chip">\(showBack ? "Back" : "Front")</div>
+          </div>
+          <div class="recall-instruction">\(escapeHTML(recallInstruction(for: draft.mode)))</div>
+          <div class="recall-prompt-card">
+            <div class="recall-section-label">Prompt</div>
+            <div class="recall-front-text">\(escapeHTMLPreservingLineBreaks(draft.front))</div>
+          </div>
+          \(hintHTML)
         </div>
         """
 
@@ -436,9 +456,11 @@ struct CardPreviewView: View {
             body = """
             \(front)
             <hr id="answer">
-            <div class="back">
-              <div class="recall-back">\(escapeHTMLPreservingLineBreaks(draft.back))</div>
-              \(draft.hint.map { hint in "<div class=\"recall-hint\">\(escapeHTMLPreservingLineBreaks(hint))</div>" } ?? "")
+            <div class="back recall-answer-shell">
+              <div class="recall-answer-card">
+                <div class="recall-section-label">Answer</div>
+                <div class="recall-answer-text">\(escapeHTMLPreservingLineBreaks(draft.back))</div>
+              </div>
             </div>
             """
         } else {
@@ -451,8 +473,93 @@ struct CardPreviewView: View {
         <head>
         <meta charset="utf-8">
         <style>\(AnkiCardTemplate.css)
-        .recall-back { font-size: 24px; font-weight: 700; line-height: 1.4; }
-        .recall-hint { margin-top: 12px; color: #6b7280; font-size: 16px; }
+        .recall-shell {
+          text-align: left;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+        .recall-eyebrow {
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #64748b;
+        }
+        .recall-topline {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .recall-mode-chip,
+        .recall-stage-chip {
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .recall-mode-chip {
+          color: #9a3412;
+          background: #ffedd5;
+        }
+        .recall-stage-chip {
+          color: #475569;
+          background: #e2e8f0;
+        }
+        .recall-instruction {
+          font-size: 18px;
+          line-height: 1.55;
+          color: #334155;
+        }
+        .recall-prompt-card,
+        .recall-support-card,
+        .recall-answer-card {
+          padding: 18px 20px;
+          border-radius: 20px;
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+        }
+        .recall-prompt-card {
+          background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+          border-color: #fdba74;
+        }
+        .recall-answer-card {
+          background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+          border-color: #93c5fd;
+        }
+        .recall-section-label {
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #64748b;
+          margin-bottom: 8px;
+        }
+        .recall-front-text,
+        .recall-answer-text {
+          font-size: 32px;
+          font-weight: 760;
+          line-height: 1.22;
+          letter-spacing: -0.03em;
+          color: #0f172a;
+          word-break: break-word;
+        }
+        .recall-answer-text {
+          color: #0b3b8c;
+        }
+        .recall-support-text {
+          font-size: 16px;
+          line-height: 1.6;
+          color: #475569;
+        }
+        .recall-answer-shell {
+          text-align: left;
+        }
         </style>
         </head>
         <body class="card">
@@ -473,6 +580,17 @@ struct CardPreviewView: View {
         escapeHTML(text)
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    private func recallInstruction(for mode: RecallCardMode) -> String {
+        switch mode {
+        case .fullSpelling:
+            return "Recall the full spelling before revealing the answer."
+        case .targetedLetterCloze:
+            return "Rebuild the missing spelling segment instead of just recognizing the word."
+        case .phraseRecall:
+            return "Use the cue to actively retrieve the missing word in context."
+        }
     }
 
     private func resizeHandle(availableHeight: CGFloat) -> some View {
