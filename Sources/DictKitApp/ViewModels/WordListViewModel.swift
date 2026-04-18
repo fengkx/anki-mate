@@ -229,7 +229,7 @@ final class WordListViewModel: ObservableObject {
         switch mode {
         case .create:
             return .defaults(forCollectionName: "")
-        case .rename:
+        case .rename, .dictionary:
             guard let currentCollection else {
                 return .defaults(forCollectionName: "")
             }
@@ -495,6 +495,14 @@ final class WordListViewModel: ObservableObject {
             var saved = item.generatedIPANotationsByDialect
             saved[item.dialectStorageKey(for: dialect)] = value
             item.generatedIPANotationsByDialect = saved
+        }
+    }
+
+    func saveGeneratedStressSyllables(_ value: String, dialect: String?, for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            var saved = item.generatedStressSyllablesByDialect
+            saved[item.dialectStorageKey(for: dialect)] = value
+            item.generatedStressSyllablesByDialect = saved
         }
     }
 

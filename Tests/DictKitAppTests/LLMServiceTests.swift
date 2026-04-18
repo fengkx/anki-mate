@@ -499,6 +499,33 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertNil(LLMService.normalizeGeneratedIPA("käləˈkāSHən"))
     }
 
+    func testNormalizeStressSyllablesAcceptsSingleUppercasedStressSyllable() {
+        XCTAssertEqual(
+            LLMService.normalizeStressSyllables(" im-POR-tant ", preservingSpellingOf: "important"),
+            "im-POR-tant"
+        )
+        XCTAssertEqual(
+            LLMService.normalizeStressSyllables("in-for-MA-tion", preservingSpellingOf: "information"),
+            "in-for-MA-tion"
+        )
+        XCTAssertEqual(
+            LLMService.normalizeStressSyllables("aes-Thet-ic", preservingSpellingOf: "aesthetic"),
+            "aes-THET-ic"
+        )
+    }
+
+    func testNormalizeStressSyllablesRejectsInvalidShapes() {
+        XCTAssertEqual(LLMService.normalizeStressSyllables("flock", preservingSpellingOf: "flock"), "flock")
+        XCTAssertEqual(LLMService.normalizeStressSyllables("FLOCK", preservingSpellingOf: "flock"), "flock")
+        XCTAssertEqual(
+            LLMService.normalizeStressSyllables("aes-THET-ic, aes-THET-ik", preservingSpellingOf: "aesthetic"),
+            "aes-THET-ic"
+        )
+        XCTAssertNil(LLMService.normalizeStressSyllables("es-THET-ic", preservingSpellingOf: "aesthetic"))
+        XCTAssertNil(LLMService.normalizeStressSyllables("im-POR-TANT"))
+        XCTAssertNil(LLMService.normalizeStressSyllables("im-POR-tant!"))
+    }
+
     func testDecodeLearningAidsTrimsWhitespaceAndKeepsSectionsSeparate() throws {
         let payload = """
         model output:

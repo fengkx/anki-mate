@@ -40,6 +40,32 @@ public struct RecallPromptScaffold: Sendable, Equatable {
     }
 }
 
+private enum PromptText {
+    static func join(_ sections: [String?]) -> String {
+        sections
+            .compactMap { section in
+                guard let section else {
+                    return nil
+                }
+                let trimmed = section.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .joined(separator: "\n\n")
+    }
+
+    static func labeledBlock(_ title: String, value: String) -> String {
+        "\(title):\n\(value)"
+    }
+
+    static func bulletList(_ lines: [String]) -> String {
+        lines.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    static func jsonBlock(_ lines: [String]) -> String {
+        lines.joined(separator: "\n")
+    }
+}
+
 public enum LLMPrompt {
     static func exampleSentenceCount(for senses: [LLMSensePromptInput]) -> Int {
         let normalizedCount = max(1, senses.count)
@@ -76,30 +102,31 @@ public enum LLMPrompt {
             ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
             : senses
         let desiredCount = desiredCount ?? exampleSentenceCount(for: trimmedSenses)
-        let system = """
-        You are a bilingual language learning assistant.
-        Generate natural English example sentences with concise Chinese translations.
-        Keep English at B1-B2 level and Chinese idiomatic.
-        When multiple senses are provided, maximize semantic coverage before repeating a meaning.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate natural English example sentences with concise Chinese translations.",
+            "Keep English at B1-B2 level and Chinese idiomatic.",
+            "When multiple senses are provided, maximize semantic coverage before repeating a meaning."
+        ])
 
-        let user = """
-        Generate exactly \(desiredCount) natural English example sentences for the target word "\(word)".
-
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
-
-        Rules:
-        - Prioritize a different meaning or part of speech on each line whenever the inventory allows it
-        - If multiple senses are listed, cover every listed sense before repeating one
-        - If only one sense is listed, you may generate up to 3 distinct contexts for that single sense
-        - Use natural, everyday language
-        - Each sentence should be 8-20 words
-        - For each item, output in this format: English sentence — Chinese translation
-        - Do not explain which sense you picked
-        - Do not use bullets, numbering, labels, or extra markup
-        - Return ONLY the \(desiredCount) plain lines
-        """
+        let user = PromptText.join([
+            #"Generate exactly \#(desiredCount) natural English example sentences for the target word "\#(word)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Prioritize a different meaning or part of speech on each line whenever the inventory allows it",
+                    "If multiple senses are listed, cover every listed sense before repeating one",
+                    "If only one sense is listed, you may generate up to 3 distinct contexts for that single sense",
+                    "Use natural, everyday language",
+                    "Each sentence should be 8-20 words",
+                    "For each item, output in this format: English sentence — Chinese translation",
+                    "Do not explain which sense you picked",
+                    "Do not use bullets, numbering, labels, or extra markup",
+                    "Return ONLY the \(desiredCount) plain lines"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -115,42 +142,44 @@ public enum LLMPrompt {
             : senses
         let desiredCount = desiredCount ?? exampleSentenceCount(for: trimmedSenses)
 
-        let system = """
-        You are a bilingual language learning assistant.
-        Generate natural English example sentences with concise Chinese translations as strict JSON.
-        Keep English at B1-B2 level, Chinese idiomatic, and never add markdown fences or commentary.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate natural English example sentences with concise Chinese translations as strict JSON.",
+            "Keep English at B1-B2 level, Chinese idiomatic, and never add markdown fences or commentary."
+        ])
 
-        let user = """
-        Generate structured example sentences for the target word "\(trimmedWord)".
-
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
-
-        Return a single JSON object with this shape:
-        {
-          "examples": [
-            {
-              "english": "natural English sentence using the target word",
-              "translation": "concise Chinese translation",
-              "senseIndex": 1
-            }
-          ]
-        }
-
-        Rules:
-        - Output JSON only
-        - Return 1 to \(desiredCount) items in "examples"
-        - senseIndex must refer to the numbered sense inventory above
-        - Prioritize multi-sense coverage over filling a fixed count
-        - If multiple senses are listed, cover every listed sense before repeating one whenever possible
-        - If only one sense is listed, you may return 1 to \(desiredCount) distinct contexts for that single sense
-        - Do not pad with weak, repetitive, or near-duplicate examples just to reach the upper bound
-        - Use natural, everyday language
-        - Each English sentence should be 8-20 words
-        - Keep translation concise and idiomatic
-        - Do not add labels, bullets, numbering, explanations, or extra fields
-        """
+        let user = PromptText.join([
+            #"Generate structured example sentences for the target word "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"examples\": [",
+                "    {",
+                "      \"english\": \"natural English sentence using the target word\",",
+                "      \"translation\": \"concise Chinese translation\",",
+                "      \"senseIndex\": 1",
+                "    }",
+                "  ]",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "Return 1 to \(desiredCount) items in \"examples\"",
+                    "senseIndex must refer to the numbered sense inventory above",
+                    "Prioritize multi-sense coverage over filling a fixed count",
+                    "If multiple senses are listed, cover every listed sense before repeating one whenever possible",
+                    "If only one sense is listed, you may return 1 to \(desiredCount) distinct contexts for that single sense",
+                    "Do not pad with weak, repetitive, or near-duplicate examples just to reach the upper bound",
+                    "Use natural, everyday language",
+                    "Each English sentence should be 8-20 words",
+                    "Keep translation concise and idiomatic",
+                    "Do not add labels, bullets, numbering, explanations, or extra fields"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -188,28 +217,30 @@ public enum LLMPrompt {
             ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
             : senses
         let desiredCount = usageHintCount(for: trimmedSenses)
-        let system = """
-        You are a bilingual language learning assistant.
-        Summarize dictionary meanings into concise learner-friendly usage hints in both English and Chinese.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Summarize dictionary meanings into concise learner-friendly usage hints in both English and Chinese."
+        ])
 
-        let user = """
-        Write concise learner usage hints for the word "\(word)" using this sense inventory:
-
-        \(senseInventoryText(from: trimmedSenses))
-
-        Rules:
-        - If multiple senses are listed, cover every listed sense before expanding on one
-        - If only one sense is listed, write \(desiredCount) short lines that vary the usage cue
-        - Use simple vocabulary
-        - Focus on sense distinction, common usage cues, or memorable contrasts
-        - Do not write spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, or example sentences
-        - Return exactly \(desiredCount) short plain lines
-        - Output each line in this format:
-          <learner-friendly explanation> — <中文解释/用法提示>
-        - Do not use bullets, numbering, part-of-speech labels, EN/ZH labels, or extra markup
-        - Return ONLY the lines
-        """
+        let user = PromptText.join([
+            #"Write concise learner usage hints for the word "\#(word)" using this sense inventory:"#,
+            senseInventoryText(from: trimmedSenses),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "If multiple senses are listed, cover every listed sense before expanding on one",
+                    "If only one sense is listed, write \(desiredCount) short lines that vary the usage cue",
+                    "Use simple vocabulary",
+                    "Focus on sense distinction, common usage cues, or memorable contrasts",
+                    "Do not write spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, or example sentences",
+                    "Return exactly \(desiredCount) short plain lines",
+                    "Output each line in this format:",
+                    "<learner-friendly explanation> — <中文解释/用法提示>",
+                    "Do not use bullets, numbering, part-of-speech labels, EN/ZH labels, or extra markup",
+                    "Return ONLY the lines"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -224,42 +255,44 @@ public enum LLMPrompt {
             : senses
         let desiredCount = usageHintCount(for: trimmedSenses)
 
-        let system = """
-        You are a bilingual language learning assistant.
-        Generate concise learner-facing usage cues as strict JSON.
-        Focus on how the word is typically understood or used, and never add markdown fences or commentary.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate concise learner-facing usage cues as strict JSON.",
+            "Focus on how the word is typically understood or used, and never add markdown fences or commentary."
+        ])
 
-        let user = """
-        Generate structured usage hints for the target word "\(trimmedWord)".
-
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
-
-        Return a single JSON object with this shape:
-        {
-          "usageHints": [
-            {
-              "text": "short learner-facing usage cue",
-              "translation": "简短中文用法提示",
-              "kind": "sense_distinction | usage_tendency | semantic_contrast | register_or_context",
-              "senseIndex": 1
-            }
-          ]
-        }
-
-        Rules:
-        - Output JSON only
-        - Return 1 to \(desiredCount) items in "usageHints"
-        - senseIndex must refer to the numbered sense inventory above
-        - Prioritize multi-sense coverage over filling a fixed count
-        - If multiple senses are listed, cover every listed sense before expanding on one whenever possible
-        - If only one sense is listed, vary the usage angle instead of repeating the same point
-        - Keep each text concise, learner-facing, and more abstract than an example sentence
-        - Keep each translation concise and idiomatic
-        - Do not output spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, example sentences, or dictionary-definition rewrites
-        - Do not add labels, bullets, numbering, explanations, or extra fields
-        """
+        let user = PromptText.join([
+            #"Generate structured usage hints for the target word "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"usageHints\": [",
+                "    {",
+                "      \"text\": \"short learner-facing usage cue\",",
+                "      \"translation\": \"简短中文用法提示\",",
+                "      \"kind\": \"sense_distinction | usage_tendency | semantic_contrast | register_or_context\",",
+                "      \"senseIndex\": 1",
+                "    }",
+                "  ]",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "Return 1 to \(desiredCount) items in \"usageHints\"",
+                    "senseIndex must refer to the numbered sense inventory above",
+                    "Prioritize multi-sense coverage over filling a fixed count",
+                    "If multiple senses are listed, cover every listed sense before expanding on one whenever possible",
+                    "If only one sense is listed, vary the usage angle instead of repeating the same point",
+                    "Keep each text concise, learner-facing, and more abstract than an example sentence",
+                    "Keep each translation concise and idiomatic",
+                    "Do not output spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, example sentences, or dictionary-definition rewrites",
+                    "Do not add labels, bullets, numbering, explanations, or extra fields"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -277,56 +310,53 @@ public enum LLMPrompt {
             : senses
         let scaffoldBlock = recallScaffoldText(scaffold, requestedMode: requestedMode)
 
-        let system = """
-        You are a bilingual language learning assistant.
-        Generate one recall-oriented flashcard draft as strict JSON.
-        Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary.
-        When the prompt gives you a required masked surface or packaging cue, preserve it instead of inventing a new one.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate one recall-oriented flashcard draft as strict JSON.",
+            "Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary.",
+            "When the prompt gives you a required masked surface or packaging cue, preserve it instead of inventing a new one."
+        ])
 
-        let user = """
-        Generate exactly 1 recall card draft for the target "\(trimmedWord)".
-
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
-
-        Requested mode:
-        - \(requestedMode.rawValue)
-
-        Anchor snapshot:
-        \(anchorSnapshotText(anchor))
-
-        Packaging scaffold:
-        \(scaffoldBlock)
-
-        Rules:
-        - Return a single JSON object with this shape:
-          {
-            "draft": {
-              "mode": "full_spelling | targeted_letter_cloze | phrase_recall",
-              "front": "learner-facing prompt",
-              "back": "exact answer",
-              "hint": "optional short hint or null",
-              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
-            }
-          }
-        - Output JSON only
-        - Return exactly one draft under "draft"; do not return a "drafts" array unless you are forced into legacy compatibility
-        - mode must exactly match the requested mode
-        - front should be a recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction
-        - back must be the exact target word or phrase, with original spacing preserved
-        - For full_spelling, ask the learner to recall the complete target
-        - For targeted_letter_cloze, use exactly one continuous underscore gap of 2 or 3 characters, and keep a Chinese meaning cue in front
-        - For targeted_letter_cloze, if a required masked surface is provided above, copy that masked surface exactly and do not invent a different gap position or length
-        - For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally
-        - If a learner cue is provided above, use it as the semantic basis of the front instead of drifting to another explanation
-        - If a short hint is provided above, prefer reusing or lightly polishing it rather than inventing a long hint
-        - hint is optional and should stay short
-        - anchor is optional display metadata only; do not invent source offsets or remap anchors
-        - If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null
-        - This is a single-draft workspace contract, not a multi-mode batch response
-        - Do not emit alternative modes, numbered options, explanations, or extra fields
-        """
+        let user = PromptText.join([
+            #"Generate exactly 1 recall card draft for the target "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Requested mode", value: "- \(requestedMode.rawValue)"),
+            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.labeledBlock("Packaging scaffold", value: scaffoldBlock),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"draft\": {",
+                "    \"mode\": \"full_spelling | targeted_letter_cloze | phrase_recall\",",
+                "    \"front\": \"learner-facing prompt\",",
+                "    \"back\": \"exact answer\",",
+                "    \"hint\": \"optional short hint or null\",",
+                "    \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "Return exactly one draft under \"draft\"; do not return a \"drafts\" array unless you are forced into legacy compatibility",
+                    "mode must exactly match the requested mode",
+                    "front should be a recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
+                    "back must be the exact target word or phrase, with original spacing preserved",
+                    "For full_spelling, ask the learner to recall the complete target",
+                    "For targeted_letter_cloze, use exactly one continuous underscore gap of 2 or 3 characters, and keep a Chinese meaning cue in front",
+                    "For targeted_letter_cloze, if a required masked surface is provided above, copy that masked surface exactly and do not invent a different gap position or length",
+                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
+                    "If a learner cue is provided above, use it as the semantic basis of the front instead of drifting to another explanation",
+                    "If a short hint is provided above, prefer reusing or lightly polishing it rather than inventing a long hint",
+                    "hint is optional and should stay short",
+                    "anchor is optional display metadata only; do not invent source offsets or remap anchors",
+                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
+                    "This is a single-draft workspace contract, not a multi-mode batch response",
+                    "Do not emit alternative modes, numbered options, explanations, or extra fields"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -355,54 +385,54 @@ public enum LLMPrompt {
             ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
             : senses
 
-        let system = """
-        You are a bilingual language learning assistant.
-        Generate strict JSON learning aids that help with recall, correct usage, and collocations.
-        Keep every field concise and practical for flashcards.
-        """
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate strict JSON learning aids that help with recall, correct usage, and collocations.",
+            "Keep every field concise and practical for flashcards."
+        ])
 
-        let user = """
-        Generate structured learning aids for the target "\(trimmedWord)".
-
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
-
-        Anchor snapshot:
-        \(anchorSnapshotText(anchor))
-
-        Return a single JSON object with this shape:
-        {
-          "pitfalls": [
-            {
-              "summary": "short learner warning",
-              "details": "optional extra explanation",
-              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
-            }
-          ],
-          "mnemonics": [
-            {
-              "clue": "very short mnemonic cue",
-              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
-            }
-          ],
-          "collocations": [
-            {
-              "phrase": "common collocation or pattern",
-              "gloss": "optional short usage gloss",
-              "anchor": { "text": "optional display snapshot", "note": "optional note" } | null
-            }
-          ]
-        }
-
-        Rules:
-        - Return JSON only
-        - pitfalls: 2-4 items, focus on spelling traps, confusable meanings, or common misuse rather than general usage summaries
-        - mnemonics: 1-3 items, make them short and memorable rather than explanatory or definition-like
-        - collocations: 2-5 items, prefer high-frequency phrases or short patterns, not full example sentences
-        - Keep every string compact and learner-facing
-        - anchor is optional display metadata only; do not invent source offsets or remap anchors
-        - If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null
-        """
+        let user = PromptText.join([
+            #"Generate structured learning aids for the target "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"pitfalls\": [",
+                "    {",
+                "      \"summary\": \"short learner warning\",",
+                "      \"details\": \"optional extra explanation\",",
+                "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "    }",
+                "  ],",
+                "  \"mnemonics\": [",
+                "    {",
+                "      \"clue\": \"very short mnemonic cue\",",
+                "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "    }",
+                "  ],",
+                "  \"collocations\": [",
+                "    {",
+                "      \"phrase\": \"common collocation or pattern\",",
+                "      \"gloss\": \"optional short usage gloss\",",
+                "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "    }",
+                "  ]",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Return JSON only",
+                    "pitfalls: 2-4 items, focus on spelling traps, confusable meanings, or common misuse rather than general usage summaries",
+                    "mnemonics: 1-3 items, make them short and memorable rather than explanatory or definition-like",
+                    "collocations: 2-5 items, prefer high-frequency phrases or short patterns, not full example sentences",
+                    "Keep every string compact and learner-facing",
+                    "anchor is optional display metadata only; do not invent source offsets or remap anchors",
+                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null"
+                ])
+            )
+        ])
 
         return (system, user)
     }
@@ -422,37 +452,116 @@ public enum LLMPrompt {
         let normalizedGuide = pronunciationGuide?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let trimmedGuide = normalizedGuide.isEmpty ? nil : normalizedGuide
 
-        let system = """
-        You are a pronunciation specialist.
-        Convert dictionary pronunciation guides into strict IPA JSON only.
-        Never return respelling, never add slashes, and never add explanations.
-        """
+        let system = PromptText.join([
+            "You are a pronunciation specialist.",
+            "Convert dictionary pronunciation guides into strict IPA JSON only.",
+            "Never return respelling, never add slashes, and never add explanations."
+        ])
 
-        let user = """
-        Generate a single IPA pronunciation for the target word "\(trimmedWord)".
+        let user = PromptText.join([
+            #"Generate a single IPA pronunciation for the target word "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Dialect", value: trimmedDialect ?? "unspecified"),
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock(
+                "Existing pronunciation guide",
+                value: trimmedGuide.map { "\"\($0)\"" } ?? "none"
+            ),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"ipa\": \"pure IPA only\"",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "\"ipa\" must be a single IPA string without slashes",
+                    "Do not return respelling notation such as SH, TH, CH, or uppercase helper text",
+                    "Do not include the headword, labels, bullets, markdown, or commentary",
+                    "Prefer the requested dialect if one is provided",
+                    "Use the pronunciation guide as a hint only; correct it into real IPA"
+                ])
+            )
+        ])
 
-        Dialect:
-        \(trimmedDialect ?? "unspecified")
+        return (system, user)
+    }
 
-        Sense inventory:
-        \(senseInventoryText(from: trimmedSenses))
+    public static func pronunciationEnhancement(
+        word: String,
+        dialect: String?,
+        pronunciationGuide: String?,
+        existingIPA: String?,
+        senses: [LLMSensePromptInput],
+        strictSpellingRetry: Bool = false
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+        let normalizedDialect = dialect?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedDialect = normalizedDialect.isEmpty ? nil : normalizedDialect
+        let normalizedGuide = pronunciationGuide?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedGuide = normalizedGuide.isEmpty ? nil : normalizedGuide
+        let normalizedExistingIPA = existingIPA?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedExistingIPA = normalizedExistingIPA.isEmpty ? nil : normalizedExistingIPA
 
-        Existing pronunciation guide:
-        \(trimmedGuide.map { "\"\($0)\"" } ?? "none")
+        let system = PromptText.join([
+            "You are a pronunciation specialist.",
+            "Convert dictionary pronunciation data into strict JSON only.",
+            "Never return respelling as IPA, never add slashes, and never add explanations."
+        ])
 
-        Return a single JSON object with this shape:
-        {
-          "ipa": "pure IPA only"
-        }
+        let retryReminder = strictSpellingRetry
+            ? PromptText.join([
+                "Retry correction:",
+                "Your previous stressSyllables value did not preserve the original written spelling.",
+                "This time, copy the original word's letters exactly and only insert hyphens plus uppercase emphasis."
+            ])
+            : nil
 
-        Rules:
-        - Output JSON only
-        - "ipa" must be a single IPA string without slashes
-        - Do not return respelling notation such as SH, TH, CH, or uppercase helper text
-        - Do not include the headword, labels, bullets, markdown, or commentary
-        - Prefer the requested dialect if one is provided
-        - Use the pronunciation guide as a hint only; correct it into real IPA
-        """
+        let user = PromptText.join([
+            #"Generate pronunciation enhancement data for the target word "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Dialect", value: trimmedDialect ?? "unspecified"),
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock(
+                "Existing pronunciation guide",
+                value: trimmedGuide.map { "\"\($0)\"" } ?? "none"
+            ),
+            PromptText.labeledBlock(
+                "Existing IPA",
+                value: trimmedExistingIPA.map { "\"\($0)\"" } ?? "none"
+            ),
+            retryReminder,
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"ipa\": \"pure IPA only or null\",",
+                "  \"stressSyllables\": \"hyphen-joined syllables with the primary-stress syllable uppercased\"",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "\"stressSyllables\" is required",
+                    "Split the original written word into learner-friendly chunks joined by hyphens",
+                    "Preserve the original spelling exactly; do not rewrite letters to match pronunciation",
+                    "After removing hyphens and case markers, the result must still spell the original word",
+                    "For multisyllable words, uppercase the primary-stress syllable only, for example \"im-POR-tant\"",
+                    "Prefer spelling-aware chunks like \"aes-THET-ic\" over pronunciation-only rewrites like \"es-THET-ic\"",
+                    "For monosyllable words, return the plain word only, for example \"flock\"",
+                    "If the dialect has multiple accepted variants, choose one default variant and return one string only",
+                    "Do not include spaces, labels, bullets, markdown, commentary, alternatives, slashes, commas, or \"or\"",
+                    "If existing IPA is already provided, keep \"ipa\" as null unless correction is necessary",
+                    "If \"ipa\" is present, it must be a single IPA string without slashes",
+                    "Do not return respelling notation such as SH, TH, CH, or uppercase helper text as IPA",
+                    "Prefer the requested dialect if one is provided",
+                    "Use the pronunciation guide as a hint only; correct it into real IPA when needed"
+                ])
+            )
+        ])
 
         return (system, user)
     }

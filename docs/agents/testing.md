@@ -48,6 +48,8 @@ just test-speech
 - `just test-llm`
 - `just test-filter LLMPromptTests`
 - `just test-filter LLMServiceTests`
+- for prompt-only edits, add a fast compile loop:
+  - `swift build --target AnkiMateLLM`
 - focus coverage:
   - structured JSON prompt shape for recall drafts and learning aids
   - structured-output decoding and normalization

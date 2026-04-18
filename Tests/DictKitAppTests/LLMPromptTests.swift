@@ -214,4 +214,50 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Do not return respelling notation such as SH, TH, CH"))
         XCTAssertTrue(prompt.user.contains("Prefer the requested dialect if one is provided"))
     }
+
+    func testPronunciationEnhancementPromptRequestsStressSyllablesAndOptionalIPA() {
+        let prompt = LLMPrompt.pronunciationEnhancement(
+            word: "important",
+            dialect: "AmE",
+            pronunciationGuide: "imˈpôrtnt",
+            existingIPA: "ɪmˈpɔːrtənt",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "adjective",
+                    definition: "of great significance"
+                )
+            ]
+        )
+
+        XCTAssertTrue(prompt.system.contains("Convert dictionary pronunciation data into strict JSON only"))
+        XCTAssertTrue(prompt.user.contains("\"stressSyllables\""))
+        XCTAssertTrue(prompt.user.contains("\"ipa\": \"pure IPA only or null\""))
+        XCTAssertTrue(prompt.user.contains("im-POR-tant"))
+        XCTAssertTrue(prompt.user.contains("Preserve the original spelling exactly"))
+        XCTAssertTrue(prompt.user.contains("aes-THET-ic"))
+        XCTAssertTrue(prompt.user.contains("For monosyllable words, return the plain word only, for example \"flock\""))
+        XCTAssertTrue(prompt.user.contains("choose one default variant and return one string only"))
+        XCTAssertTrue(prompt.user.contains("keep \"ipa\" as null unless correction is necessary"))
+        XCTAssertTrue(prompt.user.contains("For multisyllable words, uppercase the primary-stress syllable only"))
+    }
+
+    func testPronunciationEnhancementRetryPromptEmphasizesSpellingPreservation() {
+        let prompt = LLMPrompt.pronunciationEnhancement(
+            word: "aesthetic",
+            dialect: "AmE",
+            pronunciationGuide: "esˈTHedik",
+            existingIPA: "ɛsˈθɛdɪk",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "adjective",
+                    definition: "concerned with beauty"
+                )
+            ],
+            strictSpellingRetry: true
+        )
+
+        XCTAssertTrue(prompt.user.contains("Retry correction:"))
+        XCTAssertTrue(prompt.user.contains("did not preserve the original written spelling"))
+        XCTAssertTrue(prompt.user.contains("copy the original word's letters exactly"))
+    }
 }

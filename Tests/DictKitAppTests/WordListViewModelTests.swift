@@ -499,7 +499,7 @@ final class WordListViewModelTests: XCTestCase {
 
     func testAIArtifactsRoundTripUnifiedSchemaAndLegacyCompatibility() throws {
         let artifacts = AIArtifacts(
-            schemaVersion: 2,
+            schemaVersion: AIArtifacts.currentSchemaVersion,
             exampleSentences: AIArtifactSlot(
                 suggested: [
                     ExampleSentenceArtifact(text: "Suggested example.", note: "keep it short")
@@ -540,7 +540,8 @@ final class WordListViewModelTests: XCTestCase {
             collocations: AIArtifactSlot(
                 accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common academic collocation")]
             ),
-            generatedIPANotationsByDialect: ["AmE": "kənˈsɛnsəs"]
+            generatedIPANotationsByDialect: ["AmE": "kənˈsɛnsəs"],
+            generatedStressSyllablesByDialect: ["AmE": "con-SEN-sus"]
         )
 
         let encoded = try JSONEncoder().encode(artifacts)
@@ -554,6 +555,7 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(decoded.acceptedMnemonicTexts, ["Consensus sounds like everyone says yes together."])
         XCTAssertEqual(decoded.acceptedCollocationPhrases, ["reach a consensus"])
         XCTAssertEqual(decoded.generatedIPANotationsByDialect["AmE"], "kənˈsɛnsəs")
+        XCTAssertEqual(decoded.generatedStressSyllablesByDialect["AmE"], "con-SEN-sus")
         XCTAssertFalse(decoded.isEmpty)
     }
 
@@ -588,14 +590,27 @@ final class WordListViewModelTests: XCTestCase {
     }
 
     func testLegacyAIColumnsMigrateIntoUnifiedSchema() throws {
-        let databaseURL = try makeLegacySchemaDatabase(
-            suggestedExamples: ["Suggested example."],
-            acceptedExamples: ["Accepted example."],
-            suggestedDefinitionNote: "Suggested definition.",
-            acceptedDefinitionNote: "Accepted definition."
-        )
-        let store = try WordListStore(databaseURL: databaseURL)
+        let store = try makeStore()
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: "apple",
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil,
+                aiArtifacts: .empty,
+                aiSuggestedExampleSentences: ["Suggested example."],
+                aiAcceptedExampleSentences: ["Accepted example."],
+                aiSuggestedDefinitionNote: "Suggested definition.",
+                aiAcceptedDefinitionNote: "Accepted definition."
+            ),
+            into: defaultCollection.id
+        )
+
         let migrated = try XCTUnwrap(try store.loadWords(in: defaultCollection.id).only)
 
         XCTAssertEqual(migrated.aiArtifacts.suggestedExampleSentences, ["Suggested example."])
@@ -604,13 +619,13 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(migrated.aiArtifacts.acceptedDefinitionNoteText, "Accepted definition.")
 
         try store.withDatabase { db in
-            let sql = "SELECT ai_artifacts_json FROM words LIMIT 1"
+            let sql = "SELECT ai_artifacts_json FROM word_payloads LIMIT 1"
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
             XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
             let json = String(cString: sqlite3_column_text(stmt, 0))
-            XCTAssertTrue(json.contains("\"schemaVersion\":2"))
+            XCTAssertTrue(json.contains("\"schemaVersion\":3"))
             XCTAssertTrue(json.contains("Accepted example."))
         }
     }
@@ -630,6 +645,23 @@ final class WordListViewModelTests: XCTestCase {
         let persisted = try XCTUnwrap(viewModel.words.only)
         XCTAssertEqual(persisted.generatedIPANotationsByDialect["AmE"], "ˌkɑləˈkeɪʃən")
         XCTAssertEqual(persisted.phonetic, "/ˌkɑləˈkeɪʃən/")
+    }
+
+    func testGeneratedStressSyllablesPersistAcrossReload() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "important")
+        _ = try store.upsertWord(PersistedWordRecord(item: item), into: defaultCollection.id)
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        viewModel.saveGeneratedStressSyllables("im-POR-tant", dialect: "AmE", for: reloadedItem)
+        viewModel.reloadFromStore()
+
+        let persisted = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(persisted.generatedStressSyllablesByDialect["AmE"], "im-POR-tant")
+        XCTAssertEqual(persisted.generatedStressSyllables(for: "AmE"), "im-POR-tant")
     }
 
     func testAddWordUsesPublicResultWhenExamplesExist() async throws {

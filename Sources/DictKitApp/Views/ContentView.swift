@@ -49,7 +49,7 @@ struct ContentView: View {
                 switch mode {
                 case .create:
                     return viewModel.createCollection(using: form)
-                case .rename:
+                case .rename, .dictionary:
                     return viewModel.renameCurrentCollection(using: form)
                 }
             }
@@ -77,6 +77,7 @@ struct ContentView: View {
 enum CollectionEditorMode: String, Identifiable {
     case create
     case rename
+    case dictionary
 
     var id: String { rawValue }
 }

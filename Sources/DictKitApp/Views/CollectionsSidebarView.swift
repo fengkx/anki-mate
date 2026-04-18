@@ -31,16 +31,32 @@ struct CollectionsSidebarView: View {
 
             List(selection: $viewModel.currentCollectionID) {
                 ForEach(viewModel.collections) { collection in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(collection.name)
-                            .font(.body.weight(.medium))
-                        Text("\(viewModel.exportableWordCount(for: collection.id)) ready")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(collection.name)
+                                .font(.body.weight(.medium))
+                            Text("\(viewModel.exportableWordCount(for: collection.id)) ready")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        if viewModel.currentCollectionID == collection.id {
+                            Button {
+                                viewModel.selectCollection(id: collection.id)
+                                collectionEditorMode = .rename
+                            } label: {
+                                Image(systemName: "book.closed")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Collection settings")
+                        }
                     }
                     .tag(collection.id)
                     .contextMenu {
-                        Button("Rename") {
+                        Button("Collection Settings") {
                             viewModel.selectCollection(id: collection.id)
                             collectionEditorMode = .rename
                         }

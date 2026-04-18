@@ -193,9 +193,10 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         case mnemonics
         case collocations
         case generatedIPANotationsByDialect
+        case generatedStressSyllablesByDialect
     }
 
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     public static let empty = AIArtifacts()
 
     public var schemaVersion: Int
@@ -206,6 +207,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     public var mnemonics: AIArtifactSlot<[MnemonicArtifact]>
     public var collocations: AIArtifactSlot<[CollocationArtifact]>
     public var generatedIPANotationsByDialect: [String: String]
+    public var generatedStressSyllablesByDialect: [String: String]
 
     public init(
         schemaVersion: Int = AIArtifacts.currentSchemaVersion,
@@ -215,7 +217,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         pitfalls: AIArtifactSlot<[PitfallArtifact]> = .init(),
         mnemonics: AIArtifactSlot<[MnemonicArtifact]> = .init(),
         collocations: AIArtifactSlot<[CollocationArtifact]> = .init(),
-        generatedIPANotationsByDialect: [String: String] = [:]
+        generatedIPANotationsByDialect: [String: String] = [:],
+        generatedStressSyllablesByDialect: [String: String] = [:]
     ) {
         self.schemaVersion = schemaVersion
         self.exampleSentences = exampleSentences
@@ -225,6 +228,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         self.mnemonics = mnemonics
         self.collocations = collocations
         self.generatedIPANotationsByDialect = generatedIPANotationsByDialect
+        self.generatedStressSyllablesByDialect = generatedStressSyllablesByDialect
     }
 
     public init(from decoder: Decoder) throws {
@@ -237,7 +241,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             pitfalls: try container.decodeIfPresent(AIArtifactSlot<[PitfallArtifact]>.self, forKey: .pitfalls) ?? .init(),
             mnemonics: try container.decodeIfPresent(AIArtifactSlot<[MnemonicArtifact]>.self, forKey: .mnemonics) ?? .init(),
             collocations: try container.decodeIfPresent(AIArtifactSlot<[CollocationArtifact]>.self, forKey: .collocations) ?? .init(),
-            generatedIPANotationsByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedIPANotationsByDialect) ?? [:]
+            generatedIPANotationsByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedIPANotationsByDialect) ?? [:],
+            generatedStressSyllablesByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedStressSyllablesByDialect) ?? [:]
         ).normalized()
     }
 
@@ -252,6 +257,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         try container.encode(normalized.mnemonics, forKey: .mnemonics)
         try container.encode(normalized.collocations, forKey: .collocations)
         try container.encode(normalized.generatedIPANotationsByDialect, forKey: .generatedIPANotationsByDialect)
+        try container.encode(normalized.generatedStressSyllablesByDialect, forKey: .generatedStressSyllablesByDialect)
     }
 
     public var isEmpty: Bool {
@@ -267,7 +273,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             mnemonics.accepted == nil &&
             collocations.suggested == nil &&
             collocations.accepted == nil &&
-            generatedIPANotationsByDialect.isEmpty
+            generatedIPANotationsByDialect.isEmpty &&
+            generatedStressSyllablesByDialect.isEmpty
     }
 
     public init(
@@ -309,7 +316,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: Self.makeCollocationArtifacts(from: legacySuggestedCollocations),
                 accepted: Self.makeCollocationArtifacts(from: legacyAcceptedCollocations)
             ),
-            generatedIPANotationsByDialect: [:]
+            generatedIPANotationsByDialect: [:],
+            generatedStressSyllablesByDialect: [:]
         ).normalized()
     }
 
@@ -368,7 +376,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: collocations.suggested ?? legacy.collocations.suggested,
                 accepted: collocations.accepted ?? legacy.collocations.accepted
             ),
-            generatedIPANotationsByDialect: generatedIPANotationsByDialect
+            generatedIPANotationsByDialect: generatedIPANotationsByDialect,
+            generatedStressSyllablesByDialect: generatedStressSyllablesByDialect
         ).normalized()
     }
 
@@ -399,7 +408,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: Self.normalizeCollocationArtifacts(collocations.suggested),
                 accepted: Self.normalizeCollocationArtifacts(collocations.accepted)
             ),
-            generatedIPANotationsByDialect: Self.normalizeGeneratedIPANotations(generatedIPANotationsByDialect)
+            generatedIPANotationsByDialect: Self.normalizeGeneratedStringByDialect(generatedIPANotationsByDialect),
+            generatedStressSyllablesByDialect: Self.normalizeGeneratedStringByDialect(generatedStressSyllablesByDialect)
         )
     }
 
@@ -591,7 +601,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         }.nilIfEmpty
     }
 
-    private static func normalizeGeneratedIPANotations(_ values: [String: String]) -> [String: String] {
+    private static func normalizeGeneratedStringByDialect(_ values: [String: String]) -> [String: String] {
         Dictionary(
             uniqueKeysWithValues: values.compactMap { key, value in
                 let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)

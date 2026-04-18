@@ -18,8 +18,9 @@ struct CardPreviewView: View {
     @State private var isGeneratingRecallPreviewDraft = false
     @State private var recallPreviewFeedback: String?
     @State private var recallPreviewErrorMessage: String?
-    @State private var generatingIPADialects = Set<String>()
-    @State private var generatedIPAErrorMessage: String?
+    @State private var generatingPronunciationDialects = Set<String>()
+    @State private var pronunciationEnhancementErrorMessage: String?
+    @State private var attemptedAutomaticPronunciationDialects = Set<String>()
 
     private let minAIPanelHeight: CGFloat = 180
     private let maxAIPanelHeight: CGFloat = 520
@@ -74,65 +75,97 @@ struct CardPreviewView: View {
                         return (order[$0.dialect] ?? 2) < (order[$1.dialect] ?? 2)
                     }
                     if !phonetics.isEmpty {
-                        HStack(alignment: .center, spacing: 18) {
-                            ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
-                                let dialectKey = item.dialectStorageKey(for: entry.dialect)
-                                let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
+                        let sharedStressRefreshTarget = preferredStressRefreshTarget(from: phonetics)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .center, spacing: 18) {
+                                ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
+                                    let dialectKey = item.dialectStorageKey(for: entry.dialect)
+                                    let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
 
-                                HStack(alignment: .center, spacing: 8) {
-                                    if !entry.dialect.isEmpty {
-                                        Text(entry.dialect)
-                                            .font(.caption2.weight(.medium))
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                Capsule()
-                                                    .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
-                                            )
-                                    }
-                                    if let generatedIPA {
-                                        Text("/\(generatedIPA)/")
-                                            .font(.body.weight(.medium))
-                                            .foregroundStyle(.primary)
-                                            .help("Generated IPA pronunciation")
-                                    } else {
-                                        Text(entry.usesIPADelimiters ? "/\(entry.notation)/" : entry.notation)
-                                            .font(.body)
-                                            .foregroundStyle(.secondary)
-                                            .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
-                                    }
-
-                                    if !entry.usesIPADelimiters && generatedIPA == nil {
-                                        if !item.hasDisplayIPA {
-                                            Button(action: {
-                                                generateIPA(for: entry.dialect, guide: entry.notation)
-                                            }) {
-                                                if generatingIPADialects.contains(dialectKey) {
-                                                    ProgressView()
-                                                        .controlSize(.small)
-                                                        .frame(minWidth: 72)
-                                                } else {
-                                                    Label("Generate IPA", systemImage: "sparkles")
-                                                        .labelStyle(.titleAndIcon)
-                                                }
-                                            }
-                                            .buttonStyle(.borderedProminent)
-                                            .controlSize(.small)
-                                            // Avoid deriving a new tint from AccentColor here.
-                                            // On newer macOS releases this can recurse during AppKit color resolution
-                                            // once the button switches into the ProgressView loading state.
-                                            .tint(Self.generateIPATint)
-                                            .disabled(generatingIPADialects.contains(dialectKey))
+                                    HStack(alignment: .center, spacing: 8) {
+                                        if !entry.dialect.isEmpty {
+                                            Text(entry.dialect)
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
+                                                )
                                         }
+                                        if let generatedIPA {
+                                            Text("/\(generatedIPA)/")
+                                                .font(.body.weight(.medium))
+                                                .foregroundStyle(.primary)
+                                                .help("Generated IPA pronunciation")
+                                        } else {
+                                            Text(entry.usesIPADelimiters ? "/\(entry.notation)/" : entry.notation)
+                                                .font(.body)
+                                                .foregroundStyle(.secondary)
+                                                .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
+                                        }
+
+                                        Button(action: {
+                                            generatePronunciationEnhancement(
+                                                for: entry.dialect,
+                                                guide: entry.notation,
+                                                existingIPA: entry.usesIPADelimiters ? entry.notation : generatedIPA
+                                            )
+                                        }) {
+                                            if generatingPronunciationDialects.contains(dialectKey) {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                            } else {
+                                                Image(systemName: "arrow.clockwise")
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(Self.generateIPATint)
+                                        .help("Generate pronunciation aid")
+                                        .disabled(generatingPronunciationDialects.contains(dialectKey))
+
+                                        Button(action: {
+                                            Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
+                                        }) {
+                                            Image(systemName: "speaker.wave.2.fill")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
                                     }
-                                    Button(action: {
-                                        Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
-                                    }) {
-                                        Image(systemName: "speaker.wave.2.fill")
-                                            .font(.caption)
+                                }
+                            }
+
+                            if let sharedStressSyllables = item.preferredGeneratedStressSyllables {
+                                HStack(alignment: .center, spacing: 8) {
+                                    Text(sharedStressSyllables)
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .help("Stress syllables")
+
+                                    if let target = sharedStressRefreshTarget {
+                                        let dialectKey = item.dialectStorageKey(for: target.dialect)
+                                        Button(action: {
+                                            generatePronunciationEnhancement(
+                                                for: target.dialect,
+                                                guide: target.guide,
+                                                existingIPA: target.existingIPA
+                                            )
+                                        }) {
+                                            if generatingPronunciationDialects.contains(dialectKey) {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                            } else {
+                                                Image(systemName: "arrow.clockwise")
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(Self.generateIPATint)
+                                        .help("Regenerate stress syllables")
+                                        .disabled(!item.isReady || generatingPronunciationDialects.contains(dialectKey))
                                     }
-                                    .buttonStyle(.borderless)
                                 }
                             }
                         }
@@ -140,6 +173,39 @@ struct CardPreviewView: View {
                         HStack(alignment: .center, spacing: 10) {
                             let defaultDialectKey = item.dialectStorageKey(for: "AmE")
                             let generatedIPA = item.preferredGeneratedIPA
+                            let generatedStressSyllables = item.generatedStressSyllables(for: "AmE")
+
+                            if let generatedIPA {
+                                Text("/\(generatedIPA)/")
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(.primary)
+                            }
+
+                            if let generatedStressSyllables {
+                                Text(generatedStressSyllables)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Button(action: {
+                                generatePronunciationEnhancement(
+                                    for: "AmE",
+                                    guide: nil,
+                                    existingIPA: generatedIPA
+                                )
+                            }) {
+                                if generatingPronunciationDialects.contains(defaultDialectKey) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.caption)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(Self.generateIPATint)
+                            .help("Generate pronunciation aid")
+                            .disabled(!item.isReady || generatingPronunciationDialects.contains(defaultDialectKey))
 
                             Button(action: {
                                 Task { await viewModel.playPronunciation(for: item) }
@@ -148,43 +214,23 @@ struct CardPreviewView: View {
                             }
                             .buttonStyle(.borderless)
                             .disabled(!item.isReady)
-
-                            if !item.hasDisplayIPA {
-                                if generatedIPA == nil {
-                                    Button(action: {
-                                        generateIPA(for: "AmE", guide: nil)
-                                    }) {
-                                        if generatingIPADialects.contains(defaultDialectKey) {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .frame(minWidth: 72)
-                                        } else {
-                                            Label("Generate IPA", systemImage: "sparkles")
-                                                .labelStyle(.titleAndIcon)
-                                        }
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    .tint(Self.generateIPATint)
-                                    .disabled(!item.isReady || generatingIPADialects.contains(defaultDialectKey))
-                                }
-                            }
-
-                            if let generatedIPA {
-                                Text("/\(generatedIPA)/")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(.primary)
-                            }
                         }
                     }
-                    if let generatedIPAErrorMessage {
-                        Text(generatedIPAErrorMessage)
+                    if let pronunciationEnhancementErrorMessage {
+                        Text(pronunciationEnhancementErrorMessage)
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .task(id: pronunciationAutoGenerationTaskKey) {
+                    triggerAutomaticPronunciationEnhancementIfNeeded()
+                }
+                .onChange(of: item.id) { _ in
+                    attemptedAutomaticPronunciationDialects = []
+                    pronunciationEnhancementErrorMessage = nil
+                }
 
                 Divider()
 
@@ -394,33 +440,122 @@ struct CardPreviewView: View {
         return .fullSpelling
     }
 
-    private func generateIPA(for dialect: String?, guide: String?) {
+    private var pronunciationAutoGenerationTaskKey: String {
+        [
+            item.id.uuidString,
+            item.isReady ? "ready" : "not-ready",
+            llmService.serverState.isRunning ? "server-running" : "server-stopped",
+            "\(item.generatedIPANotationsByDialect.count)",
+            "\(item.generatedStressSyllablesByDialect.count)"
+        ].joined(separator: "|")
+    }
+
+    private func triggerAutomaticPronunciationEnhancementIfNeeded() {
+        guard item.isReady, llmService.serverState.isRunning else { return }
+
+        let phonetics = item.phoneticsByDialect
+        if phonetics.isEmpty {
+            let dialectKey = item.dialectStorageKey(for: "AmE")
+            guard item.generatedStressSyllablesByDialect[dialectKey] == nil else { return }
+            guard attemptedAutomaticPronunciationDialects.insert(dialectKey).inserted else { return }
+            generatePronunciationEnhancement(for: "AmE", guide: nil, existingIPA: item.preferredGeneratedIPA, automatic: true)
+            return
+        }
+
+        for entry in phonetics {
+            let dialectKey = item.dialectStorageKey(for: entry.dialect)
+            guard item.generatedStressSyllablesByDialect[dialectKey] == nil else { continue }
+            guard attemptedAutomaticPronunciationDialects.insert(dialectKey).inserted else { continue }
+            generatePronunciationEnhancement(
+                for: entry.dialect,
+                guide: entry.notation,
+                existingIPA: entry.usesIPADelimiters ? entry.notation : item.generatedIPANotationsByDialect[dialectKey],
+                automatic: true
+            )
+        }
+    }
+
+    private func generatePronunciationEnhancement(
+        for dialect: String?,
+        guide: String?,
+        existingIPA: String?,
+        automatic: Bool = false
+    ) {
         guard let result = item.lookupResult else { return }
         let dialectKey = item.dialectStorageKey(for: dialect)
+        guard !generatingPronunciationDialects.contains(dialectKey) else { return }
         let senses = recallPromptInputs(from: result)
 
-        generatingIPADialects.insert(dialectKey)
-        generatedIPAErrorMessage = nil
+        if !automatic {
+            attemptedAutomaticPronunciationDialects.insert(dialectKey)
+        }
+
+        generatingPronunciationDialects.insert(dialectKey)
+        pronunciationEnhancementErrorMessage = nil
 
         Task {
             do {
-                let generatedIPA = try await llmService.generatePhoneticIPA(
+                let enhancement = try await llmService.generatePronunciationEnhancement(
                     word: item.word,
                     dialect: dialect,
                     pronunciationGuide: guide,
+                    existingIPA: existingIPA,
                     senses: senses
                 )
                 await MainActor.run {
-                    viewModel.saveGeneratedIPA(generatedIPA, dialect: dialect, for: item)
-                    generatingIPADialects.remove(dialectKey)
+                    if let ipa = enhancement.ipa {
+                        viewModel.saveGeneratedIPA(ipa, dialect: dialect, for: item)
+                    }
+                    viewModel.saveGeneratedStressSyllables(enhancement.stressSyllables, dialect: dialect, for: item)
+                    generatingPronunciationDialects.remove(dialectKey)
                 }
             } catch {
                 await MainActor.run {
-                    generatingIPADialects.remove(dialectKey)
-                    generatedIPAErrorMessage = error.localizedDescription
+                    generatingPronunciationDialects.remove(dialectKey)
+                    if !automatic {
+                        pronunciationEnhancementErrorMessage = error.localizedDescription
+                    }
                 }
             }
         }
+    }
+
+    private func preferredStressRefreshTarget(
+        from phonetics: [(dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)]
+    ) -> (dialect: String, guide: String, existingIPA: String?)? {
+        let preferredDialects = ["AmE", "BrE"]
+
+        for dialect in preferredDialects {
+            let dialectKey = item.dialectStorageKey(for: dialect)
+            guard item.generatedStressSyllablesByDialect[dialectKey] != nil else { continue }
+            if let entry = phonetics.first(where: { item.dialectStorageKey(for: $0.dialect) == dialectKey }) {
+                return (
+                    dialect: entry.dialect,
+                    guide: entry.notation,
+                    existingIPA: entry.usesIPADelimiters ? entry.notation : item.generatedIPANotationsByDialect[dialectKey]
+                )
+            }
+        }
+
+        if let dialectKey = item.generatedStressSyllablesByDialect.keys.first,
+           let entry = phonetics.first(where: { item.dialectStorageKey(for: $0.dialect) == dialectKey }) {
+            return (
+                dialect: entry.dialect,
+                guide: entry.notation,
+                existingIPA: entry.usesIPADelimiters ? entry.notation : item.generatedIPANotationsByDialect[dialectKey]
+            )
+        }
+
+        if let entry = phonetics.first {
+            let dialectKey = item.dialectStorageKey(for: entry.dialect)
+            return (
+                dialect: entry.dialect,
+                guide: entry.notation,
+                existingIPA: entry.usesIPADelimiters ? entry.notation : item.generatedIPANotationsByDialect[dialectKey]
+            )
+        }
+
+        return nil
     }
 
     private func recallPreviewHTML(for draft: RecallCardDraft, showBack: Bool) -> String {

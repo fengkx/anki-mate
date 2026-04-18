@@ -250,6 +250,21 @@ final class WordItem: ObservableObject, Identifiable {
         set { aiArtifacts.generatedIPANotationsByDialect = newValue }
     }
 
+    var generatedStressSyllablesByDialect: [String: String] {
+        get { aiArtifacts.generatedStressSyllablesByDialect }
+        set { aiArtifacts.generatedStressSyllablesByDialect = newValue }
+    }
+
+    func generatedStressSyllables(for dialect: String?) -> String? {
+        generatedStressSyllablesByDialect[dialectStorageKey(for: dialect)]
+    }
+
+    var preferredGeneratedStressSyllables: String? {
+        generatedStressSyllablesByDialect[dialectStorageKey(for: "AmE")]
+            ?? generatedStressSyllablesByDialect[dialectStorageKey(for: "BrE")]
+            ?? generatedStressSyllablesByDialect.values.first
+    }
+
     func dialectStorageKey(for dialect: String?) -> String {
         let trimmed = dialect?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed! : "default"

@@ -484,6 +484,70 @@ public final class LLMService: ObservableObject {
         return normalized
     }
 
+    public func generatePronunciationEnhancement(
+        word: String,
+        dialect: String? = nil,
+        pronunciationGuide: String? = nil,
+        existingIPA: String? = nil,
+        senses: [LLMSensePromptInput]
+    ) async throws -> LLMPronunciationEnhancement {
+        do {
+            return try await generatePronunciationEnhancement(
+                word: word,
+                dialect: dialect,
+                pronunciationGuide: pronunciationGuide,
+                existingIPA: existingIPA,
+                senses: senses,
+                strictSpellingRetry: false
+            )
+        } catch LLMServiceError.invalidStructuredOutput {
+            return try await generatePronunciationEnhancement(
+                word: word,
+                dialect: dialect,
+                pronunciationGuide: pronunciationGuide,
+                existingIPA: existingIPA,
+                senses: senses,
+                strictSpellingRetry: true
+            )
+        }
+    }
+
+    private func generatePronunciationEnhancement(
+        word: String,
+        dialect: String?,
+        pronunciationGuide: String?,
+        existingIPA: String?,
+        senses: [LLMSensePromptInput],
+        strictSpellingRetry: Bool
+    ) async throws -> LLMPronunciationEnhancement {
+        let prompt = LLMPrompt.pronunciationEnhancement(
+            word: word,
+            dialect: dialect,
+            pronunciationGuide: pronunciationGuide,
+            existingIPA: existingIPA,
+            senses: senses,
+            strictSpellingRetry: strictSpellingRetry
+        )
+
+        let response: GeneratedPronunciationEnhancementPayload = try await generateStructuredOutput(
+            type: GeneratedPronunciationEnhancementPayload.self,
+            prompt: prompt,
+            maxTokens: 120,
+            temperature: strictSpellingRetry ? 0.1 : 0.2
+        )
+
+        guard let normalizedStress = Self.normalizeStressSyllables(response.stressSyllables, preservingSpellingOf: word) else {
+            throw LLMServiceError.invalidStructuredOutput("Expected one valid stress syllables string")
+        }
+
+        let normalizedIPA = Self.normalizeGeneratedIPA(response.ipa)
+
+        return LLMPronunciationEnhancement(
+            ipa: normalizedIPA,
+            stressSyllables: normalizedStress
+        )
+    }
+
     public func generateRecallCardDraft(
         word: String,
         definition: String,
@@ -995,6 +1059,21 @@ private struct GeneratedIPAPayload: Decodable {
     let ipa: String
 }
 
+private struct GeneratedPronunciationEnhancementPayload: Decodable {
+    let ipa: String?
+    let stressSyllables: String
+}
+
+public struct LLMPronunciationEnhancement: Equatable, Sendable {
+    public let ipa: String?
+    public let stressSyllables: String
+
+    public init(ipa: String?, stressSyllables: String) {
+        self.ipa = ipa
+        self.stressSyllables = stressSyllables
+    }
+}
+
 struct ExampleSentenceEnvelope: Decodable {
     let examples: [LLMExampleSentence]
 
@@ -1419,6 +1498,67 @@ extension LLMService {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return Pronunciation(dialect: nil, ipa: trimmed, respelling: nil).ttsIPANotation
+    }
+
+    static func normalizeStressSyllables(_ rawValue: String?, preservingSpellingOf word: String? = nil) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        guard !trimmed.isEmpty else { return nil }
+
+        let rawCandidates = trimmed.components(
+            separatedBy: CharacterSet(charactersIn: ",/;\n")
+        )
+
+        for rawCandidate in rawCandidates {
+            let candidate = rawCandidate
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: .whitespaces)
+                .joined()
+            guard !candidate.isEmpty else { continue }
+            if let normalized = normalizeStressSyllableCandidate(candidate, preservingSpellingOf: word) {
+                return normalized
+            }
+        }
+
+        return nil
+    }
+
+    private static func normalizeStressSyllableCandidate(_ candidate: String, preservingSpellingOf word: String?) -> String? {
+        let syllables = candidate
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard !syllables.isEmpty else { return nil }
+        guard syllables.allSatisfy({
+            $0.range(of: #"^[A-Za-z]+$"#, options: .regularExpression) != nil
+        }) else {
+            return nil
+        }
+
+        if syllables.count == 1 {
+            return syllables[0].lowercased()
+        }
+
+        let stressedIndexes = syllables.enumerated().compactMap { index, syllable in
+            syllable.rangeOfCharacter(from: .uppercaseLetters) == nil ? nil : index
+        }
+        guard stressedIndexes.count == 1, let stressedIndex = stressedIndexes.first else {
+            return nil
+        }
+
+        let normalized = syllables.enumerated().map { index, syllable in
+            index == stressedIndex ? syllable.uppercased() : syllable.lowercased()
+        }
+        let normalizedJoined = normalized.joined(separator: "-")
+
+        if let word {
+            let compactWord = word.lowercased().filter(\.isLetter)
+            let compactCandidate = normalizedJoined.lowercased().filter(\.isLetter)
+            guard !compactWord.isEmpty, compactWord == compactCandidate else { return nil }
+        }
+
+        return normalizedJoined
     }
 
     static func recallPromptScaffold(

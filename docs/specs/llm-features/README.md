@@ -24,6 +24,7 @@
    - [12-prompt-quality-baseline-tests.md](./12-prompt-quality-baseline-tests.md)
 4. 然后根据具体能力进入对应专题
    - 例句： [20-example-suggestions.md](./20-example-suggestions.md)
+   - 发音增强： [21-pronunciation-memory-display.md](./21-pronunciation-memory-display.md)
    - Recall： [30-recall-card-draft.md](./30-recall-card-draft.md)
    - Learning Aids 总览： [40-pitfalls-and-usage-notes.md](./40-pitfalls-and-usage-notes.md)
    - `Pitfalls` 与 `Usage` 的精确定义： [41-pitfalls-vs-usage.md](./41-pitfalls-vs-usage.md)
@@ -44,6 +45,10 @@
   - AI 建议层、采纳工作流、详情页信息架构与线框图
 - [20-example-suggestions.md](./20-example-suggestions.md)
   - AI 例句建议能力与多义项覆盖策略
+- [21-pronunciation-memory-display.md](./21-pronunciation-memory-display.md)
+  - 发音增强与重音音节记忆显示；强调与现有音标行的轻量融合
+- [22-dictionary-selection-preview.md](./22-dictionary-selection-preview.md)
+  - collection 编辑流程中的带预览对比的词典选择器
 - [30-recall-card-draft.md](./30-recall-card-draft.md)
   - Recall Card 的产品定义、状态机、草稿与保存交互，以及 recall prompt 输入策略
 - [40-pitfalls-and-usage-notes.md](./40-pitfalls-and-usage-notes.md)
