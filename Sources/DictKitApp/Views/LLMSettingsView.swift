@@ -84,7 +84,7 @@ struct LLMSettingsView: View {
                             if llmService.loadedModelId == selectedModel.id {
                                 statusBadge(text: "Active", tint: .green)
                             } else if llmService.downloadManager.isDownloaded(selectedModel) {
-                                statusBadge(text: "Ready", tint: .blue)
+                                statusBadge(text: "Downloaded", tint: .blue)
                             } else {
                                 statusBadge(text: "Not downloaded", tint: .secondary)
                             }
@@ -260,13 +260,13 @@ struct LLMSettingsView: View {
     @ViewBuilder
     private func modelStatusBadge(_ model: ModelInfo) -> some View {
         if llmService.downloadManager.isDeleting(modelId: model.id) {
-            statusBadge(text: "Deleting", tint: .orange)
+            statusBadge(text: "Removing", tint: .orange)
         } else if llmService.loadedModelId == model.id {
             statusBadge(text: "Active", tint: .green)
         } else if llmService.selectedModelId == model.id, llmService.downloadManager.isDownloaded(model) {
             statusBadge(text: "Selected", tint: .blue)
         } else if llmService.downloadManager.isDownloaded(model) {
-            statusBadge(text: "Ready", tint: .secondary)
+            statusBadge(text: "Downloaded", tint: .secondary)
         } else if let progress = llmService.downloadManager.downloads[model.id] {
             switch progress.state {
             case .downloading:
@@ -338,6 +338,9 @@ struct LLMSettingsView: View {
             Text("Removing local model files...")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text("This model will disappear from the list when deletion finishes.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -346,7 +349,7 @@ struct LLMSettingsView: View {
         let dm = llmService.downloadManager
 
         if dm.isDeleting(modelId: model.id) {
-            Text("Deleting...")
+            Text("Removing...")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else if dm.isDownloaded(model) {
@@ -405,32 +408,38 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private func downloadedActions(_ model: ModelInfo) -> some View {
-        if llmService.selectedModelId == model.id {
-            Button("Selected") {}
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(true)
+        if llmService.downloadManager.isDeleting(modelId: model.id) {
+            Text("Removing...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } else {
-            Button("Select") {
-                llmService.selectedModelId = model.id
+            if llmService.selectedModelId == model.id {
+                Button("Selected") {}
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(true)
+            } else {
+                Button("Select") {
+                    llmService.selectedModelId = model.id
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
+
+            Button("Delete", role: .destructive) {
+                Task { @MainActor in
+                    if llmService.loadedModelId == model.id {
+                        await llmService.stopServer()
+                    }
+                    if llmService.selectedModelId == model.id {
+                        llmService.selectedModelId = ""
+                    }
+                    try? await llmService.downloadManager.deleteModel(model)
+                }
+            }
+            .buttonStyle(.bordered)
             .controlSize(.small)
         }
-
-        Button("Delete", role: .destructive) {
-            Task { @MainActor in
-                if llmService.loadedModelId == model.id {
-                    await llmService.stopServer()
-                }
-                if llmService.selectedModelId == model.id {
-                    llmService.selectedModelId = ""
-                }
-                try? await llmService.downloadManager.deleteModel(model)
-            }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
     }
 
     // MARK: - Server
@@ -529,7 +538,7 @@ struct LLMSettingsView: View {
 
     private var selectedModelSummary: String {
         if selectedModel != nil {
-            return "Used when AI generation starts."
+            return "Downloaded and ready to select or use."
         }
         return "No model selected yet."
     }

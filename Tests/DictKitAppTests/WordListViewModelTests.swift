@@ -249,6 +249,76 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiArtifacts.acceptedDefinitionNoteText, "A learner-friendly definition.")
     }
 
+    func testExampleArtifactsNormalizeStructuredFieldsAcrossPersistenceReload() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let rawArtifacts = try JSONDecoder().decode(
+            AIArtifacts.self,
+            from: Data(
+                """
+                {
+                  "schemaVersion": 1,
+                  "exampleSentences": {
+                    "suggested": [
+                      {
+                        "text": "Suggested example",
+                        "translation": "建议翻译"
+                      }
+                    ],
+                    "accepted": [
+                      {
+                        "text": "Accepted example — 新翻译",
+                        "translation": "stale translation",
+                        "note": "  keep note  "
+                      }
+                    ]
+                  }
+                }
+                """.utf8
+            )
+        )
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil,
+                aiArtifacts: rawArtifacts
+            ),
+            into: defaultCollection.id
+        )
+
+        let viewModel = try makeViewModel(store: store)
+        let item = try XCTUnwrap(viewModel.words.only)
+
+        XCTAssertEqual(item.aiSuggestedExampleArtifacts.only?.text, "Suggested example — 建议翻译")
+        XCTAssertEqual(item.aiSuggestedExampleArtifacts.only?.translation, "建议翻译")
+        XCTAssertEqual(item.aiAcceptedExampleArtifacts.only?.text, "Accepted example — 新翻译")
+        XCTAssertEqual(item.aiAcceptedExampleArtifacts.only?.translation, "新翻译")
+        XCTAssertEqual(item.aiAcceptedExampleArtifacts.only?.note, "keep note")
+
+        viewModel.saveAIAcceptedExampleArtifacts(
+            [
+                ExampleSentenceArtifact(
+                    text: "Edited example — 编辑后翻译",
+                    translation: "outdated",
+                    note: "  updated note  "
+                )
+            ],
+            for: item
+        )
+        viewModel.reloadFromStore()
+
+        let reloaded = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(reloaded.aiAcceptedExampleArtifacts.only?.text, "Edited example — 编辑后翻译")
+        XCTAssertEqual(reloaded.aiAcceptedExampleArtifacts.only?.translation, "编辑后翻译")
+        XCTAssertEqual(reloaded.aiAcceptedExampleArtifacts.only?.note, "updated note")
+    }
+
     func testUnifiedAIArtifactsPersistReservedTypesAcrossReload() throws {
         let store = try makeStore()
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
@@ -333,9 +403,103 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiAcceptedCollocations, ["arrive at a consensus"])
     }
 
+    func testStructuredExampleArtifactsPersistMetadataAcrossReload() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "Charge")
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: item.id,
+                displayWord: "Charge",
+                normalizedWord: WordListStore.normalizedWord(for: "Charge"),
+                lookupState: .loaded(Self.makeLookupResult(query: "charge", definition: "formal accusation", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        let suggested = ExampleSentenceArtifact(
+            text: "The lawyer filed a charge yesterday — 律师昨天提起了指控。",
+            translation: "律师昨天提起了指控。",
+            anchor: AIArtifactAnchorSnapshot(
+                headword: "charge",
+                lexicalEntryIndex: 0,
+                senseIndex: 0,
+                exampleIndex: nil,
+                excerpt: "formal accusation"
+            )
+        )
+        let accepted = ExampleSentenceArtifact(
+            text: "The store may charge extra for delivery — 商店可能会额外收取配送费。",
+            translation: "商店可能会额外收取配送费。",
+            anchor: AIArtifactAnchorSnapshot(
+                headword: "charge",
+                lexicalEntryIndex: 1,
+                senseIndex: 0,
+                exampleIndex: nil,
+                excerpt: "ask someone to pay a price"
+            )
+        )
+
+        viewModel.saveAISuggestedExampleArtifacts([suggested], for: reloadedItem)
+        viewModel.saveAIAcceptedExampleArtifacts([accepted], for: reloadedItem)
+        viewModel.reloadFromStore()
+
+        let reloaded = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(reloaded.aiSuggestedExampleArtifacts, [suggested])
+        XCTAssertEqual(reloaded.aiAcceptedExampleArtifacts, [accepted])
+        XCTAssertEqual(reloaded.aiSuggestedExampleSentences, [suggested.text])
+        XCTAssertEqual(reloaded.aiAcceptedExampleSentences, [accepted.text])
+    }
+
+    func testEditedAcceptedExampleArtifactPersistsWithoutStaleTranslation() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "Charge")
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: item.id,
+                displayWord: "Charge",
+                normalizedWord: WordListStore.normalizedWord(for: "Charge"),
+                lookupState: .loaded(Self.makeLookupResult(query: "charge", definition: "formal accusation", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        let original = ExampleSentenceArtifact(
+            text: "The lawyer filed a charge yesterday — 律师昨天提起了指控。",
+            translation: "律师昨天提起了指控。"
+        )
+        viewModel.saveAIAcceptedExampleArtifacts([original], for: reloadedItem)
+        viewModel.saveAIAcceptedExampleArtifacts([
+            ExampleSentenceArtifact(
+                text: "The lawyer filed a charge again",
+                translation: original.translation
+            )
+        ], for: reloadedItem)
+        viewModel.reloadFromStore()
+
+        let persisted = try XCTUnwrap(viewModel.words.only?.aiAcceptedExampleArtifacts.only)
+        XCTAssertEqual(persisted.text, "The lawyer filed a charge again")
+        XCTAssertNil(persisted.translation)
+    }
+
     func testAIArtifactsRoundTripUnifiedSchemaAndLegacyCompatibility() throws {
         let artifacts = AIArtifacts(
-            schemaVersion: 1,
+            schemaVersion: 2,
             exampleSentences: AIArtifactSlot(
                 suggested: [
                     ExampleSentenceArtifact(text: "Suggested example.", note: "keep it short")
@@ -375,7 +539,8 @@ final class WordListViewModelTests: XCTestCase {
             ),
             collocations: AIArtifactSlot(
                 accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common academic collocation")]
-            )
+            ),
+            generatedIPANotationsByDialect: ["AmE": "kənˈsɛnsəs"]
         )
 
         let encoded = try JSONEncoder().encode(artifacts)
@@ -388,6 +553,7 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(decoded.acceptedPitfallTexts, ["Do not confuse it with consent."])
         XCTAssertEqual(decoded.acceptedMnemonicTexts, ["Consensus sounds like everyone says yes together."])
         XCTAssertEqual(decoded.acceptedCollocationPhrases, ["reach a consensus"])
+        XCTAssertEqual(decoded.generatedIPANotationsByDialect["AmE"], "kənˈsɛnsəs")
         XCTAssertFalse(decoded.isEmpty)
     }
 
@@ -444,9 +610,26 @@ final class WordListViewModelTests: XCTestCase {
             XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
             XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
             let json = String(cString: sqlite3_column_text(stmt, 0))
-            XCTAssertTrue(json.contains("\"schemaVersion\":1"))
+            XCTAssertTrue(json.contains("\"schemaVersion\":2"))
             XCTAssertTrue(json.contains("Accepted example."))
         }
+    }
+
+    func testGeneratedIPAPersistsAcrossReload() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "collocation")
+        _ = try store.upsertWord(PersistedWordRecord(item: item), into: defaultCollection.id)
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        viewModel.saveGeneratedIPA("ˌkɑləˈkeɪʃən", dialect: "AmE", for: reloadedItem)
+        viewModel.reloadFromStore()
+
+        let persisted = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(persisted.generatedIPANotationsByDialect["AmE"], "ˌkɑləˈkeɪʃən")
+        XCTAssertEqual(persisted.phonetic, "/ˌkɑləˈkeɪʃən/")
     }
 
     func testAddWordUsesPublicResultWhenExamplesExist() async throws {

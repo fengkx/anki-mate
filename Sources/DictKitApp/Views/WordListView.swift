@@ -12,6 +12,7 @@ struct WordListView: View {
                         isSelected: viewModel.selectedWordID == item.id
                     )
                     .contentShape(Rectangle())
+                    .hoverCursor()
                     .onTapGesture {
                         viewModel.selectedWordID = item.id
                     }
@@ -59,7 +60,7 @@ struct WordRowView: View {
                 }
 
                 if !item.phonetic.isEmpty {
-                    Text("/\(item.phonetic)/")
+                    Text(item.phonetic)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

@@ -75,6 +75,7 @@ struct CollectionsSidebarView: View {
                 .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
+            .hoverCursor()
             .help("Sync settings")
             .sheet(isPresented: $showSyncSettings) {
                 SyncSettingsView(onSyncNow: onSyncNow, onIntervalChanged: onIntervalChanged)
@@ -89,6 +90,7 @@ struct CollectionsSidebarView: View {
                     .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
+            .hoverCursor()
             .help("AI model settings")
             .sheet(isPresented: $showLLMSettings) {
                 LLMSettingsView()

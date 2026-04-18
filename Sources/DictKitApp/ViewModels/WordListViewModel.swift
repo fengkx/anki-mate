@@ -407,75 +407,95 @@ final class WordListViewModel: ObservableObject {
     }
 
     func saveAISuggestedExampleSentences(_ sentences: [String], for item: WordItem) {
-        item.aiSuggestedExampleSentences = sentences
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedExampleSentences = sentences
+        }
+    }
+
+    func saveAISuggestedExampleArtifacts(_ artifacts: [ExampleSentenceArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedExampleArtifacts = artifacts
+        }
     }
 
     func saveAIAcceptedExampleSentences(_ sentences: [String], for item: WordItem) {
-        item.aiAcceptedExampleSentences = sentences
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedExampleSentences = sentences
+        }
+    }
+
+    func saveAIAcceptedExampleArtifacts(_ artifacts: [ExampleSentenceArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedExampleArtifacts = artifacts
+        }
     }
 
     func saveAISuggestedDefinitionNote(_ note: String?, for item: WordItem) {
-        item.aiSuggestedDefinitionNote = note
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedDefinitionNote = note
+        }
     }
 
     func saveAIAcceptedDefinitionNote(_ note: String?, for item: WordItem) {
-        item.aiAcceptedDefinitionNote = note
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedDefinitionNote = note
+        }
     }
 
     func saveAISuggestedRecallCardDrafts(_ drafts: [RecallCardDraft], for item: WordItem) {
-        item.aiSuggestedRecallCardDrafts = drafts
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedRecallCardDrafts = drafts
+        }
     }
 
     func saveAIAcceptedRecallCardDrafts(_ drafts: [RecallCardDraft], for item: WordItem) {
-        item.aiAcceptedRecallCardDrafts = drafts
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedRecallCardDrafts = drafts
+        }
     }
 
     func saveAISuggestedPitfalls(_ values: [String], for item: WordItem) {
-        item.aiSuggestedPitfalls = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedPitfalls = values
+        }
     }
 
     func saveAIAcceptedPitfalls(_ values: [String], for item: WordItem) {
-        item.aiAcceptedPitfalls = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedPitfalls = values
+        }
     }
 
     func saveAISuggestedMnemonics(_ values: [String], for item: WordItem) {
-        item.aiSuggestedMnemonics = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedMnemonics = values
+        }
     }
 
     func saveAIAcceptedMnemonics(_ values: [String], for item: WordItem) {
-        item.aiAcceptedMnemonics = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedMnemonics = values
+        }
     }
 
     func saveAISuggestedCollocations(_ values: [String], for item: WordItem) {
-        item.aiSuggestedCollocations = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedCollocations = values
+        }
     }
 
     func saveAIAcceptedCollocations(_ values: [String], for item: WordItem) {
-        item.aiAcceptedCollocations = values
-        touch(item)
-        persist(item)
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedCollocations = values
+        }
+    }
+
+    func saveGeneratedIPA(_ value: String, dialect: String?, for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            var saved = item.generatedIPANotationsByDialect
+            saved[item.dialectStorageKey(for: dialect)] = value
+            item.generatedIPANotationsByDialect = saved
+        }
     }
 
     func waitForIdle() async {
@@ -725,6 +745,13 @@ final class WordListViewModel: ObservableObject {
 
     private func touch(_ item: WordItem) {
         item.updatedAt = Date()
+    }
+
+    private func persistAIArtifactUpdate(for item: WordItem, update: () -> Void) {
+        update()
+        item.aiArtifacts = item.aiArtifacts.normalized()
+        touch(item)
+        persist(item)
     }
 
     private func persist(_ item: WordItem) {

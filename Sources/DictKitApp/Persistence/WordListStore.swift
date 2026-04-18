@@ -204,7 +204,7 @@ struct PersistedWordRecord: Equatable {
             legacyAcceptedMnemonics: aiAcceptedMnemonics,
             legacySuggestedCollocations: aiSuggestedCollocations,
             legacyAcceptedCollocations: aiAcceptedCollocations
-        )
+        ).normalized()
     }
 
     var aiSuggestedExampleSentences: [String] { aiArtifacts.suggestedExampleSentences }

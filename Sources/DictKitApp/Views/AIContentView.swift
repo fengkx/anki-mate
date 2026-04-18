@@ -4,40 +4,298 @@ import DictKitAnkiExport
 import AnkiMateLLM
 import os
 
+struct AIInlineTextDraftState: Equatable {
+    var draft: String = ""
+    var lastPersistedValue: String = ""
+
+    var isDirty: Bool {
+        draft != lastPersistedValue
+    }
+
+    mutating func updateDraft(_ value: String) {
+        draft = value
+    }
+
+    mutating func mergePersistedValue(_ value: String) {
+        let wasDirty = isDirty
+        lastPersistedValue = value
+        if !wasDirty || draft == value {
+            draft = value
+        }
+    }
+}
+
+struct AIDraftListState<Persisted: Equatable, Draft: Equatable>: Equatable {
+    var rowOrder: [UUID] = []
+    var drafts: [UUID: Draft] = [:]
+    var persistedByRowID: [UUID: Persisted] = [:]
+}
+
+struct AIDraftListSyncResult<Persisted: Equatable, Draft: Equatable>: Equatable {
+    let state: AIDraftListState<Persisted, Draft>
+    let removedRowIDs: [UUID]
+}
+
+enum AIDraftListSynchronizer {
+    static func sync<Persisted: Equatable, Draft: Equatable>(
+        persistedValues: [Persisted],
+        currentState: AIDraftListState<Persisted, Draft>,
+        draftValue: (Persisted) -> Draft,
+        matchesDraft: ((Persisted, Draft) -> Bool)? = nil
+    ) -> AIDraftListSyncResult<Persisted, Draft> {
+        var remainingRowIDs = currentState.rowOrder
+        var nextRowOrder: [UUID] = []
+        var nextDrafts: [UUID: Draft] = [:]
+        var nextPersistedByRowID: [UUID: Persisted] = [:]
+
+        for value in persistedValues {
+            let matchedRowID = matchRowID(
+                for: value,
+                remainingRowIDs: &remainingRowIDs,
+                currentState: currentState,
+                draftValue: draftValue,
+                matchesDraft: matchesDraft
+            ) ?? UUID()
+
+            let previousPersisted = currentState.persistedByRowID[matchedRowID]
+            let previousDraft = currentState.drafts[matchedRowID]
+            let nextDraft: Draft
+
+            if let previousDraft, let previousPersisted {
+                let previousPersistedDraft = draftValue(previousPersisted)
+                let wasDirty = previousDraft != previousPersistedDraft
+                let nextPersistedDraft = draftValue(value)
+                nextDraft = wasDirty && previousDraft != nextPersistedDraft
+                    ? previousDraft
+                    : nextPersistedDraft
+            } else {
+                nextDraft = draftValue(value)
+            }
+
+            nextRowOrder.append(matchedRowID)
+            nextDrafts[matchedRowID] = nextDraft
+            nextPersistedByRowID[matchedRowID] = value
+        }
+
+        return AIDraftListSyncResult(
+            state: AIDraftListState(
+                rowOrder: nextRowOrder,
+                drafts: nextDrafts,
+                persistedByRowID: nextPersistedByRowID
+            ),
+            removedRowIDs: remainingRowIDs
+        )
+    }
+
+    private static func matchRowID<Persisted: Equatable, Draft: Equatable>(
+        for value: Persisted,
+        remainingRowIDs: inout [UUID],
+        currentState: AIDraftListState<Persisted, Draft>,
+        draftValue: (Persisted) -> Draft,
+        matchesDraft: ((Persisted, Draft) -> Bool)?
+    ) -> UUID? {
+        if let rowID = remainingRowIDs.first(where: { currentState.persistedByRowID[$0] == value }) {
+            remainingRowIDs.removeAll { $0 == rowID }
+            return rowID
+        }
+
+        if let rowID = remainingRowIDs.first(where: {
+            guard let draft = currentState.drafts[$0] else { return false }
+            if let matchesDraft {
+                return matchesDraft(value, draft)
+            }
+            return draftValue(value) == draft
+        }) {
+            remainingRowIDs.removeAll { $0 == rowID }
+            return rowID
+        }
+
+        return nil
+    }
+}
+
+enum AIExampleArtifactEditor {
+    static func artifact(byApplyingEditedText text: String, to artifact: ExampleSentenceArtifact) -> ExampleSentenceArtifact {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ExampleSentenceArtifact(
+            text: trimmedText,
+            translation: inferredTranslation(from: trimmedText),
+            note: artifact.note,
+            anchor: artifact.anchor
+        )
+    }
+
+    static func inferredTranslation(from text: String) -> String? {
+        guard let separatorRange = text.range(of: "—", options: .backwards) else { return nil }
+
+        let sourceText = text[..<separatorRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let translationText = text[separatorRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceText.isEmpty, !translationText.isEmpty else { return nil }
+        return translationText
+    }
+}
+
+private struct ExampleSenseContext: Equatable {
+    let partOfSpeech: String
+    let definition: String
+    let semanticHint: String?
+    let anchor: AIArtifactAnchorSnapshot
+
+    var promptInput: LLMSensePromptInput {
+        LLMSensePromptInput(
+            partOfSpeech: partOfSpeech,
+            definition: definition,
+            semanticHint: semanticHint
+        )
+    }
+
+    var key: String {
+        [
+            anchor.headword ?? "",
+            String(anchor.lexicalEntryIndex ?? -1),
+            String(anchor.senseIndex ?? -1)
+        ].joined(separator: "|")
+    }
+}
+
+private struct SectionHeaderAction {
+    let title: String
+    let systemImage: String
+    let isLoading: Bool
+    let isDisabled: Bool
+    let handler: () -> Void
+}
+
 struct AIContentView: View {
     @ObservedObject var item: WordItem
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var viewModel: WordListViewModel
 
     @State private var examplesErrorMessage: String?
+    @State private var learningAidsErrorMessage: String?
     @State private var usageErrorMessage: String?
-    @State private var editingSuggestedDefinition = ""
-    @State private var editingAcceptedDefinition = ""
+    @State private var recallErrorMessage: String?
+    @State private var suggestedDefinitionState = AIInlineTextDraftState()
+    @State private var acceptedDefinitionState = AIInlineTextDraftState()
     @State private var streamingExamplesText = ""
     @State private var streamingUsageText = ""
-    @State private var suggestedExampleDrafts: [Int: String] = [:]
-    @State private var acceptedExampleDrafts: [Int: String] = [:]
-    @State private var suggestedRecallDrafts: [Int: RecallCardDraft] = [:]
-    @State private var acceptedRecallDrafts: [Int: RecallCardDraft] = [:]
-    @State private var suggestedPitfallDrafts: [Int: String] = [:]
-    @State private var acceptedPitfallDrafts: [Int: String] = [:]
-    @State private var suggestedMnemonicDrafts: [Int: String] = [:]
-    @State private var acceptedMnemonicDrafts: [Int: String] = [:]
-    @State private var suggestedCollocationDrafts: [Int: String] = [:]
-    @State private var acceptedCollocationDrafts: [Int: String] = [:]
+    @State private var suggestedExampleState = AIDraftListState<ExampleSentenceArtifact, String>()
+    @State private var acceptedExampleState = AIDraftListState<ExampleSentenceArtifact, String>()
+    @State private var suggestedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
+    @State private var acceptedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
+    @State private var suggestedPitfallState = AIDraftListState<String, String>()
+    @State private var acceptedPitfallState = AIDraftListState<String, String>()
+    @State private var suggestedMnemonicState = AIDraftListState<String, String>()
+    @State private var acceptedMnemonicState = AIDraftListState<String, String>()
+    @State private var suggestedCollocationState = AIDraftListState<String, String>()
+    @State private var acceptedCollocationState = AIDraftListState<String, String>()
     @State private var examplesTask: Task<Void, Never>?
+    @State private var learningAidsTask: Task<Void, Never>?
     @State private var usageTask: Task<Void, Never>?
+    @State private var recallTask: Task<Void, Never>?
     @State private var acceptedDefinitionAutosaveTask: Task<Void, Never>?
-    @State private var acceptedExampleAutosaveTasks: [Int: Task<Void, Never>] = [:]
-    @State private var acceptedRecallAutosaveTasks: [Int: Task<Void, Never>] = [:]
-    @State private var acceptedPitfallAutosaveTasks: [Int: Task<Void, Never>] = [:]
-    @State private var acceptedMnemonicAutosaveTasks: [Int: Task<Void, Never>] = [:]
-    @State private var acceptedCollocationAutosaveTasks: [Int: Task<Void, Never>] = [:]
+    @State private var acceptedExampleAutosaveTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var acceptedRecallAutosaveTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var acceptedPitfallAutosaveTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var acceptedMnemonicAutosaveTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var acceptedCollocationAutosaveTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var isExamplesSectionExpanded = true
+    @State private var isLearningAidsSectionExpanded = false
+    @State private var isUsageSectionExpanded = false
+    @State private var isRecallSectionExpanded = false
 
     private let logger = Logger(subsystem: "AnkiMateApp", category: "AIContentView")
 
     private var isGeneratingExamples: Bool { examplesTask != nil }
+    private var isGeneratingLearningAids: Bool { learningAidsTask != nil }
     private var isGeneratingUsage: Bool { usageTask != nil }
+    private var isGeneratingRecall: Bool { recallTask != nil }
+    private var suggestedExampleArtifacts: [ExampleSentenceArtifact] { item.aiSuggestedExampleArtifacts }
+    private var acceptedExampleArtifacts: [ExampleSentenceArtifact] { item.aiAcceptedExampleArtifacts }
+    private var currentExampleSenseContexts: [ExampleSenseContext] {
+        guard let result = item.lookupResult else { return [] }
+        return exampleSenseContexts(from: result)
+    }
+    private var hasAcceptedLearningAids: Bool {
+        !item.aiAcceptedPitfalls.isEmpty ||
+            !item.aiAcceptedMnemonics.isEmpty ||
+            !item.aiAcceptedCollocations.isEmpty
+    }
+    private var primarySuggestedRecallDraftRowID: UUID? {
+        suggestedRecallState.rowOrder.first
+    }
+    private var primaryAcceptedRecallDraftRowID: UUID? {
+        acceptedRecallState.rowOrder.first
+    }
+    private var hasCompatibilityRecallDrafts: Bool {
+        suggestedRecallState.rowOrder.count > 1 || acceptedRecallState.rowOrder.count > 1
+    }
+    private var hasSavedUsageNote: Bool {
+        !(item.aiAcceptedDefinitionNote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+    private var hasSuggestedUsageNote: Bool {
+        !(item.aiSuggestedDefinitionNote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+    private var examplesSectionSummary: String {
+        sectionSummary(
+            savedCount: acceptedExampleState.rowOrder.count,
+            suggestedCount: suggestedExampleState.rowOrder.count,
+            isGenerating: isGeneratingExamples
+        )
+    }
+    private var learningAidsSectionSummary: String {
+        if isGeneratingLearningAids {
+            return "generating"
+        }
+        let savedParts = [
+            countSummary(item.aiAcceptedPitfalls.count, singular: "pitfall"),
+            countSummary(item.aiAcceptedMnemonics.count, singular: "mnemonic"),
+            countSummary(item.aiAcceptedCollocations.count, singular: "collocation")
+        ].compactMap { $0 }
+
+        if !savedParts.isEmpty {
+            return savedParts.joined(separator: ", ")
+        }
+
+        let suggestionCount = suggestedPitfallState.rowOrder.count + suggestedMnemonicState.rowOrder.count + suggestedCollocationState.rowOrder.count
+        return suggestionCount > 0 ? "\(suggestionCount) suggestions" : "empty"
+    }
+    private var usageSectionSummary: String {
+        if hasSavedUsageNote && hasSuggestedUsageNote {
+            return "saved + new draft"
+        }
+        if hasSavedUsageNote {
+            return "saved"
+        }
+        if hasSuggestedUsageNote {
+            return "draft ready"
+        }
+        if isGeneratingUsage {
+            return "generating"
+        }
+        return "empty"
+    }
+    private var recallSectionSummary: String {
+        let hasSaved = primaryAcceptedRecallDraftRowID != nil
+        let hasDraft = primarySuggestedRecallDraftRowID != nil
+
+        if hasSaved && hasDraft {
+            return "saved + new draft"
+        }
+        if hasSaved {
+            return "saved"
+        }
+        if hasDraft {
+            return "draft ready"
+        }
+        if hasCompatibilityRecallDrafts {
+            return "legacy drafts"
+        }
+        if isGeneratingRecall {
+            return "generating"
+        }
+        return "empty"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -47,23 +305,21 @@ struct AIContentView: View {
                 Spacer()
                 HStack(spacing: 8) {
                     if isGeneratingExamples { generationBadge("Examples") }
+                    if isGeneratingLearningAids { generationBadge("Learning Aids") }
                     if isGeneratingUsage { generationBadge("Usage") }
+                    if isGeneratingRecall { generationBadge("Recall") }
                 }
             }
 
             if !llmService.hasModel {
                 noModelView
             } else {
-                actionButtons
-
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         sectionCard { sentencesSection }
+                        sectionCard { learningAidsSection }
                         sectionCard { definitionNoteSection }
                         sectionCard { recallCardSection }
-                        sectionCard { pitfallsSection }
-                        sectionCard { mnemonicsSection }
-                        sectionCard { collocationsSection }
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -73,82 +329,102 @@ struct AIContentView: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(.quaternary.opacity(0.18)))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.05), lineWidth: 1))
         .onAppear {
-            syncExampleDrafts()
-            syncRecallDrafts()
-            syncPitfallDrafts()
-            syncMnemonicDrafts()
-            syncCollocationDrafts()
-            editingSuggestedDefinition = item.aiSuggestedDefinitionNote ?? ""
-            editingAcceptedDefinition = item.aiAcceptedDefinitionNote ?? ""
-            syncGeneratingState()
+            reloadPanelStateForCurrentItem(resetTransientFeedback: false)
         }
-        .onChange(of: item.aiSuggestedExampleSentences) { _ in syncExampleDrafts() }
-        .onChange(of: item.aiAcceptedExampleSentences) { _ in syncExampleDrafts() }
-        .onChange(of: item.aiSuggestedDefinitionNote) { newValue in editingSuggestedDefinition = newValue ?? "" }
-        .onChange(of: item.aiAcceptedDefinitionNote) { newValue in editingAcceptedDefinition = newValue ?? "" }
+        .onChange(of: item.aiSuggestedExampleArtifacts) { _ in syncExampleDrafts() }
+        .onChange(of: item.aiAcceptedExampleArtifacts) { _ in syncExampleDrafts() }
+        .onChange(of: item.aiSuggestedDefinitionNote) { newValue in
+            suggestedDefinitionState.mergePersistedValue(newValue ?? "")
+        }
+        .onChange(of: item.aiAcceptedDefinitionNote) { newValue in
+            acceptedDefinitionState.mergePersistedValue(newValue ?? "")
+            if newValue != nil { isUsageSectionExpanded = true }
+        }
         .onChange(of: item.aiSuggestedRecallCardDrafts) { _ in syncRecallDrafts() }
-        .onChange(of: item.aiAcceptedRecallCardDrafts) { _ in syncRecallDrafts() }
+        .onChange(of: item.aiAcceptedRecallCardDrafts) { _ in
+            syncRecallDrafts()
+            if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
+        }
         .onChange(of: item.aiSuggestedPitfalls) { _ in syncPitfallDrafts() }
-        .onChange(of: item.aiAcceptedPitfalls) { _ in syncPitfallDrafts() }
+        .onChange(of: item.aiAcceptedPitfalls) { _ in
+            syncPitfallDrafts()
+            if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
+        }
         .onChange(of: item.aiSuggestedMnemonics) { _ in syncMnemonicDrafts() }
-        .onChange(of: item.aiAcceptedMnemonics) { _ in syncMnemonicDrafts() }
+        .onChange(of: item.aiAcceptedMnemonics) { _ in
+            syncMnemonicDrafts()
+            if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
+        }
         .onChange(of: item.aiSuggestedCollocations) { _ in syncCollocationDrafts() }
-        .onChange(of: item.aiAcceptedCollocations) { _ in syncCollocationDrafts() }
+        .onChange(of: item.aiAcceptedCollocations) { _ in
+            syncCollocationDrafts()
+            if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
+        }
+        .onChange(of: item.id) { _ in
+            reloadPanelStateForCurrentItem(resetTransientFeedback: true)
+        }
         .onDisappear {
-            examplesTask?.cancel()
-            usageTask?.cancel()
-            acceptedDefinitionAutosaveTask?.cancel()
-            acceptedExampleAutosaveTasks.values.forEach { $0.cancel() }
-            acceptedRecallAutosaveTasks.values.forEach { $0.cancel() }
-            acceptedPitfallAutosaveTasks.values.forEach { $0.cancel() }
-            acceptedMnemonicAutosaveTasks.values.forEach { $0.cancel() }
-            acceptedCollocationAutosaveTasks.values.forEach { $0.cancel() }
-            examplesTask = nil
-            usageTask = nil
-            acceptedDefinitionAutosaveTask = nil
-            acceptedExampleAutosaveTasks = [:]
-            acceptedRecallAutosaveTasks = [:]
-            acceptedPitfallAutosaveTasks = [:]
-            acceptedMnemonicAutosaveTasks = [:]
-            acceptedCollocationAutosaveTasks = [:]
+            cancelTransientTasks()
             syncGeneratingState()
         }
+    }
+
+    private func reloadPanelStateForCurrentItem(resetTransientFeedback: Bool) {
+        cancelTransientTasks()
+        if resetTransientFeedback {
+            examplesErrorMessage = nil
+            learningAidsErrorMessage = nil
+            usageErrorMessage = nil
+            recallErrorMessage = nil
+            streamingExamplesText = ""
+            streamingUsageText = ""
+        }
+
+        syncExampleDrafts()
+        syncRecallDrafts()
+        syncPitfallDrafts()
+        syncMnemonicDrafts()
+        syncCollocationDrafts()
+        suggestedDefinitionState.mergePersistedValue(item.aiSuggestedDefinitionNote ?? "")
+        acceptedDefinitionState.mergePersistedValue(item.aiAcceptedDefinitionNote ?? "")
+        syncDisclosureState()
+        syncGeneratingState()
+    }
+
+    private func cancelTransientTasks() {
+        examplesTask?.cancel()
+        learningAidsTask?.cancel()
+        usageTask?.cancel()
+        recallTask?.cancel()
+        acceptedDefinitionAutosaveTask?.cancel()
+        acceptedExampleAutosaveTasks.values.forEach { $0.cancel() }
+        acceptedRecallAutosaveTasks.values.forEach { $0.cancel() }
+        acceptedPitfallAutosaveTasks.values.forEach { $0.cancel() }
+        acceptedMnemonicAutosaveTasks.values.forEach { $0.cancel() }
+        acceptedCollocationAutosaveTasks.values.forEach { $0.cancel() }
+        examplesTask = nil
+        learningAidsTask = nil
+        usageTask = nil
+        recallTask = nil
+        acceptedDefinitionAutosaveTask = nil
+        acceptedExampleAutosaveTasks = [:]
+        acceptedRecallAutosaveTasks = [:]
+        acceptedPitfallAutosaveTasks = [:]
+        acceptedMnemonicAutosaveTasks = [:]
+        acceptedCollocationAutosaveTasks = [:]
+    }
+
+    private func syncDisclosureState() {
+        isExamplesSectionExpanded = true
+        isLearningAidsSectionExpanded = hasAcceptedLearningAids
+        isUsageSectionExpanded = hasSavedUsageNote
+        isRecallSectionExpanded = !item.aiAcceptedRecallCardDrafts.isEmpty || !item.aiSuggestedRecallCardDrafts.isEmpty
     }
 
     private var noModelView: some View {
         Text("Download and select a model in AI settings to enable AI features.")
             .font(.caption)
             .foregroundStyle(.secondary)
-    }
-
-    private var actionButtons: some View {
-        HStack(spacing: 8) {
-            Button {
-                generateSentences()
-            } label: {
-                actionButtonLabel(
-                    title: isGeneratingExamples ? "Generating Examples..." : "Regenerate Examples",
-                    systemImage: "text.quote",
-                    isLoading: isGeneratingExamples
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(isGeneratingExamples || !llmService.hasModel)
-
-            Button {
-                optimizeDefinition()
-            } label: {
-                actionButtonLabel(
-                    title: isGeneratingUsage ? "Generating Usage..." : "Regenerate Usage Hint",
-                    systemImage: "text.magnifyingglass",
-                    isLoading: isGeneratingUsage
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(isGeneratingUsage || !llmService.hasModel || firstDefinition == nil)
-        }
     }
 
     private func actionButtonLabel(title: String, systemImage: String, isLoading: Bool) -> some View {
@@ -164,162 +440,303 @@ struct AIContentView: View {
     }
 
     private var sentencesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "Examples")
-
-            if !item.aiSuggestedExampleSentences.isEmpty {
-                sectionSubheader("Suggested")
-                ForEach(Array(item.aiSuggestedExampleSentences.indices), id: \.self) { index in
-                    EditableAITextCard(
-                        text: bindingForSuggestedExample(at: index),
-                        primaryButtonTitle: "Accept",
-                        secondaryButtonTitle: "Reject",
-                        onPrimary: { acceptSuggestedExample(at: index) },
-                        onSecondary: { rejectSuggestedExample(at: index) }
-                    )
+        DisclosureGroup(isExpanded: $isExamplesSectionExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if !suggestedExampleState.rowOrder.isEmpty {
+                    sectionSubheader("Suggestions")
+                    ForEach(suggestedExampleState.rowOrder, id: \.self) { rowID in
+                        if let artifact = suggestedExampleState.persistedByRowID[rowID] {
+                            EditableAITextCard(
+                                text: bindingForSuggestedExample(rowID: rowID),
+                                primaryButtonTitle: "Save",
+                                secondaryButtonTitle: "Dismiss",
+                                tagText: exampleTagText(
+                                    for: artifact,
+                                    among: suggestedExampleArtifacts
+                                ),
+                                editorHeight: 68,
+                                onPrimary: { acceptSuggestedExample(rowID: rowID) },
+                                onSecondary: { rejectSuggestedExample(rowID: rowID) }
+                            )
+                        }
+                    }
+                } else if isGeneratingExamples && !streamingExamplesText.isEmpty {
+                    sectionSubheader("Streaming")
+                    streamingCard(streamingExamplesText)
+                } else if isGeneratingExamples {
+                    generatingState("Generating suggestions...")
+                } else {
+                    emptyState("No example suggestions yet.")
                 }
-            } else if isGeneratingExamples && !streamingExamplesText.isEmpty {
-                sectionSubheader("Streaming")
-                streamingCard(streamingExamplesText)
-            } else {
-                emptyState("No suggestions yet.")
-            }
 
-            if let examplesErrorMessage { errorLabel(examplesErrorMessage) }
+                if let examplesErrorMessage { errorLabel(examplesErrorMessage) }
 
-            if !item.aiAcceptedExampleSentences.isEmpty {
-                sectionSubheader("Accepted").padding(.top, 2)
-                ForEach(Array(item.aiAcceptedExampleSentences.indices), id: \.self) { index in
-                    EditableAITextCard(
-                        text: bindingForAcceptedExample(at: index),
-                        secondaryButtonTitle: "Delete",
-                        tagText: "AI-generated",
-                        onTextChange: { scheduleAcceptedExampleAutosave(at: index, value: $0) },
-                        onSecondary: { deleteAcceptedExample(at: index) }
-                    )
+                if !acceptedExampleState.rowOrder.isEmpty {
+                    sectionSubheader("Saved").padding(.top, 2)
+                    ForEach(acceptedExampleState.rowOrder, id: \.self) { rowID in
+                        if let artifact = acceptedExampleState.persistedByRowID[rowID] {
+                            EditableAITextCard(
+                                text: bindingForAcceptedExample(rowID: rowID),
+                                secondaryButtonTitle: "Delete",
+                                tagText: exampleTagText(
+                                    for: artifact,
+                                    among: acceptedExampleArtifacts
+                                ),
+                                editorHeight: 46,
+                                onTextChange: { scheduleAcceptedExampleAutosave(rowID: rowID, value: $0) },
+                                onSecondary: { deleteAcceptedExample(rowID: rowID) }
+                            )
+                        }
+                    }
                 }
             }
+        } label: {
+            topLevelSectionLabel(
+                title: "Examples",
+                subtitle: "Natural contexts for this word.",
+                summary: examplesSectionSummary,
+                action: .init(
+                    title: isGeneratingExamples ? "Generating..." : "Regenerate",
+                    systemImage: "text.quote",
+                    isLoading: isGeneratingExamples,
+                    isDisabled: isGeneratingExamples,
+                    handler: generateSentences
+                )
+            )
         }
     }
 
     private var definitionNoteSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "Usage")
+        DisclosureGroup(isExpanded: $isUsageSectionExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionDescription("Keep this about usage, not spelling traps.")
 
-            if item.aiSuggestedDefinitionNote != nil {
-                sectionSubheader("Suggested")
-                EditableAITextCard(
-                    text: $editingSuggestedDefinition,
-                    primaryButtonTitle: "Accept",
-                    secondaryButtonTitle: "Reject",
-                    onPrimary: acceptSuggestedDefinition,
-                    onSecondary: rejectSuggestedDefinition
-                )
-            } else if isGeneratingUsage && !streamingUsageText.isEmpty {
-                sectionSubheader("Streaming")
-                streamingCard(streamingUsageText)
-            } else {
-                emptyState("No suggestion yet.")
+                if hasSuggestedUsageNote {
+                    sectionSubheader("Suggestion")
+                    EditableAITextCard(
+                        text: bindingForSuggestedDefinition(),
+                        primaryButtonTitle: "Save",
+                        secondaryButtonTitle: "Dismiss",
+                        onPrimary: acceptSuggestedDefinition,
+                        onSecondary: rejectSuggestedDefinition
+                    )
+                } else if isGeneratingUsage && !streamingUsageText.isEmpty {
+                    sectionSubheader("Streaming")
+                    streamingCard(streamingUsageText)
+                } else {
+                    emptyState("No usage cue yet.")
+                }
+
+                if let usageErrorMessage { errorLabel(usageErrorMessage) }
+
+                if hasSavedUsageNote {
+                    sectionSubheader("Saved").padding(.top, 2)
+                    EditableAITextCard(
+                        text: bindingForAcceptedDefinition(),
+                        secondaryButtonTitle: "Delete",
+                        tagText: "Usage cue",
+                        onTextChange: scheduleAcceptedDefinitionAutosave,
+                        onSecondary: deleteAcceptedDefinition
+                    )
+                }
             }
-
-            if let usageErrorMessage { errorLabel(usageErrorMessage) }
-
-            if item.aiAcceptedDefinitionNote != nil {
-                sectionSubheader("Accepted").padding(.top, 2)
-                EditableAITextCard(
-                    text: $editingAcceptedDefinition,
-                    secondaryButtonTitle: "Delete",
-                    tagText: "AI-generated",
-                    onTextChange: scheduleAcceptedDefinitionAutosave,
-                    onSecondary: deleteAcceptedDefinition
+        } label: {
+            topLevelSectionLabel(
+                title: "Usage",
+                subtitle: "A short learner-facing usage cue.",
+                summary: usageSectionSummary,
+                action: .init(
+                    title: isGeneratingUsage ? "Generating..." : "Regenerate",
+                    systemImage: "text.magnifyingglass",
+                    isLoading: isGeneratingUsage,
+                    isDisabled: isGeneratingUsage || firstDefinition == nil,
+                    handler: optimizeDefinition
                 )
-            }
+            )
         }
     }
 
     private var recallCardSection: some View {
-        aiArtifactSection(
-            title: "Recall Card",
-            suggestedCount: item.aiSuggestedRecallCardDrafts.count,
-            acceptedCount: item.aiAcceptedRecallCardDrafts.count,
-            suggestedEmptyText: "No recall drafts yet.",
-            acceptedEmptyText: "No accepted recall drafts yet."
-        ) {
-            ForEach(Array(item.aiSuggestedRecallCardDrafts.indices), id: \.self) { index in
-                EditableRecallDraftCard(
-                    draft: bindingForSuggestedRecallDraft(at: index),
-                    primaryButtonTitle: "Accept",
-                    secondaryButtonTitle: "Reject",
-                    onPrimary: { acceptSuggestedRecallDraft(at: index) },
-                    onSecondary: { rejectSuggestedRecallDraft(at: index) }
+        DisclosureGroup(isExpanded: $isRecallSectionExpanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionDescription(
+                    "Generate one draft, then save the version worth exporting."
                 )
+
+                if let rowID = primaryAcceptedRecallDraftRowID {
+                    workspaceSubsectionHeader(
+                        title: "Saved Recall Card",
+                        caption: "Editing here updates the saved Recall card used by preview and export."
+                    )
+                    EditableRecallDraftCard(
+                        draft: bindingForAcceptedRecallDraft(rowID: rowID),
+                        secondaryButtonTitle: "Delete Saved Card",
+                        tagText: "Saved",
+                        onDraftChange: { scheduleAcceptedRecallAutosave(rowID: rowID, value: $0) },
+                        onSecondary: { deleteAcceptedRecallDraft(rowID: rowID) }
+                    )
+                } else if let rowID = primarySuggestedRecallDraftRowID {
+                    workspaceSubsectionHeader(
+                        title: "Draft",
+                        caption: "Review the current draft, then save it as the Recall card when it is ready."
+                    )
+                    EditableRecallDraftCard(
+                        draft: bindingForSuggestedRecallDraft(rowID: rowID),
+                        primaryButtonTitle: "Save Recall Card",
+                        secondaryButtonTitle: "Discard Draft",
+                        tagText: "Draft",
+                        onPrimary: { saveSuggestedRecallDraft(rowID: rowID) },
+                        onSecondary: { rejectSuggestedRecallDraft(rowID: rowID) }
+                    )
+                } else {
+                    emptyState("No recall draft yet. Generate one to start the workspace.")
+                }
+
+                if primaryAcceptedRecallDraftRowID != nil, let rowID = primarySuggestedRecallDraftRowID {
+                    workspaceSubsectionHeader(
+                        title: "Replacement Draft",
+                        caption: "Save this draft to replace the current saved Recall card."
+                    )
+                    EditableRecallDraftCard(
+                        draft: bindingForSuggestedRecallDraft(rowID: rowID),
+                        primaryButtonTitle: "Replace Recall Card",
+                        secondaryButtonTitle: "Discard Draft",
+                        tagText: "Draft",
+                        onPrimary: { saveSuggestedRecallDraft(rowID: rowID) },
+                        onSecondary: { rejectSuggestedRecallDraft(rowID: rowID) }
+                    )
+                }
+
+                if hasCompatibilityRecallDrafts {
+                    Divider()
+                    compatibilityRecallDraftsSection
+                }
+
+                if let recallErrorMessage { errorLabel(recallErrorMessage) }
             }
-        } acceptedContent: {
-            ForEach(Array(item.aiAcceptedRecallCardDrafts.indices), id: \.self) { index in
-                EditableRecallDraftCard(
-                    draft: bindingForAcceptedRecallDraft(at: index),
-                    secondaryButtonTitle: "Delete",
-                    tagText: "AI-generated",
-                    onDraftChange: { scheduleAcceptedRecallAutosave(at: index, value: $0) },
-                    onSecondary: { deleteAcceptedRecallDraft(at: index) }
+        } label: {
+            topLevelSectionLabel(
+                title: "Recall Card",
+                subtitle: "Shape one active-recall card.",
+                summary: recallSectionSummary,
+                action: .init(
+                    title: recallHeaderActionTitle,
+                    systemImage: "sparkles.rectangle.stack",
+                    isLoading: isGeneratingRecall,
+                    isDisabled: isGeneratingRecall || firstDefinition == nil,
+                    handler: generateRecallDraft
                 )
-            }
+            )
         }
     }
 
-    private var pitfallsSection: some View {
-        aiTextArtifactSection(
-            title: "Pitfalls",
-            suggested: item.aiSuggestedPitfalls,
-            accepted: item.aiAcceptedPitfalls,
-            suggestedEmptyText: "No pitfalls yet.",
-            acceptedEmptyText: "No accepted pitfalls yet.",
-            suggestedBinding: bindingForSuggestedPitfall(at:),
-            acceptedBinding: bindingForAcceptedPitfall(at:),
-            accept: acceptSuggestedPitfall(at:),
-            reject: rejectSuggestedPitfall(at:),
-            delete: deleteAcceptedPitfall(at:),
-            scheduleAcceptedAutosave: scheduleAcceptedPitfallAutosave(at:value:)
-        )
+    private var learningAidsSection: some View {
+        DisclosureGroup(isExpanded: $isLearningAidsSectionExpanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionDescription("Keep each cue short. Recall can reuse the strongest saved ones later.")
+                learningAidArtifactSection(
+                    title: "Pitfalls",
+                    suggestedRowIDs: suggestedPitfallState.rowOrder,
+                    acceptedRowIDs: acceptedPitfallState.rowOrder,
+                    suggestedEmptyText: "No pitfalls yet.",
+                    acceptedEmptyText: "Nothing saved yet.",
+                    suggestedBinding: bindingForSuggestedPitfall(rowID:),
+                    acceptedBinding: bindingForAcceptedPitfall(rowID:),
+                    accept: acceptSuggestedPitfall(rowID:),
+                    reject: rejectSuggestedPitfall(rowID:),
+                    delete: deleteAcceptedPitfall(rowID:),
+                    scheduleAcceptedAutosave: scheduleAcceptedPitfallAutosave(rowID:value:)
+                )
+                Divider()
+                learningAidArtifactSection(
+                    title: "Mnemonics",
+                    suggestedRowIDs: suggestedMnemonicState.rowOrder,
+                    acceptedRowIDs: acceptedMnemonicState.rowOrder,
+                    suggestedEmptyText: "No mnemonics yet.",
+                    acceptedEmptyText: "Nothing saved yet.",
+                    suggestedBinding: bindingForSuggestedMnemonic(rowID:),
+                    acceptedBinding: bindingForAcceptedMnemonic(rowID:),
+                    accept: acceptSuggestedMnemonic(rowID:),
+                    reject: rejectSuggestedMnemonic(rowID:),
+                    delete: deleteAcceptedMnemonic(rowID:),
+                    scheduleAcceptedAutosave: scheduleAcceptedMnemonicAutosave(rowID:value:)
+                )
+                Divider()
+                learningAidArtifactSection(
+                    title: "Collocations",
+                    suggestedRowIDs: suggestedCollocationState.rowOrder,
+                    acceptedRowIDs: acceptedCollocationState.rowOrder,
+                    suggestedEmptyText: "No collocations yet.",
+                    acceptedEmptyText: "Nothing saved yet.",
+                    suggestedBinding: bindingForSuggestedCollocation(rowID:),
+                    acceptedBinding: bindingForAcceptedCollocation(rowID:),
+                    accept: acceptSuggestedCollocation(rowID:),
+                    reject: rejectSuggestedCollocation(rowID:),
+                    delete: deleteAcceptedCollocation(rowID:),
+                    scheduleAcceptedAutosave: scheduleAcceptedCollocationAutosave(rowID:value:)
+                )
+
+                if let learningAidsErrorMessage { errorLabel(learningAidsErrorMessage) }
+            }
+        } label: {
+            topLevelSectionLabel(
+                title: "Learning Aids",
+                subtitle: "Pitfalls, memory hooks, and collocations.",
+                summary: learningAidsSectionSummary,
+                action: .init(
+                    title: isGeneratingLearningAids ? "Generating..." : learningAidsHeaderActionTitle,
+                    systemImage: "wand.and.stars",
+                    isLoading: isGeneratingLearningAids,
+                    isDisabled: isGeneratingLearningAids || firstDefinition == nil,
+                    handler: generateLearningAids
+                )
+            )
+        }
     }
 
-    private var mnemonicsSection: some View {
-        aiTextArtifactSection(
-            title: "Mnemonics",
-            suggested: item.aiSuggestedMnemonics,
-            accepted: item.aiAcceptedMnemonics,
-            suggestedEmptyText: "No mnemonics yet.",
-            acceptedEmptyText: "No accepted mnemonics yet.",
-            suggestedBinding: bindingForSuggestedMnemonic(at:),
-            acceptedBinding: bindingForAcceptedMnemonic(at:),
-            accept: acceptSuggestedMnemonic(at:),
-            reject: rejectSuggestedMnemonic(at:),
-            delete: deleteAcceptedMnemonic(at:),
-            scheduleAcceptedAutosave: scheduleAcceptedMnemonicAutosave(at:value:)
-        )
-    }
+    private var compatibilityRecallDraftsSection: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionDescription("Older multi-draft records stay available here for compatibility while the UI focuses on one active draft plus one saved card.")
 
-    private var collocationsSection: some View {
-        aiTextArtifactSection(
-            title: "Collocations",
-            suggested: item.aiSuggestedCollocations,
-            accepted: item.aiAcceptedCollocations,
-            suggestedEmptyText: "No collocations yet.",
-            acceptedEmptyText: "No accepted collocations yet.",
-            suggestedBinding: bindingForSuggestedCollocation(at:),
-            acceptedBinding: bindingForAcceptedCollocation(at:),
-            accept: acceptSuggestedCollocation(at:),
-            reject: rejectSuggestedCollocation(at:),
-            delete: deleteAcceptedCollocation(at:),
-            scheduleAcceptedAutosave: scheduleAcceptedCollocationAutosave(at:value:)
-        )
+                if suggestedRecallState.rowOrder.count > 1 {
+                    workspaceSubsectionHeader(title: "Legacy Drafts")
+                    ForEach(Array(suggestedRecallState.rowOrder.dropFirst()), id: \.self) { rowID in
+                        EditableRecallDraftCard(
+                            draft: bindingForSuggestedRecallDraft(rowID: rowID),
+                            primaryButtonTitle: "Save Recall Card",
+                            secondaryButtonTitle: "Discard Draft",
+                            tagText: "Legacy draft",
+                            onPrimary: { saveSuggestedRecallDraft(rowID: rowID) },
+                            onSecondary: { rejectSuggestedRecallDraft(rowID: rowID) }
+                        )
+                    }
+                }
+
+                if acceptedRecallState.rowOrder.count > 1 {
+                    workspaceSubsectionHeader(title: "Legacy Saved Cards")
+                    ForEach(Array(acceptedRecallState.rowOrder.dropFirst()), id: \.self) { rowID in
+                        EditableRecallDraftCard(
+                            draft: bindingForAcceptedRecallDraft(rowID: rowID),
+                            secondaryButtonTitle: "Delete Legacy Card",
+                            tagText: "Legacy saved",
+                            onDraftChange: { scheduleAcceptedRecallAutosave(rowID: rowID, value: $0) },
+                            onSecondary: { deleteAcceptedRecallDraft(rowID: rowID) }
+                        )
+                    }
+                }
+            }
+        } label: {
+            subsectionHeader("Legacy Compatibility Drafts")
+        }
     }
 
     private func generateSentences() {
         guard examplesTask == nil else { return }
         guard let result = item.lookupResult else { return }
-        let senses = sensePromptInputs(from: result)
-        guard !senses.isEmpty else { return }
+        let contexts = exampleSenseContexts(from: result)
+        let senses = contexts.map(\.promptInput)
+        guard !contexts.isEmpty else { return }
 
         examplesErrorMessage = nil
         streamingExamplesText = ""
@@ -335,15 +752,13 @@ struct AIContentView: View {
             }
 
             do {
-                let sentences = try await llmService.generateExampleSentencesStreaming(
+                let examples = try await llmService.generateExampleSentenceArtifacts(
                     word: item.word,
-                    senses: senses,
-                    onDelta: { delta in
-                        Task { @MainActor in streamingExamplesText += delta }
-                    }
+                    senses: senses
                 )
-                viewModel.saveAISuggestedExampleSentences(sentences, for: item)
-                logger.info("Regenerate Examples finished, \(sentences.count) lines")
+                let artifacts = normalizeExampleArtifacts(examples, contexts: contexts)
+                viewModel.saveAISuggestedExampleArtifacts(artifacts, for: item)
+                logger.info("Regenerate Examples finished, \(artifacts.count) lines")
             } catch {
                 examplesErrorMessage = error.localizedDescription
                 logger.error("Regenerate Examples failed: \(error.localizedDescription, privacy: .public)")
@@ -351,10 +766,53 @@ struct AIContentView: View {
         }
     }
 
+    private func generateLearningAids() {
+        guard learningAidsTask == nil else { return }
+        guard let result = item.lookupResult else { return }
+        let senses = exampleSenseContexts(from: result).map(\.promptInput)
+        guard !senses.isEmpty else { return }
+
+        learningAidsErrorMessage = nil
+        logger.info("Generate Learning Aids started for \(item.word, privacy: .public)")
+
+        learningAidsTask?.cancel()
+        learningAidsTask = Task { @MainActor in
+            syncGeneratingState()
+            defer {
+                learningAidsTask = nil
+                syncGeneratingState()
+            }
+
+            do {
+                let aids = try await llmService.generateLearningAids(
+                    word: item.word,
+                    senses: senses
+                )
+                viewModel.saveAISuggestedPitfalls(
+                    aids.pitfalls.compactMap { pitfallText(from: $0) },
+                    for: item
+                )
+                viewModel.saveAISuggestedMnemonics(
+                    aids.mnemonics.map(\.clue),
+                    for: item
+                )
+                viewModel.saveAISuggestedCollocations(
+                    aids.collocations.map { collocationText(from: $0) },
+                    for: item
+                )
+                isLearningAidsSectionExpanded = true
+                logger.info("Generate Learning Aids finished")
+            } catch {
+                learningAidsErrorMessage = error.localizedDescription
+                logger.error("Generate Learning Aids failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     private func optimizeDefinition() {
         guard usageTask == nil else { return }
         guard let result = item.lookupResult else { return }
-        let senses = sensePromptInputs(from: result)
+        let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
 
         usageErrorMessage = nil
@@ -379,7 +837,7 @@ struct AIContentView: View {
                     }
                 )
                 viewModel.saveAISuggestedDefinitionNote(optimized, for: item)
-                editingSuggestedDefinition = optimized
+                suggestedDefinitionState.mergePersistedValue(optimized)
                 logger.info("Regenerate Usage finished")
             } catch {
                 usageErrorMessage = error.localizedDescription
@@ -388,83 +846,140 @@ struct AIContentView: View {
         }
     }
 
-    private func acceptSuggestedExample(at index: Int) {
-        guard let suggested = item.aiSuggestedExampleSentences[safe: index] else { return }
-        let trimmed = (suggestedExampleDrafts[index] ?? suggested).trimmingCharacters(in: .whitespacesAndNewlines)
+    private func generateRecallDraft() {
+        guard recallTask == nil else { return }
+        guard let result = item.lookupResult else { return }
+        let senses = exampleSenseContexts(from: result).map(\.promptInput)
+        guard !senses.isEmpty else { return }
+
+        recallErrorMessage = nil
+        logger.info("Generate Recall Draft started for \(item.word, privacy: .public)")
+
+        recallTask?.cancel()
+        recallTask = Task { @MainActor in
+            syncGeneratingState()
+            defer {
+                recallTask = nil
+                syncGeneratingState()
+            }
+
+            do {
+                let generated = try await llmService.generateRecallCardDraft(
+                    word: item.word,
+                    senses: senses,
+                    mode: defaultRecallMode
+                )
+                let draft = RecallCardDraft(
+                    mode: RecallCardMode(rawValue: generated.mode.rawValue) ?? .fullSpelling,
+                    front: generated.front,
+                    back: generated.back,
+                    hint: generated.hint
+                )
+                viewModel.saveAISuggestedRecallCardDrafts([draft], for: item)
+                isRecallSectionExpanded = true
+                logger.info("Generate Recall Draft finished")
+            } catch {
+                recallErrorMessage = error.localizedDescription
+                logger.error("Generate Recall Draft failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private func acceptSuggestedExample(rowID: UUID) {
+        guard let index = suggestedExampleState.rowOrder.firstIndex(of: rowID),
+              let suggested = suggestedExampleArtifacts[safe: index] else { return }
+        let trimmed = (suggestedExampleState.drafts[rowID] ?? suggested.text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        var accepted = item.aiAcceptedExampleSentences
-        accepted.append(trimmed)
-        viewModel.saveAIAcceptedExampleSentences(accepted, for: item)
+        var accepted = acceptedExampleArtifacts
+        accepted.append(
+            trimmed == suggested.text
+                ? suggested
+                : AIExampleArtifactEditor.artifact(byApplyingEditedText: trimmed, to: suggested)
+        )
+        viewModel.saveAIAcceptedExampleArtifacts(accepted, for: item)
 
-        var remaining = item.aiSuggestedExampleSentences
+        var remaining = suggestedExampleArtifacts
         remaining.remove(at: index)
-        viewModel.saveAISuggestedExampleSentences(remaining, for: item)
+        viewModel.saveAISuggestedExampleArtifacts(remaining, for: item)
     }
 
-    private func rejectSuggestedExample(at index: Int) {
-        guard item.aiSuggestedExampleSentences.indices.contains(index) else { return }
-        var remaining = item.aiSuggestedExampleSentences
+    private func rejectSuggestedExample(rowID: UUID) {
+        guard let index = suggestedExampleState.rowOrder.firstIndex(of: rowID),
+              suggestedExampleArtifacts.indices.contains(index) else { return }
+        var remaining = suggestedExampleArtifacts
         remaining.remove(at: index)
-        viewModel.saveAISuggestedExampleSentences(remaining, for: item)
+        viewModel.saveAISuggestedExampleArtifacts(remaining, for: item)
     }
 
-    private func deleteAcceptedExample(at index: Int) {
-        acceptedExampleAutosaveTasks[index]?.cancel()
-        acceptedExampleAutosaveTasks.removeValue(forKey: index)
-        var accepted = item.aiAcceptedExampleSentences
+    private func deleteAcceptedExample(rowID: UUID) {
+        guard let index = acceptedExampleState.rowOrder.firstIndex(of: rowID) else { return }
+        acceptedExampleAutosaveTasks[rowID]?.cancel()
+        acceptedExampleAutosaveTasks.removeValue(forKey: rowID)
+        var accepted = acceptedExampleArtifacts
         accepted.remove(at: index)
-        viewModel.saveAIAcceptedExampleSentences(accepted, for: item)
+        viewModel.saveAIAcceptedExampleArtifacts(accepted, for: item)
     }
 
     private func acceptSuggestedDefinition() {
-        let trimmed = editingSuggestedDefinition.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = suggestedDefinitionState.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         viewModel.saveAIAcceptedDefinitionNote(trimmed, for: item)
         viewModel.saveAISuggestedDefinitionNote(nil, for: item)
-        editingSuggestedDefinition = ""
+        suggestedDefinitionState.mergePersistedValue("")
     }
 
     private func rejectSuggestedDefinition() {
         viewModel.saveAISuggestedDefinitionNote(nil, for: item)
-        editingSuggestedDefinition = ""
+        suggestedDefinitionState.mergePersistedValue("")
     }
 
     private func deleteAcceptedDefinition() {
         acceptedDefinitionAutosaveTask?.cancel()
         acceptedDefinitionAutosaveTask = nil
         viewModel.saveAIAcceptedDefinitionNote(nil, for: item)
-        editingAcceptedDefinition = ""
+        acceptedDefinitionState.mergePersistedValue("")
     }
 
-    private func acceptSuggestedRecallDraft(at index: Int) {
-        guard let suggested = item.aiSuggestedRecallCardDrafts[safe: index] else { return }
+    private func saveSuggestedRecallDraft(rowID: UUID) {
+        guard let index = suggestedRecallState.rowOrder.firstIndex(of: rowID),
+              let suggested = item.aiSuggestedRecallCardDrafts[safe: index] else { return }
+        let draft = suggestedRecallState.drafts[rowID] ?? suggested
         var accepted = item.aiAcceptedRecallCardDrafts
-        accepted.append(suggested)
+        if accepted.isEmpty {
+            accepted.append(draft)
+        } else {
+            accepted[0] = draft
+        }
         viewModel.saveAIAcceptedRecallCardDrafts(accepted, for: item)
 
         var remaining = item.aiSuggestedRecallCardDrafts
         remaining.remove(at: index)
         viewModel.saveAISuggestedRecallCardDrafts(remaining, for: item)
+        isRecallSectionExpanded = true
     }
 
-    private func rejectSuggestedRecallDraft(at index: Int) {
-        guard item.aiSuggestedRecallCardDrafts.indices.contains(index) else { return }
+    private func rejectSuggestedRecallDraft(rowID: UUID) {
+        guard let index = suggestedRecallState.rowOrder.firstIndex(of: rowID),
+              item.aiSuggestedRecallCardDrafts.indices.contains(index) else { return }
         var remaining = item.aiSuggestedRecallCardDrafts
         remaining.remove(at: index)
         viewModel.saveAISuggestedRecallCardDrafts(remaining, for: item)
     }
 
-    private func deleteAcceptedRecallDraft(at index: Int) {
-        acceptedRecallAutosaveTasks[index]?.cancel()
-        acceptedRecallAutosaveTasks.removeValue(forKey: index)
+    private func deleteAcceptedRecallDraft(rowID: UUID) {
+        guard let index = acceptedRecallState.rowOrder.firstIndex(of: rowID) else { return }
+        acceptedRecallAutosaveTasks[rowID]?.cancel()
+        acceptedRecallAutosaveTasks.removeValue(forKey: rowID)
         var drafts = item.aiAcceptedRecallCardDrafts
         drafts.remove(at: index)
         viewModel.saveAIAcceptedRecallCardDrafts(drafts, for: item)
     }
 
-    private func acceptSuggestedPitfall(at index: Int) {
-        guard let value = item.aiSuggestedPitfalls[safe: index]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
+    private func acceptSuggestedPitfall(rowID: UUID) {
+        guard let index = suggestedPitfallState.rowOrder.firstIndex(of: rowID),
+              let value = item.aiSuggestedPitfalls[safe: index]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return }
         var accepted = item.aiAcceptedPitfalls
         accepted.append(value)
         viewModel.saveAIAcceptedPitfalls(accepted, for: item)
@@ -474,22 +989,25 @@ struct AIContentView: View {
         viewModel.saveAISuggestedPitfalls(remaining, for: item)
     }
 
-    private func rejectSuggestedPitfall(at index: Int) {
-        guard item.aiSuggestedPitfalls.indices.contains(index) else { return }
+    private func rejectSuggestedPitfall(rowID: UUID) {
+        guard let index = suggestedPitfallState.rowOrder.firstIndex(of: rowID),
+              item.aiSuggestedPitfalls.indices.contains(index) else { return }
         var remaining = item.aiSuggestedPitfalls
         remaining.remove(at: index)
         viewModel.saveAISuggestedPitfalls(remaining, for: item)
     }
 
-    private func deleteAcceptedPitfall(at index: Int) {
-        acceptedPitfallAutosaveTasks[index]?.cancel()
-        acceptedPitfallAutosaveTasks.removeValue(forKey: index)
+    private func deleteAcceptedPitfall(rowID: UUID) {
+        guard let index = acceptedPitfallState.rowOrder.firstIndex(of: rowID) else { return }
+        acceptedPitfallAutosaveTasks[rowID]?.cancel()
+        acceptedPitfallAutosaveTasks.removeValue(forKey: rowID)
         var values = item.aiAcceptedPitfalls
         values.remove(at: index)
         viewModel.saveAIAcceptedPitfalls(values, for: item)
     }
 
-    private func acceptSuggestedMnemonic(at index: Int) {
+    private func acceptSuggestedMnemonic(rowID: UUID) {
+        guard let index = suggestedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
         moveSuggestedString(
             at: index,
             suggestedValues: item.aiSuggestedMnemonics,
@@ -499,19 +1017,22 @@ struct AIContentView: View {
         )
     }
 
-    private func rejectSuggestedMnemonic(at index: Int) {
+    private func rejectSuggestedMnemonic(rowID: UUID) {
+        guard let index = suggestedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
         removeSuggestedString(at: index, values: item.aiSuggestedMnemonics, saveSuggested: viewModel.saveAISuggestedMnemonics)
     }
 
-    private func deleteAcceptedMnemonic(at index: Int) {
-        acceptedMnemonicAutosaveTasks[index]?.cancel()
-        acceptedMnemonicAutosaveTasks.removeValue(forKey: index)
+    private func deleteAcceptedMnemonic(rowID: UUID) {
+        guard let index = acceptedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
+        acceptedMnemonicAutosaveTasks[rowID]?.cancel()
+        acceptedMnemonicAutosaveTasks.removeValue(forKey: rowID)
         var values = item.aiAcceptedMnemonics
         values.remove(at: index)
         viewModel.saveAIAcceptedMnemonics(values, for: item)
     }
 
-    private func acceptSuggestedCollocation(at index: Int) {
+    private func acceptSuggestedCollocation(rowID: UUID) {
+        guard let index = suggestedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
         moveSuggestedString(
             at: index,
             suggestedValues: item.aiSuggestedCollocations,
@@ -521,94 +1042,204 @@ struct AIContentView: View {
         )
     }
 
-    private func rejectSuggestedCollocation(at index: Int) {
+    private func rejectSuggestedCollocation(rowID: UUID) {
+        guard let index = suggestedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
         removeSuggestedString(at: index, values: item.aiSuggestedCollocations, saveSuggested: viewModel.saveAISuggestedCollocations)
     }
 
-    private func deleteAcceptedCollocation(at index: Int) {
-        acceptedCollocationAutosaveTasks[index]?.cancel()
-        acceptedCollocationAutosaveTasks.removeValue(forKey: index)
+    private func deleteAcceptedCollocation(rowID: UUID) {
+        guard let index = acceptedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
+        acceptedCollocationAutosaveTasks[rowID]?.cancel()
+        acceptedCollocationAutosaveTasks.removeValue(forKey: rowID)
         var values = item.aiAcceptedCollocations
         values.remove(at: index)
         viewModel.saveAIAcceptedCollocations(values, for: item)
     }
 
     private func syncExampleDrafts() {
-        suggestedExampleDrafts = Dictionary(uniqueKeysWithValues: item.aiSuggestedExampleSentences.enumerated().map { ($0.offset, $0.element) })
-        acceptedExampleDrafts = Dictionary(uniqueKeysWithValues: item.aiAcceptedExampleSentences.enumerated().map { ($0.offset, $0.element) })
+        suggestedExampleState = AIDraftListSynchronizer.sync(
+            persistedValues: suggestedExampleArtifacts,
+            currentState: suggestedExampleState,
+            draftValue: \.text
+        ).state
+
+        let acceptedResult = AIDraftListSynchronizer.sync(
+            persistedValues: acceptedExampleArtifacts,
+            currentState: acceptedExampleState,
+            draftValue: \.text
+        )
+        cancelAutosaveTasks(&acceptedExampleAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
+        acceptedExampleState = acceptedResult.state
     }
 
     private func syncRecallDrafts() {
-        suggestedRecallDrafts = Dictionary(uniqueKeysWithValues: item.aiSuggestedRecallCardDrafts.enumerated().map { ($0.offset, $0.element) })
-        acceptedRecallDrafts = Dictionary(uniqueKeysWithValues: item.aiAcceptedRecallCardDrafts.enumerated().map { ($0.offset, $0.element) })
+        suggestedRecallState = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiSuggestedRecallCardDrafts,
+            currentState: suggestedRecallState,
+            draftValue: { $0 }
+        ).state
+
+        let acceptedResult = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiAcceptedRecallCardDrafts,
+            currentState: acceptedRecallState,
+            draftValue: { $0 }
+        )
+        cancelAutosaveTasks(&acceptedRecallAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
+        acceptedRecallState = acceptedResult.state
     }
 
     private func syncPitfallDrafts() {
-        suggestedPitfallDrafts = Dictionary(uniqueKeysWithValues: item.aiSuggestedPitfalls.enumerated().map { ($0.offset, $0.element) })
-        acceptedPitfallDrafts = Dictionary(uniqueKeysWithValues: item.aiAcceptedPitfalls.enumerated().map { ($0.offset, $0.element) })
+        suggestedPitfallState = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiSuggestedPitfalls,
+            currentState: suggestedPitfallState,
+            draftValue: { $0 }
+        ).state
+
+        let acceptedResult = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiAcceptedPitfalls,
+            currentState: acceptedPitfallState,
+            draftValue: { $0 }
+        )
+        cancelAutosaveTasks(&acceptedPitfallAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
+        acceptedPitfallState = acceptedResult.state
     }
 
     private func syncMnemonicDrafts() {
-        suggestedMnemonicDrafts = Dictionary(uniqueKeysWithValues: item.aiSuggestedMnemonics.enumerated().map { ($0.offset, $0.element) })
-        acceptedMnemonicDrafts = Dictionary(uniqueKeysWithValues: item.aiAcceptedMnemonics.enumerated().map { ($0.offset, $0.element) })
+        suggestedMnemonicState = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiSuggestedMnemonics,
+            currentState: suggestedMnemonicState,
+            draftValue: { $0 }
+        ).state
+
+        let acceptedResult = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiAcceptedMnemonics,
+            currentState: acceptedMnemonicState,
+            draftValue: { $0 }
+        )
+        cancelAutosaveTasks(&acceptedMnemonicAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
+        acceptedMnemonicState = acceptedResult.state
     }
 
     private func syncCollocationDrafts() {
-        suggestedCollocationDrafts = Dictionary(uniqueKeysWithValues: item.aiSuggestedCollocations.enumerated().map { ($0.offset, $0.element) })
-        acceptedCollocationDrafts = Dictionary(uniqueKeysWithValues: item.aiAcceptedCollocations.enumerated().map { ($0.offset, $0.element) })
+        suggestedCollocationState = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiSuggestedCollocations,
+            currentState: suggestedCollocationState,
+            draftValue: { $0 }
+        ).state
+
+        let acceptedResult = AIDraftListSynchronizer.sync(
+            persistedValues: item.aiAcceptedCollocations,
+            currentState: acceptedCollocationState,
+            draftValue: { $0 }
+        )
+        cancelAutosaveTasks(&acceptedCollocationAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
+        acceptedCollocationState = acceptedResult.state
     }
 
-    private func bindingForSuggestedExample(at index: Int) -> Binding<String> {
-        Binding(get: { suggestedExampleDrafts[index] ?? item.aiSuggestedExampleSentences[safe: index] ?? "" }, set: { suggestedExampleDrafts[index] = $0 })
+    private func bindingForSuggestedDefinition() -> Binding<String> {
+        Binding(
+            get: { suggestedDefinitionState.draft },
+            set: { suggestedDefinitionState.updateDraft($0) }
+        )
     }
 
-    private func bindingForAcceptedExample(at index: Int) -> Binding<String> {
-        Binding(get: { acceptedExampleDrafts[index] ?? item.aiAcceptedExampleSentences[safe: index] ?? "" }, set: { acceptedExampleDrafts[index] = $0 })
+    private func bindingForAcceptedDefinition() -> Binding<String> {
+        Binding(
+            get: { acceptedDefinitionState.draft },
+            set: { acceptedDefinitionState.updateDraft($0) }
+        )
     }
 
-    private func bindingForSuggestedRecallDraft(at index: Int) -> Binding<RecallCardDraft> {
-        Binding(get: { suggestedRecallDrafts[index] ?? item.aiSuggestedRecallCardDrafts[safe: index] ?? RecallCardDraft(mode: .phraseRecall, front: "", back: "") }, set: { suggestedRecallDrafts[index] = $0 })
+    private func bindingForSuggestedExample(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { suggestedExampleState.drafts[rowID] ?? suggestedExampleState.persistedByRowID[rowID]?.text ?? "" },
+            set: { suggestedExampleState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForAcceptedRecallDraft(at index: Int) -> Binding<RecallCardDraft> {
-        Binding(get: { acceptedRecallDrafts[index] ?? item.aiAcceptedRecallCardDrafts[safe: index] ?? RecallCardDraft(mode: .phraseRecall, front: "", back: "") }, set: { acceptedRecallDrafts[index] = $0 })
+    private func bindingForAcceptedExample(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { acceptedExampleState.drafts[rowID] ?? acceptedExampleState.persistedByRowID[rowID]?.text ?? "" },
+            set: { acceptedExampleState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForSuggestedPitfall(at index: Int) -> Binding<String> {
-        Binding(get: { suggestedPitfallDrafts[index] ?? item.aiSuggestedPitfalls[safe: index] ?? "" }, set: { suggestedPitfallDrafts[index] = $0 })
+    private func bindingForSuggestedRecallDraft(rowID: UUID) -> Binding<RecallCardDraft> {
+        Binding(
+            get: {
+                suggestedRecallState.drafts[rowID]
+                    ?? suggestedRecallState.persistedByRowID[rowID]
+                    ?? RecallCardDraft(mode: .phraseRecall, front: "", back: "")
+            },
+            set: { suggestedRecallState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForAcceptedPitfall(at index: Int) -> Binding<String> {
-        Binding(get: { acceptedPitfallDrafts[index] ?? item.aiAcceptedPitfalls[safe: index] ?? "" }, set: { acceptedPitfallDrafts[index] = $0 })
+    private func bindingForAcceptedRecallDraft(rowID: UUID) -> Binding<RecallCardDraft> {
+        Binding(
+            get: {
+                acceptedRecallState.drafts[rowID]
+                    ?? acceptedRecallState.persistedByRowID[rowID]
+                    ?? RecallCardDraft(mode: .phraseRecall, front: "", back: "")
+            },
+            set: { acceptedRecallState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForSuggestedMnemonic(at index: Int) -> Binding<String> {
-        Binding(get: { suggestedMnemonicDrafts[index] ?? item.aiSuggestedMnemonics[safe: index] ?? "" }, set: { suggestedMnemonicDrafts[index] = $0 })
+    private func bindingForSuggestedPitfall(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { suggestedPitfallState.drafts[rowID] ?? suggestedPitfallState.persistedByRowID[rowID] ?? "" },
+            set: { suggestedPitfallState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForAcceptedMnemonic(at index: Int) -> Binding<String> {
-        Binding(get: { acceptedMnemonicDrafts[index] ?? item.aiAcceptedMnemonics[safe: index] ?? "" }, set: { acceptedMnemonicDrafts[index] = $0 })
+    private func bindingForAcceptedPitfall(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { acceptedPitfallState.drafts[rowID] ?? acceptedPitfallState.persistedByRowID[rowID] ?? "" },
+            set: { acceptedPitfallState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForSuggestedCollocation(at index: Int) -> Binding<String> {
-        Binding(get: { suggestedCollocationDrafts[index] ?? item.aiSuggestedCollocations[safe: index] ?? "" }, set: { suggestedCollocationDrafts[index] = $0 })
+    private func bindingForSuggestedMnemonic(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { suggestedMnemonicState.drafts[rowID] ?? suggestedMnemonicState.persistedByRowID[rowID] ?? "" },
+            set: { suggestedMnemonicState.drafts[rowID] = $0 }
+        )
     }
 
-    private func bindingForAcceptedCollocation(at index: Int) -> Binding<String> {
-        Binding(get: { acceptedCollocationDrafts[index] ?? item.aiAcceptedCollocations[safe: index] ?? "" }, set: { acceptedCollocationDrafts[index] = $0 })
+    private func bindingForAcceptedMnemonic(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { acceptedMnemonicState.drafts[rowID] ?? acceptedMnemonicState.persistedByRowID[rowID] ?? "" },
+            set: { acceptedMnemonicState.drafts[rowID] = $0 }
+        )
     }
 
-    private func scheduleAcceptedExampleAutosave(at index: Int, value: String) {
-        acceptedExampleAutosaveTasks[index]?.cancel()
-        acceptedExampleAutosaveTasks[index] = Task { @MainActor in
+    private func bindingForSuggestedCollocation(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { suggestedCollocationState.drafts[rowID] ?? suggestedCollocationState.persistedByRowID[rowID] ?? "" },
+            set: { suggestedCollocationState.drafts[rowID] = $0 }
+        )
+    }
+
+    private func bindingForAcceptedCollocation(rowID: UUID) -> Binding<String> {
+        Binding(
+            get: { acceptedCollocationState.drafts[rowID] ?? acceptedCollocationState.persistedByRowID[rowID] ?? "" },
+            set: { acceptedCollocationState.drafts[rowID] = $0 }
+        )
+    }
+
+    private func scheduleAcceptedExampleAutosave(rowID: UUID, value: String) {
+        acceptedExampleAutosaveTasks[rowID]?.cancel()
+        acceptedExampleAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            guard let current = item.aiAcceptedExampleSentences[safe: index] else { return }
+            guard let index = acceptedExampleState.rowOrder.firstIndex(of: rowID),
+                  let current = acceptedExampleArtifacts[safe: index] else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != current else { return }
-            var accepted = item.aiAcceptedExampleSentences
-            accepted[index] = trimmed
-            viewModel.saveAIAcceptedExampleSentences(accepted, for: item)
+            guard !trimmed.isEmpty, trimmed != current.text else { return }
+            var accepted = acceptedExampleArtifacts
+            accepted[index] = AIExampleArtifactEditor.artifact(byApplyingEditedText: trimmed, to: current)
+            viewModel.saveAIAcceptedExampleArtifacts(accepted, for: item)
         }
     }
 
@@ -623,11 +1254,12 @@ struct AIContentView: View {
         }
     }
 
-    private func scheduleAcceptedRecallAutosave(at index: Int, value: RecallCardDraft) {
-        acceptedRecallAutosaveTasks[index]?.cancel()
-        acceptedRecallAutosaveTasks[index] = Task { @MainActor in
+    private func scheduleAcceptedRecallAutosave(rowID: UUID, value: RecallCardDraft) {
+        acceptedRecallAutosaveTasks[rowID]?.cancel()
+        acceptedRecallAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
+            guard let index = acceptedRecallState.rowOrder.firstIndex(of: rowID) else { return }
             guard let current = item.aiAcceptedRecallCardDrafts[safe: index], current != value else { return }
             var drafts = item.aiAcceptedRecallCardDrafts
             drafts[index] = value
@@ -635,11 +1267,12 @@ struct AIContentView: View {
         }
     }
 
-    private func scheduleAcceptedPitfallAutosave(at index: Int, value: String) {
-        acceptedPitfallAutosaveTasks[index]?.cancel()
-        acceptedPitfallAutosaveTasks[index] = Task { @MainActor in
+    private func scheduleAcceptedPitfallAutosave(rowID: UUID, value: String) {
+        acceptedPitfallAutosaveTasks[rowID]?.cancel()
+        acceptedPitfallAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
+            guard let index = acceptedPitfallState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, trimmed != item.aiAcceptedPitfalls[safe: index] else { return }
             var values = item.aiAcceptedPitfalls
@@ -648,11 +1281,12 @@ struct AIContentView: View {
         }
     }
 
-    private func scheduleAcceptedMnemonicAutosave(at index: Int, value: String) {
-        acceptedMnemonicAutosaveTasks[index]?.cancel()
-        acceptedMnemonicAutosaveTasks[index] = Task { @MainActor in
+    private func scheduleAcceptedMnemonicAutosave(rowID: UUID, value: String) {
+        acceptedMnemonicAutosaveTasks[rowID]?.cancel()
+        acceptedMnemonicAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
+            guard let index = acceptedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, trimmed != item.aiAcceptedMnemonics[safe: index] else { return }
             var values = item.aiAcceptedMnemonics
@@ -661,11 +1295,12 @@ struct AIContentView: View {
         }
     }
 
-    private func scheduleAcceptedCollocationAutosave(at index: Int, value: String) {
-        acceptedCollocationAutosaveTasks[index]?.cancel()
-        acceptedCollocationAutosaveTasks[index] = Task { @MainActor in
+    private func scheduleAcceptedCollocationAutosave(rowID: UUID, value: String) {
+        acceptedCollocationAutosaveTasks[rowID]?.cancel()
+        acceptedCollocationAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
+            guard let index = acceptedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, trimmed != item.aiAcceptedCollocations[safe: index] else { return }
             var values = item.aiAcceptedCollocations
@@ -674,42 +1309,59 @@ struct AIContentView: View {
         }
     }
 
+    private func cancelAutosaveTasks(
+        _ tasks: inout [UUID: Task<Void, Never>],
+        removedRowIDs: [UUID]
+    ) {
+        for rowID in removedRowIDs {
+            tasks[rowID]?.cancel()
+            tasks.removeValue(forKey: rowID)
+        }
+    }
+
     private func syncGeneratingState() {
-        item.isGeneratingAI = isGeneratingExamples || isGeneratingUsage
+        item.isGeneratingAI = isGeneratingExamples || isGeneratingLearningAids || isGeneratingUsage || isGeneratingRecall
     }
 
     private var firstDefinition: String? {
         guard let result = item.lookupResult else { return nil }
-        return sensePromptInputs(from: result).first?.definition
+        return exampleSenseContexts(from: result).first?.definition
     }
 
-    private func sensePromptInputs(from result: LookupResult) -> [LLMSensePromptInput] {
+    private func exampleSenseContexts(from result: LookupResult) -> [ExampleSenseContext] {
         var seen = Set<String>()
-        var senses: [LLMSensePromptInput] = []
+        var contexts: [ExampleSenseContext] = []
 
         for entry in result.entries {
-            for lexical in entry.lexicalEntries {
-                for sense in lexical.senses {
+            for (lexicalEntryIndex, lexical) in entry.lexicalEntries.enumerated() {
+                for (senseIndex, sense) in lexical.senses.enumerated() {
                     let trimmedDefinition = sense.definition.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmedDefinition.isEmpty else { continue }
 
-                    let input = LLMSensePromptInput(
+                    let context = ExampleSenseContext(
                         partOfSpeech: lexical.partOfSpeechLabel,
                         definition: trimmedDefinition,
-                        semanticHint: sense.semanticHint
+                        semanticHint: sense.semanticHint,
+                        anchor: AIArtifactAnchorSnapshot(
+                            headword: entry.headword,
+                            lexicalEntryIndex: lexicalEntryIndex,
+                            senseIndex: senseIndex,
+                            exampleIndex: nil,
+                            excerpt: sense.semanticHint ?? trimmedDefinition
+                        )
                     )
                     let key = [
-                        input.partOfSpeech.lowercased(),
-                        input.definition.lowercased(),
-                        (input.semanticHint ?? "").lowercased()
+                        context.partOfSpeech.lowercased(),
+                        context.definition.lowercased(),
+                        (context.semanticHint ?? "").lowercased()
                     ].joined(separator: "|")
                     guard seen.insert(key).inserted else { continue }
-                    senses.append(input)
+                    contexts.append(context)
                 }
             }
         }
 
-        return senses
+        return contexts
     }
 
     private func moveSuggestedString(
@@ -759,50 +1411,115 @@ struct AIContentView: View {
         }
     }
 
-    private func aiTextArtifactSection(
+    private func learningAidArtifactSection(
         title: String,
-        suggested: [String],
-        accepted: [String],
+        suggestedRowIDs: [UUID],
+        acceptedRowIDs: [UUID],
         suggestedEmptyText: String,
         acceptedEmptyText: String,
-        suggestedBinding: @escaping (Int) -> Binding<String>,
-        acceptedBinding: @escaping (Int) -> Binding<String>,
-        accept: @escaping (Int) -> Void,
-        reject: @escaping (Int) -> Void,
-        delete: @escaping (Int) -> Void,
-        scheduleAcceptedAutosave: @escaping (Int, String) -> Void
+        suggestedBinding: @escaping (UUID) -> Binding<String>,
+        acceptedBinding: @escaping (UUID) -> Binding<String>,
+        accept: @escaping (UUID) -> Void,
+        reject: @escaping (UUID) -> Void,
+        delete: @escaping (UUID) -> Void,
+        scheduleAcceptedAutosave: @escaping (UUID, String) -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: title)
-            if !suggested.isEmpty {
-                sectionSubheader("Suggested")
-                ForEach(Array(suggested.indices), id: \.self) { index in
+            subsectionHeader(title)
+            if !suggestedRowIDs.isEmpty {
+                sectionSubheader("Suggestions")
+                ForEach(suggestedRowIDs, id: \.self) { rowID in
                     EditableAITextCard(
-                        text: suggestedBinding(index),
-                        primaryButtonTitle: "Accept",
-                        secondaryButtonTitle: "Reject",
-                        onPrimary: { accept(index) },
-                        onSecondary: { reject(index) }
+                        text: suggestedBinding(rowID),
+                        primaryButtonTitle: "Save",
+                        secondaryButtonTitle: "Dismiss",
+                        onPrimary: { accept(rowID) },
+                        onSecondary: { reject(rowID) }
                     )
                 }
             } else {
                 emptyState(suggestedEmptyText)
             }
-            if !accepted.isEmpty {
-                sectionSubheader("Accepted").padding(.top, 2)
-                ForEach(Array(accepted.indices), id: \.self) { index in
+            if !acceptedRowIDs.isEmpty {
+                sectionSubheader("Saved").padding(.top, 2)
+                ForEach(acceptedRowIDs, id: \.self) { rowID in
                     EditableAITextCard(
-                        text: acceptedBinding(index),
+                        text: acceptedBinding(rowID),
                         secondaryButtonTitle: "Delete",
-                        tagText: "AI-generated",
-                        onTextChange: { scheduleAcceptedAutosave(index, $0) },
-                        onSecondary: { delete(index) }
+                        tagText: "Saved",
+                        onTextChange: { scheduleAcceptedAutosave(rowID, $0) },
+                        onSecondary: { delete(rowID) }
                     )
                 }
             } else {
                 emptyState(acceptedEmptyText)
             }
         }
+    }
+
+    private func normalizeExampleArtifacts(
+        _ examples: [LLMExampleSentence],
+        contexts: [ExampleSenseContext]
+    ) -> [ExampleSentenceArtifact] {
+        examples.compactMap { example in
+            let english = example.english.trimmingCharacters(in: .whitespacesAndNewlines)
+            let translation = example.translation.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !english.isEmpty, !translation.isEmpty else { return nil }
+
+            let anchor = resolvedExampleSenseContext(
+                forSenseIndex: example.senseIndex,
+                contexts: contexts
+            )?.anchor
+
+            return ExampleSentenceArtifact(
+                text: "\(english) — \(translation)",
+                translation: translation,
+                anchor: anchor
+            )
+        }
+    }
+
+    private func resolvedExampleSenseContext(
+        forSenseIndex senseIndex: Int?,
+        contexts: [ExampleSenseContext]
+    ) -> ExampleSenseContext? {
+        if let senseIndex, contexts.indices.contains(senseIndex - 1) {
+            return contexts[senseIndex - 1]
+        }
+        if contexts.count == 1 {
+            return contexts[0]
+        }
+        return nil
+    }
+
+    private func exampleSenseContext(for anchor: AIArtifactAnchorSnapshot?) -> ExampleSenseContext? {
+        guard let anchor else { return nil }
+        return currentExampleSenseContexts.first {
+            $0.anchor.lexicalEntryIndex == anchor.lexicalEntryIndex &&
+                $0.anchor.senseIndex == anchor.senseIndex &&
+                $0.anchor.headword == anchor.headword
+        }
+    }
+
+    private func exampleTagText(
+        for artifact: ExampleSentenceArtifact,
+        among artifacts: [ExampleSentenceArtifact]
+    ) -> String? {
+        guard let context = exampleSenseContext(for: artifact.anchor) else { return nil }
+
+        let contextsForSamePartOfSpeech = artifacts.compactMap { candidate in
+            exampleSenseContext(for: candidate.anchor)
+        }
+        .filter {
+            $0.partOfSpeech.caseInsensitiveCompare(context.partOfSpeech) == .orderedSame
+        }
+
+        let distinctSenseKeys = Set(contextsForSamePartOfSpeech.map(\.key))
+        guard distinctSenseKeys.count > 1 else {
+            return shortPartOfSpeechLabel(context.partOfSpeech)
+        }
+
+        return shortPartOfSpeechLabel(context.partOfSpeech)
     }
 
     private func generationBadge(_ text: String) -> some View {
@@ -819,27 +1536,171 @@ struct AIContentView: View {
 
     private func sectionCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) { content() }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.03)))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.05), lineWidth: 1))
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.06), lineWidth: 1))
+    }
+
+    private func topLevelSectionLabel(title: String, subtitle: String, summary: String, action: SectionHeaderAction? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(title)
+                    .font(.headline.weight(.semibold))
+
+                SectionSummaryBadge(text: summary)
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 12)
+
+                if let action {
+                    Button(action: action.handler) {
+                        actionButtonLabel(
+                            title: action.title,
+                            systemImage: action.systemImage,
+                            isLoading: action.isLoading
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(action.isDisabled)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func shortPartOfSpeechLabel(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch normalized.lowercased() {
+        case "adjective":
+            return "adj."
+        case "adverb":
+            return "adv."
+        case "noun":
+            return "noun"
+        case "verb":
+            return "verb"
+        default:
+            return normalized.count > 12 ? String(normalized.prefix(12)) : normalized
+        }
+    }
+
+    private func pitfallText(from pitfall: LLMPitfall) -> String {
+        [pitfall.summary, pitfall.details]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func collocationText(from collocation: LLMCollocation) -> String {
+        let phrase = collocation.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        let gloss = collocation.gloss?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let gloss, !gloss.isEmpty else { return phrase }
+        return "\(phrase) — \(gloss)"
+    }
+
+    private var learningAidsHeaderActionTitle: String {
+        let hasSuggestions = !suggestedPitfallState.rowOrder.isEmpty ||
+            !suggestedMnemonicState.rowOrder.isEmpty ||
+            !suggestedCollocationState.rowOrder.isEmpty
+        return (hasSuggestions || hasAcceptedLearningAids) ? "Regenerate" : "Generate"
+    }
+
+    private var recallHeaderActionTitle: String {
+        if primarySuggestedRecallDraftRowID != nil || primaryAcceptedRecallDraftRowID != nil || hasCompatibilityRecallDrafts {
+            return "New Draft"
+        }
+        return "Generate Draft"
+    }
+
+    private var defaultRecallMode: LLMRecallCardMode {
+        if item.word.contains(" ") {
+            return .phraseRecall
+        }
+        if item.word.count >= 9 {
+            return .targetedLetterCloze
+        }
+        return .fullSpelling
     }
 
     private func sectionHeader(title: String) -> some View {
-        Text(title).font(.subheadline.bold())
+        Text(title).font(.headline.weight(.semibold))
+    }
+
+    private func subsectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.callout.weight(.semibold))
+    }
+
+    private func workspaceSubsectionHeader(title: String, caption: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            subsectionHeader(title)
+            if let caption {
+                sectionDescription(caption)
+            }
+        }
     }
 
     private func sectionSubheader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.tertiary)
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.white.opacity(0.05), in: Capsule())
     }
 
     private func emptyState(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary)
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+    }
+
+    private func sectionDescription(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineSpacing(2)
+    }
+
+    private func generatingState(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func errorLabel(_ text: String) -> some View {
         Text(text).font(.caption).foregroundColor(.red)
+    }
+
+    private func sectionSummary(savedCount: Int, suggestedCount: Int, isGenerating: Bool) -> String {
+        if savedCount > 0 {
+            return savedCount == 1 ? "1 saved" : "\(savedCount) saved"
+        }
+        if suggestedCount > 0 {
+            return suggestedCount == 1 ? "1 suggestion" : "\(suggestedCount) suggestions"
+        }
+        if isGenerating {
+            return "generating"
+        }
+        return "empty"
+    }
+
+    private func countSummary(_ count: Int, singular: String) -> String? {
+        guard count > 0 else { return nil }
+        let noun = count == 1 ? singular : "\(singular)s"
+        return "\(count) \(noun)"
     }
 
     private func streamingCard(_ text: String) -> some View {
@@ -860,6 +1721,7 @@ private struct EditableAITextCard: View {
     let primaryRole: ButtonRole?
     let secondaryRole: ButtonRole?
     let tagText: String?
+    let editorHeight: CGFloat
     let onTextChange: ((String) -> Void)?
     let onPrimary: () -> Void
     let onSecondary: () -> Void
@@ -871,6 +1733,7 @@ private struct EditableAITextCard: View {
         primaryRole: ButtonRole? = nil,
         secondaryRole: ButtonRole? = .destructive,
         tagText: String? = nil,
+        editorHeight: CGFloat = 72,
         onTextChange: ((String) -> Void)? = nil,
         onPrimary: @escaping () -> Void = {},
         onSecondary: @escaping () -> Void
@@ -881,6 +1744,7 @@ private struct EditableAITextCard: View {
         self.primaryRole = primaryRole
         self.secondaryRole = secondaryRole
         self.tagText = tagText
+        self.editorHeight = editorHeight
         self.onTextChange = onTextChange
         self.onPrimary = onPrimary
         self.onSecondary = onSecondary
@@ -888,38 +1752,42 @@ private struct EditableAITextCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let tagText {
-                HStack {
-                    Spacer()
-                    Text(tagText)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.05), in: Capsule())
+            VStack(alignment: .leading, spacing: 4) {
+                if let tagText {
+                    HStack(spacing: 0) {
+                        AIArtifactTag(text: tagText)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
                 }
-            }
 
-            TextEditor(text: $text)
-                .frame(minHeight: 60)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                .onChange(of: text) { newValue in onTextChange?(newValue) }
+                TextEditor(text: $text)
+                    .frame(height: editorHeight)
+                    .font(.callout)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 8)
+                    .padding(.top, tagText == nil ? 8 : 0)
+                    .padding(.bottom, 8)
+                    .onChange(of: text) { newValue in onTextChange?(newValue) }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.black.opacity(0.08))
+            )
 
             HStack(spacing: 8) {
                 if let primaryButtonTitle {
                     Button(role: primaryRole, action: onPrimary) { Text(primaryButtonTitle) }
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.mini)
+                        .controlSize(.small)
                 }
                 Button(role: secondaryRole, action: onSecondary) { Text(secondaryButtonTitle) }
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
             }
         }
-        .padding(10)
+        .padding(8)
         .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.025)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.05), lineWidth: 1))
     }
@@ -958,12 +1826,7 @@ private struct EditableRecallDraftCard: View {
             if let tagText {
                 HStack {
                     Spacer()
-                    Text(tagText)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.05), in: Capsule())
+                    AIArtifactTag(text: tagText)
                 }
             }
 
@@ -976,11 +1839,11 @@ private struct EditableRecallDraftCard: View {
                 if let primaryButtonTitle {
                     Button(action: onPrimary) { Text(primaryButtonTitle) }
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.mini)
+                        .controlSize(.small)
                 }
                 Button(role: .destructive, action: onSecondary) { Text(secondaryButtonTitle) }
                     .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .controlSize(.small)
             }
         }
         .padding(10)
@@ -1038,6 +1901,50 @@ private struct EditableRecallDraftCard: View {
             anchor: draft.anchor
         )
         onDraftChange?(draft)
+    }
+
+}
+
+private struct AIArtifactTag: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tagTint, in: Capsule())
+    }
+
+    private var tagTint: Color {
+        let normalized = text.lowercased()
+        if normalized.contains("noun") {
+            return .blue
+        }
+        if normalized.contains("verb") {
+            return .orange
+        }
+        if normalized.contains("adjective") {
+            return .green
+        }
+        if normalized.contains("adverb") {
+            return .teal
+        }
+        return .secondary
+    }
+}
+
+private struct SectionSummaryBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary.opacity(0.45), in: Capsule())
     }
 }
 

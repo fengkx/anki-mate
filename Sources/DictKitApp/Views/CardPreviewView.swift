@@ -1,15 +1,23 @@
+import AnkiMateLLM
+import DictKit
 import DictKitAnkiExport
 import SwiftUI
 import WebKit
 
 struct CardPreviewView: View {
     @ObservedObject var item: WordItem
+    @EnvironmentObject var llmService: LLMService
     @EnvironmentObject var viewModel: WordListViewModel
     @State private var showBack: Bool = true
     @State private var previewFamily: PreviewFamily = .standard
     @AppStorage("cardPreview.aiPanelRatio") private var aiPanelRatio: Double = 0.38
     @State private var aiPanelHeight: CGFloat = 320
     @State private var dragStartHeight: CGFloat?
+    @State private var isGeneratingRecallPreviewDraft = false
+    @State private var recallPreviewFeedback: String?
+    @State private var recallPreviewErrorMessage: String?
+    @State private var generatingIPADialects = Set<String>()
+    @State private var generatedIPAErrorMessage: String?
 
     private let minAIPanelHeight: CGFloat = 180
     private let maxAIPanelHeight: CGFloat = 520
@@ -64,9 +72,12 @@ struct CardPreviewView: View {
                         return (order[$0.dialect] ?? 2) < (order[$1.dialect] ?? 2)
                     }
                     if !phonetics.isEmpty {
-                        HStack(spacing: 20) {
+                        HStack(alignment: .center, spacing: 18) {
                             ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
-                                HStack(spacing: 4) {
+                                let dialectKey = item.dialectStorageKey(for: entry.dialect)
+                                let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
+
+                                HStack(alignment: .center, spacing: 8) {
                                     if !entry.dialect.isEmpty {
                                         Text(entry.dialect)
                                             .font(.caption2.weight(.medium))
@@ -78,9 +89,38 @@ struct CardPreviewView: View {
                                                     .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
                                             )
                                     }
-                                    Text("/\(entry.ipa)/")
-                                        .font(.body)
-                                        .foregroundStyle(.secondary)
+                                    if let generatedIPA {
+                                        Text("/\(generatedIPA)/")
+                                            .font(.body.weight(.medium))
+                                            .foregroundStyle(.primary)
+                                            .help("Generated IPA pronunciation")
+                                    } else {
+                                        Text(entry.usesIPADelimiters ? "/\(entry.notation)/" : entry.notation)
+                                            .font(.body)
+                                            .foregroundStyle(.secondary)
+                                            .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
+                                    }
+
+                                    if !entry.usesIPADelimiters && generatedIPA == nil {
+                                        if !item.hasDisplayIPA {
+                                            Button(action: {
+                                                generateIPA(for: entry.dialect, guide: entry.notation)
+                                            }) {
+                                                if generatingIPADialects.contains(dialectKey) {
+                                                    ProgressView()
+                                                        .controlSize(.small)
+                                                        .frame(minWidth: 72)
+                                                } else {
+                                                    Label("Generate IPA", systemImage: "sparkles")
+                                                        .labelStyle(.titleAndIcon)
+                                                }
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.small)
+                                            .tint(Color.accentColor.opacity(0.9))
+                                            .disabled(generatingIPADialects.contains(dialectKey))
+                                        }
+                                    }
                                     Button(action: {
                                         Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
                                     }) {
@@ -92,7 +132,10 @@ struct CardPreviewView: View {
                             }
                         }
                     } else {
-                        HStack {
+                        HStack(alignment: .center, spacing: 10) {
+                            let defaultDialectKey = item.dialectStorageKey(for: "AmE")
+                            let generatedIPA = item.preferredGeneratedIPA
+
                             Button(action: {
                                 Task { await viewModel.playPronunciation(for: item) }
                             }) {
@@ -100,7 +143,39 @@ struct CardPreviewView: View {
                             }
                             .buttonStyle(.borderless)
                             .disabled(!item.isReady)
+
+                            if !item.hasDisplayIPA {
+                                if generatedIPA == nil {
+                                    Button(action: {
+                                        generateIPA(for: "AmE", guide: nil)
+                                    }) {
+                                        if generatingIPADialects.contains(defaultDialectKey) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                                .frame(minWidth: 72)
+                                        } else {
+                                            Label("Generate IPA", systemImage: "sparkles")
+                                                .labelStyle(.titleAndIcon)
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                    .tint(Color.accentColor.opacity(0.9))
+                                    .disabled(!item.isReady || generatingIPADialects.contains(defaultDialectKey))
+                                }
+                            }
+
+                            if let generatedIPA {
+                                Text("/\(generatedIPA)/")
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(.primary)
+                            }
                         }
+                    }
+                    if let generatedIPAErrorMessage {
+                        Text(generatedIPAErrorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -122,6 +197,7 @@ struct CardPreviewView: View {
                     Divider()
                     resizeHandle(availableHeight: geometry.size.height)
                     AIContentView(item: item)
+                        .id(item.id)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .frame(height: aiPanelHeight)
@@ -142,7 +218,7 @@ struct CardPreviewView: View {
             if let result = item.lookupResult {
                 let note = AnkiNoteData(
                     word: item.word,
-                    phonetic: AnkiFieldFormatter.phonetic(from: result),
+                    phonetic: item.phonetic,
                     definitions: AnkiFieldFormatter.definitionsHTML(
                         from: result,
                         aiArtifacts: item.aiArtifacts
@@ -170,9 +246,32 @@ struct CardPreviewView: View {
                     Image(systemName: "rectangle.and.pencil.and.ellipsis")
                         .font(.system(size: 32))
                         .foregroundStyle(.tertiary)
-                    Text("No accepted recall draft yet.")
+                    Text("No Saved Recall Card yet.")
                         .font(.body)
                         .foregroundStyle(.secondary)
+                    Text("Save a draft in AI Assistant to preview the Saved Recall Card here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(action: generateRecallDraftFromPreview) {
+                        if isGeneratingRecallPreviewDraft {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Generate Draft", systemImage: "sparkles.rectangle.stack")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isGeneratingRecallPreviewDraft || item.lookupResult == nil)
+                    if let recallPreviewFeedback {
+                        Text(recallPreviewFeedback)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let recallPreviewErrorMessage {
+                        Text(recallPreviewErrorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -205,6 +304,118 @@ struct CardPreviewView: View {
         }
         .padding(.top, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func generateRecallDraftFromPreview() {
+        guard let result = item.lookupResult else { return }
+        let senses = recallPromptInputs(from: result)
+        guard !senses.isEmpty else {
+            recallPreviewErrorMessage = "Recall needs at least one usable sense before generating a draft."
+            return
+        }
+
+        isGeneratingRecallPreviewDraft = true
+        recallPreviewFeedback = nil
+        recallPreviewErrorMessage = nil
+
+        Task {
+            do {
+                let mode = defaultRecallMode
+                let generated = try await llmService.generateRecallCardDraft(
+                    word: item.word,
+                    senses: senses,
+                    mode: mode,
+                    anchor: LLMAnchorSnapshot(text: item.word, note: "Preview quick-start")
+                )
+                let draft = RecallCardDraft(
+                    mode: RecallCardMode(rawValue: generated.mode.rawValue) ?? .fullSpelling,
+                    front: generated.front,
+                    back: generated.back,
+                    hint: generated.hint,
+                    anchor: generated.anchor.map {
+                        AIArtifactAnchorSnapshot(headword: $0.text, lexicalEntryIndex: nil, senseIndex: nil, exampleIndex: nil, excerpt: $0.note)
+                    }
+                )
+
+                await MainActor.run {
+                    viewModel.saveAISuggestedRecallCardDrafts([draft], for: item)
+                    isGeneratingRecallPreviewDraft = false
+                    recallPreviewFeedback = "Draft added to AI Assistant below. Save it there to preview the card here."
+                }
+            } catch {
+                await MainActor.run {
+                    isGeneratingRecallPreviewDraft = false
+                    recallPreviewErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func recallPromptInputs(from result: LookupResult) -> [LLMSensePromptInput] {
+        var seen = Set<String>()
+        var inputs: [LLMSensePromptInput] = []
+
+        for entry in result.entries {
+            for lexical in entry.lexicalEntries {
+                for sense in lexical.senses {
+                    let definition = sense.definition.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !definition.isEmpty else { continue }
+                    let input = LLMSensePromptInput(
+                        partOfSpeech: lexical.partOfSpeechLabel,
+                        definition: definition,
+                        semanticHint: sense.semanticHint
+                    )
+                    let key = [
+                        input.partOfSpeech.lowercased(),
+                        input.definition.lowercased(),
+                        (input.semanticHint ?? "").lowercased()
+                    ].joined(separator: "|")
+                    guard seen.insert(key).inserted else { continue }
+                    inputs.append(input)
+                }
+            }
+        }
+
+        return inputs
+    }
+
+    private var defaultRecallMode: LLMRecallCardMode {
+        if item.word.contains(" ") {
+            return .phraseRecall
+        }
+        if item.word.count >= 9 {
+            return .targetedLetterCloze
+        }
+        return .fullSpelling
+    }
+
+    private func generateIPA(for dialect: String?, guide: String?) {
+        guard let result = item.lookupResult else { return }
+        let dialectKey = item.dialectStorageKey(for: dialect)
+        let senses = recallPromptInputs(from: result)
+
+        generatingIPADialects.insert(dialectKey)
+        generatedIPAErrorMessage = nil
+
+        Task {
+            do {
+                let generatedIPA = try await llmService.generatePhoneticIPA(
+                    word: item.word,
+                    dialect: dialect,
+                    pronunciationGuide: guide,
+                    senses: senses
+                )
+                await MainActor.run {
+                    viewModel.saveGeneratedIPA(generatedIPA, dialect: dialect, for: item)
+                    generatingIPADialects.remove(dialectKey)
+                }
+            } catch {
+                await MainActor.run {
+                    generatingIPADialects.remove(dialectKey)
+                    generatedIPAErrorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func recallPreviewHTML(for draft: RecallCardDraft, showBack: Bool) -> String {
@@ -268,6 +479,7 @@ struct CardPreviewView: View {
             Spacer()
         }
         .contentShape(Rectangle())
+        .hoverCursor(.resizeUpDown)
         .padding(.vertical, 6)
         .background(.background.opacity(0.85))
         .gesture(

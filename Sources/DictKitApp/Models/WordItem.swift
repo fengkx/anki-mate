@@ -40,25 +40,35 @@ final class WordItem: ObservableObject, Identifiable {
     @Published var aiArtifacts: AIArtifacts = .empty
     @Published var isGeneratingAI: Bool = false
 
+    var aiSuggestedExampleArtifacts: [ExampleSentenceArtifact] {
+        get { aiArtifacts.exampleSentences.suggested ?? [] }
+        set { aiArtifacts.exampleSentences.suggested = newValue.compactMap(normalizeExampleArtifact).nilIfEmpty }
+    }
+
+    var aiAcceptedExampleArtifacts: [ExampleSentenceArtifact] {
+        get { aiArtifacts.exampleSentences.accepted ?? [] }
+        set { aiArtifacts.exampleSentences.accepted = newValue.compactMap(normalizeExampleArtifact).nilIfEmpty }
+    }
+
     var aiSuggestedExampleSentences: [String] {
-        get { aiArtifacts.suggestedExampleSentences }
+        get { aiSuggestedExampleArtifacts.map(\.text) }
         set {
-            aiArtifacts.exampleSentences.suggested = newValue.compactMap {
+            aiSuggestedExampleArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return ExampleSentenceArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiAcceptedExampleSentences: [String] {
-        get { aiArtifacts.acceptedExampleSentences }
+        get { aiAcceptedExampleArtifacts.map(\.text) }
         set {
-            aiArtifacts.exampleSentences.accepted = newValue.compactMap {
+            aiAcceptedExampleArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return ExampleSentenceArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
@@ -188,33 +198,75 @@ final class WordItem: ObservableObject, Identifiable {
     }
 
     var phonetic: String {
+        if let generatedIPA = preferredGeneratedIPA {
+            return "/\(generatedIPA)/"
+        }
         guard let result = lookupResult else { return "" }
-        return AnkiFieldFormatter.phonetic(from: result)
+        return AnkiFieldFormatter.phoneticDisplay(from: result)
     }
 
-    var phoneticsByDialect: [(dialect: String, ipa: String, pronunciation: Pronunciation)] {
+    var phoneticsByDialect: [(dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)] {
         guard let result = lookupResult else { return [] }
         var seen = Set<String>()
-        var items: [(dialect: String, ipa: String, pronunciation: Pronunciation)] = []
+        var items: [(dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)] = []
         for entry in result.entries {
             let allPronunciations = entry.pronunciations.isEmpty
                 ? entry.lexicalEntries.flatMap(\.pronunciations)
                 : entry.pronunciations
             for p in allPronunciations {
-                let ipa = p.ipa.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !ipa.isEmpty else { continue }
+                let notation = p.displayNotation.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !notation.isEmpty else { continue }
                 let dialect = p.dialect ?? ""
-                let key = "\(dialect):\(ipa)"
+                let key = "\(dialect):\(p.usesIPADelimitersForDisplay):\(notation)"
                 guard !seen.contains(key) else { continue }
                 seen.insert(key)
-                items.append((dialect: dialect, ipa: ipa, pronunciation: p))
+                items.append((
+                    dialect: dialect,
+                    notation: notation,
+                    usesIPADelimiters: p.usesIPADelimitersForDisplay,
+                    pronunciation: p
+                ))
             }
         }
         return items
     }
 
+    var hasTrueIPA: Bool {
+        phoneticsByDialect.contains { $0.usesIPADelimiters }
+    }
+
+    var hasDisplayIPA: Bool {
+        hasTrueIPA || preferredGeneratedIPA != nil
+    }
+
+    var preferredGeneratedIPA: String? {
+        generatedIPANotationsByDialect[dialectStorageKey(for: "AmE")]
+            ?? generatedIPANotationsByDialect[dialectStorageKey(for: "BrE")]
+            ?? generatedIPANotationsByDialect.values.first
+    }
+
+    var generatedIPANotationsByDialect: [String: String] {
+        get { aiArtifacts.generatedIPANotationsByDialect }
+        set { aiArtifacts.generatedIPANotationsByDialect = newValue }
+    }
+
+    func dialectStorageKey(for dialect: String?) -> String {
+        let trimmed = dialect?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed! : "default"
+    }
+
     var isReady: Bool {
         lookupResult != nil
+    }
+
+    private func normalizeExampleArtifact(_ artifact: ExampleSentenceArtifact) -> ExampleSentenceArtifact? {
+        let normalized = ExampleSentenceArtifact(
+            text: artifact.text,
+            translation: artifact.translation,
+            note: artifact.note,
+            anchor: artifact.anchor
+        )
+        return normalized.text.isEmpty ? nil : normalized
     }
 
     init(
