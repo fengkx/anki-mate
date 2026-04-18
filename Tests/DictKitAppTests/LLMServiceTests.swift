@@ -470,6 +470,35 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(scaffold.requiredMaskedSurface, "co__ocation")
     }
 
+    func testEnforceRecallDraftContractRepairsDriftedTargetedLetterClozeMask() {
+        let scaffold = LLMService.recallPromptScaffold(
+            word: "lemmatize",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "verb",
+                    definition: "reduce a word to its base form",
+                    semanticHint: "base form"
+                )
+            ],
+            mode: .targetedLetterCloze
+        )
+
+        let repaired = LLMService.enforceRecallDraftContract(
+            LLMRecallCardDraft(
+                mode: .targetedLetterCloze,
+                front: "base form · lemma__ze",
+                back: "lemmatize",
+                hint: "verb · base form"
+            ),
+            scaffold: scaffold,
+            fallbackAnchor: nil
+        )
+
+        XCTAssertEqual(repaired.front, "base form · le__atize")
+        XCTAssertEqual(repaired.back, "lemmatize")
+        XCTAssertEqual(repaired.hint, "verb · base form")
+    }
+
     func testRuleBasedRecallDraftFallsBackToPhrasePromptForPhraseRecall() throws {
         let draft = try XCTUnwrap(
             LLMService.ruleBasedRecallCardDraft(
@@ -649,6 +678,39 @@ final class LLMServiceTests: XCTestCase {
         )
         XCTAssertEqual(hints.map(\.kind), ["usage_tendency", "semantic_contrast"])
         XCTAssertEqual(hints.map(\.senseIndex), [1, 1])
+    }
+
+    func testMergeExampleSentencesUsesTopUpToRestoreMissingSenseCoverage() {
+        let merged = LLMService.mergeExampleSentences(
+            [
+                LLMExampleSentence(
+                    english: "The kitchen light stayed on all night.",
+                    translation: "厨房的灯整晚都亮着。",
+                    senseIndex: 1
+                ),
+                LLMExampleSentence(
+                    english: "They light the candles before dinner.",
+                    translation: "他们晚饭前点燃蜡烛。",
+                    senseIndex: 3
+                ),
+                LLMExampleSentence(
+                    english: "This bag is light enough for travel.",
+                    translation: "这个包轻得适合旅行。",
+                    senseIndex: nil
+                )
+            ],
+            topUp: [
+                LLMExampleSentence(
+                    english: "This bag is light enough for travel.",
+                    translation: "这个包轻得适合旅行。",
+                    senseIndex: 2
+                )
+            ],
+            desiredCount: 3
+        )
+
+        XCTAssertEqual(merged.count, 3)
+        XCTAssertEqual(Set(merged.compactMap(\.senseIndex)), [1, 2, 3])
     }
 
     func testDecodeStructuredOutputThrowsForNonJSONPayload() {

@@ -23,6 +23,7 @@ let dispatcher = RPCDispatcher(engine: engine)
 let startTime = Date()
 
 let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+var serverChannel: Channel?
 
 let bootstrap = ServerBootstrap(group: group)
     .serverChannelOption(.backlog, value: 8)
@@ -30,8 +31,9 @@ let bootstrap = ServerBootstrap(group: group)
         channel.pipeline.configureHTTPServerPipeline().flatMap {
             channel.pipeline.addHandler(
                 HTTPHandler(dispatcher: dispatcher, startTime: startTime, shutdownCallback: {
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
-                        exit(0)
+                    guard let serverChannel else { return }
+                    serverChannel.eventLoop.execute {
+                        serverChannel.close(promise: nil)
                     }
                 })
             )
@@ -40,6 +42,7 @@ let bootstrap = ServerBootstrap(group: group)
     .childChannelOption(.socketOption(.so_reuseaddr), value: 1)
 
 let channel = try bootstrap.bind(host: "127.0.0.1", port: port).wait()
+serverChannel = channel
 guard let localAddress = channel.localAddress, let actualPort = localAddress.port else {
     fputs("error: could not determine bound port\n", stderr)
     exit(1)

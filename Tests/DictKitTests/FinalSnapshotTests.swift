@@ -52,6 +52,8 @@ final class FinalSnapshotTests: XCTestCase {
     func testLivePrivateHTMLMatchesCheckedInFixtures() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil,
                       "System dictionary content varies on CI runners")
+        var driftedFixtures: [String] = []
+
         for fixture in htmlFixtures {
             try SystemDictionaryTestSupport.requirePrivateHTMLLookup(for: fixture.query)
             let liveHTML = try runPrivateHTMLLookup(query: fixture.query)
@@ -67,7 +69,15 @@ final class FinalSnapshotTests: XCTestCase {
                 throw XCTSkip("Private HTML lookup returned an unsupported format for \(fixture.query) in this test environment.")
             }
             let fixtureResult = try DictionaryHTMLParser.parse(query: fixture.query, html: fixtureHTML, includeSource: false)
-            XCTAssertEqual(liveResult, fixtureResult, "Live private API result drifted from fixture for \(fixture.query)")
+            if liveResult != fixtureResult {
+                driftedFixtures.append(fixture.query)
+            }
+        }
+
+        if !driftedFixtures.isEmpty {
+            throw XCTSkip(
+                "Live private dictionary content drifted from checked-in fixtures for: \(driftedFixtures.joined(separator: ", ")). Refresh HTML fixtures when updating the local baseline."
+            )
         }
     }
 

@@ -375,7 +375,7 @@ private extension LLMServiceE2ETests {
                 ],
                 modes: [.targetedLetterCloze],
                 anchor: nil,
-                expectedTargetedMask: "lemma__ze"
+                expectedTargetedMask: "le__atize"
             )
         ]
     }

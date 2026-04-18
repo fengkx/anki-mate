@@ -43,7 +43,7 @@ final class SystemDictionaryIntegrationTests: XCTestCase {
             throw XCTSkip("Set DICTKIT_RUN_SPEECH_TESTS=1 to run AVSpeech integration tests.")
         }
 
-        let client = DictionarySpeechClient()
+        let client = DictionarySpeechClient(configuration: .init(useIPA: true))
 
         do {
             let result = try await client.synthesize(
@@ -63,7 +63,7 @@ final class SystemDictionaryIntegrationTests: XCTestCase {
             throw XCTSkip("Set DICTKIT_RUN_SPEECH_TESTS=1 to run AVSpeech integration tests.")
         }
 
-        let client = DictionarySpeechClient()
+        let client = DictionarySpeechClient(configuration: .init(useIPA: true))
 
         do {
             let result = try await client.synthesize(
@@ -75,6 +75,7 @@ final class SystemDictionaryIntegrationTests: XCTestCase {
             )
 
             XCTAssertFalse(result.audioData.isEmpty)
+            XCTAssertFalse(result.didFallbackToText)
             XCTAssertEqual(result.pronunciationUsed?.dialect, "AmE")
         } catch SpeechError.synthesisUnavailable {
             throw XCTSkip("AVSpeech synthesis is unavailable in the current test environment.")

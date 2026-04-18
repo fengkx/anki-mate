@@ -136,7 +136,7 @@ final class DictionarySelectionPreviewModelTests: XCTestCase {
         XCTAssertTrue(model.isCandidateDictionary("Oxford Dictionary of English 3rd Edition"))
     }
 
-    private static func makeLookupResult(
+    nonisolated private static func makeLookupResult(
         query: String,
         definition: String,
         examples: [String],

@@ -102,6 +102,16 @@ public final class ServerProcessManager: ObservableObject {
         healthCheckTimer = nil
 
         if let port = state.port {
+            do {
+                let _: UnloadModelResult = try await rpcClient.call(
+                    method: RPCMethod.unloadModel,
+                    params: UnloadModelParams(),
+                    port: port
+                )
+            } catch {
+                // Best effort only. The server may already be unloading or have no model loaded.
+            }
+
             // Try graceful shutdown via RPC
             do {
                 let _: ShutdownResult = try await rpcClient.call(
@@ -109,19 +119,31 @@ public final class ServerProcessManager: ObservableObject {
                     params: ShutdownParams(),
                     port: port
                 )
-                // Wait a moment for clean exit
-                try? await Task.sleep(for: .seconds(1))
             } catch {
                 // RPC failed, fall through to terminate
             }
         }
 
         if let proc = process, proc.isRunning {
-            proc.terminate()
-            // Give it a moment
-            try? await Task.sleep(for: .milliseconds(500))
-            if proc.isRunning {
+            let exitedGracefully = await Self.waitForExit(of: proc, timeout: .seconds(15))
+
+            if !exitedGracefully, proc.isRunning {
+                proc.terminate()
+            }
+
+            let exitedAfterTerminate: Bool
+            if exitedGracefully {
+                exitedAfterTerminate = true
+            } else {
+                exitedAfterTerminate = await Self.waitForExit(
+                    of: proc,
+                    timeout: .seconds(2)
+                )
+            }
+
+            if !exitedAfterTerminate, proc.isRunning {
                 proc.interrupt()
+                _ = await Self.waitForExit(of: proc, timeout: .seconds(1))
             }
         }
 
@@ -279,5 +301,19 @@ public final class ServerProcessManager: ObservableObject {
                 await stop()
             }
         }
+    }
+
+    private static func waitForExit(of process: Process, timeout: Duration) async -> Bool {
+        let start = ContinuousClock.now
+        let clock = ContinuousClock()
+
+        while process.isRunning {
+            if clock.now - start >= timeout {
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+
+        return true
     }
 }

@@ -61,4 +61,26 @@ enum SystemDictionaryTestSupport {
             throw XCTSkip("Private HTML dictionary lookup is unavailable for '\(term)' in this test environment.")
         }
     }
+
+    static func requirePublicIPAPronunciation(
+        for term: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let client = SystemDictionaryClient()
+        let result: LookupResult
+        do {
+            result = try client.lookup(term, source: .publicAPI, includeSource: false)
+        } catch LookupError.notFound {
+            throw XCTSkip("System dictionary public IPA lookup is unavailable for '\(term)' in this test environment.")
+        }
+
+        let pronunciations =
+            result.entries.flatMap(\.pronunciations)
+            + result.entries.flatMap(\.lexicalEntries).flatMap(\.pronunciations)
+
+        guard pronunciations.contains(where: { $0.ttsIPANotation != nil }) else {
+            throw XCTSkip("System dictionary public IPA pronunciation is unavailable for '\(term)' in this test environment.")
+        }
+    }
 }

@@ -232,17 +232,68 @@ public final class LLMService: ObservableObject {
         word: String,
         senses: [LLMSensePromptInput]
     ) async throws -> [LLMExampleSentence] {
+        let desiredCount = LLMPrompt.exampleSentenceCount(for: senses)
+        let initialExamples = try await requestExampleSentenceArtifacts(
+            word: word,
+            senses: senses,
+            desiredCount: desiredCount,
+            temperature: 0.45
+        )
+
+        guard senses.count > 1 else {
+            return initialExamples
+        }
+
+        let coveredSenseIndexes = Set(initialExamples.compactMap(\.senseIndex))
+        let missingSenseIndexes = Array(Set(1...senses.count).subtracting(coveredSenseIndexes)).sorted()
+        guard !missingSenseIndexes.isEmpty else {
+            return initialExamples
+        }
+
+        let missingSenses = missingSenseIndexes.map { senses[$0 - 1] }
+        let remappedTopUpExamples = try await requestExampleSentenceArtifacts(
+            word: word,
+            senses: missingSenses,
+            desiredCount: missingSenseIndexes.count,
+            temperature: 0.2
+        )
+        let topUpExamples: [LLMExampleSentence] = remappedTopUpExamples.compactMap { example in
+            guard let localSenseIndex = example.senseIndex,
+                  missingSenseIndexes.indices.contains(localSenseIndex - 1) else {
+                return nil
+            }
+
+            return LLMExampleSentence(
+                english: example.english,
+                translation: example.translation,
+                senseIndex: missingSenseIndexes[localSenseIndex - 1]
+            )
+        }
+
+        return Self.mergeExampleSentences(
+            initialExamples,
+            topUp: topUpExamples,
+            desiredCount: desiredCount
+        )
+    }
+
+    private func requestExampleSentenceArtifacts(
+        word: String,
+        senses: [LLMSensePromptInput],
+        desiredCount: Int,
+        temperature: Float
+    ) async throws -> [LLMExampleSentence] {
         let prompt = LLMPrompt.exampleSentenceArtifacts(
             word: word,
-            senses: senses
+            senses: senses,
+            desiredCount: desiredCount
         )
-        let desiredCount = LLMPrompt.exampleSentenceCount(for: senses)
 
         let response: ExampleSentenceEnvelope = try await generateStructuredOutput(
             type: ExampleSentenceEnvelope.self,
             prompt: prompt,
             maxTokens: max(420, desiredCount * 150),
-            temperature: 0.45,
+            temperature: temperature,
             responseFormat: LLMResponseFormat(kind: .json)
         )
 
@@ -603,7 +654,11 @@ public final class LLMService: ObservableObject {
                    expectedMode: mode,
                    target: normalizedWord
                ) {
-                return draft
+                return Self.enforceRecallDraftContract(
+                    draft,
+                    scaffold: scaffold,
+                    fallbackAnchor: anchor
+                )
             }
         } catch {
             if let fallback = Self.ruleBasedRecallCardDraft(
@@ -865,6 +920,48 @@ public final class LLMService: ObservableObject {
         }
         .prefix(desiredCount)
         .map { $0 }
+    }
+
+    static func mergeExampleSentences(
+        _ primary: [LLMExampleSentence],
+        topUp: [LLMExampleSentence],
+        desiredCount: Int
+    ) -> [LLMExampleSentence] {
+        var merged: [LLMExampleSentence] = []
+        var seenEnglish = Set<String>()
+        var coveredSenseIndexes = Set<Int>()
+
+        func appendIfNeeded(_ example: LLMExampleSentence) {
+            guard !seenEnglish.contains(example.english) else { return }
+            merged.append(example)
+            seenEnglish.insert(example.english)
+            if let senseIndex = example.senseIndex {
+                coveredSenseIndexes.insert(senseIndex)
+            }
+        }
+
+        for example in primary {
+            guard let senseIndex = example.senseIndex,
+                  !coveredSenseIndexes.contains(senseIndex) else {
+                continue
+            }
+            appendIfNeeded(example)
+        }
+
+        for example in topUp {
+            guard let senseIndex = example.senseIndex,
+                  !coveredSenseIndexes.contains(senseIndex) else {
+                continue
+            }
+            appendIfNeeded(example)
+        }
+
+        for example in primary + topUp {
+            guard merged.count < desiredCount else { break }
+            appendIfNeeded(example)
+        }
+
+        return Array(merged.prefix(desiredCount))
     }
 
     private static func normalizeGeneratedLine(
@@ -1435,6 +1532,34 @@ extension LLMService {
             back: back,
             hint: hint,
             anchor: anchor
+        )
+    }
+
+    static func enforceRecallDraftContract(
+        _ draft: LLMRecallCardDraft,
+        scaffold: RecallPromptScaffold,
+        fallbackAnchor: LLMAnchorSnapshot?
+    ) -> LLMRecallCardDraft {
+        guard draft.mode == .targetedLetterCloze,
+              let requiredMaskedSurface = scaffold.requiredMaskedSurface?.nilIfEmpty else {
+            return draft
+        }
+
+        let surfacedText = [draft.front, draft.hint ?? ""].joined(separator: " ")
+        guard !surfacedText.contains(requiredMaskedSurface) else {
+            return draft
+        }
+
+        let repairedFront = scaffold.learnerCue?.nilIfEmpty.map {
+            "\($0) · \(requiredMaskedSurface)"
+        } ?? requiredMaskedSurface
+
+        return LLMRecallCardDraft(
+            mode: draft.mode,
+            front: repairedFront,
+            back: draft.back,
+            hint: draft.hint?.nilIfEmpty ?? scaffold.hint,
+            anchor: draft.anchor ?? normalizeAnchor(fallbackAnchor)
         )
     }
 
