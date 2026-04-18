@@ -91,6 +91,41 @@ public struct LLMCollocation: Codable, Equatable, Sendable {
     }
 }
 
+public struct LLMExampleSentence: Codable, Equatable, Sendable {
+    public let english: String
+    public let translation: String
+    public let senseIndex: Int?
+
+    public init(
+        english: String,
+        translation: String,
+        senseIndex: Int? = nil
+    ) {
+        self.english = english.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translation = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.senseIndex = senseIndex
+    }
+}
+
+public struct LLMUsageHint: Codable, Equatable, Sendable {
+    public let text: String
+    public let translation: String
+    public let kind: String?
+    public let senseIndex: Int?
+
+    public init(
+        text: String,
+        translation: String,
+        kind: String? = nil,
+        senseIndex: Int? = nil
+    ) {
+        self.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translation = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.kind = kind?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.senseIndex = senseIndex
+    }
+}
+
 public struct LLMLearningAids: Codable, Equatable, Sendable {
     public let pitfalls: [LLMPitfall]
     public let mnemonics: [LLMMnemonic]

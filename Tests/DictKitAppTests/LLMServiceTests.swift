@@ -312,6 +312,30 @@ final class LLMServiceTests: XCTestCase {
         )
     }
 
+    func testContextSizeOverrideDefaultsToModelSetting() {
+        XCTAssertEqual(
+            LLMService.contextSizeOverride(defaultValue: 131_072, environment: [:]),
+            131_072
+        )
+    }
+
+    func testContextSizeOverrideReadsEnvironmentAndClampsToMinimum() {
+        XCTAssertEqual(
+            LLMService.contextSizeOverride(
+                defaultValue: 131_072,
+                environment: ["DICTKIT_LLM_CONTEXT_SIZE": "4096"]
+            ),
+            4096
+        )
+        XCTAssertEqual(
+            LLMService.contextSizeOverride(
+                defaultValue: 131_072,
+                environment: ["DICTKIT_LLM_CONTEXT_SIZE": "128"]
+            ),
+            512
+        )
+    }
+
     func testDecodeStructuredRecallDraftsPreservesAnchorSnapshotWithoutRemapping() throws {
         let payload = """
         ```json
@@ -359,21 +383,21 @@ final class LLMServiceTests: XCTestCase {
         {
           "pitfalls": [
             {
-              "summary": "  Don't confuse it with fee.  ",
-              "details": "  Money asked for service.  ",
+              "summary": "  - Don't confuse it with fee.  ",
+              "details": "  * Money asked for service.  ",
               "anchor": { "text": "charge", "note": "snapshot" }
             }
           ],
           "mnemonics": [
             {
-              "clue": "  charge -> car battery starts charging  ",
+              "clue": "  1. charge -> car battery starts charging  ",
               "anchor": null
             }
           ],
           "collocations": [
             {
-              "phrase": "  charge a fee  ",
-              "gloss": "  ask for money  ",
+              "phrase": "  • charge a fee  ",
+              "gloss": "  - ask for money  ",
               "anchor": { "text": "charge a fee", "note": "" }
             }
           ]
@@ -388,13 +412,42 @@ final class LLMServiceTests: XCTestCase {
         let aids = LLMService.normalizeLearningAids(decoded)
 
         XCTAssertEqual(aids.pitfalls.count, 1)
-        XCTAssertEqual(aids.pitfalls[0].summary, "Don't confuse it with fee.")
-        XCTAssertEqual(aids.pitfalls[0].details, "Money asked for service.")
+        XCTAssertEqual(aids.pitfalls[0].summary, "- Don't confuse it with fee.")
+        XCTAssertEqual(aids.pitfalls[0].details, "* Money asked for service.")
         XCTAssertEqual(aids.pitfalls[0].anchor?.text, "charge")
-        XCTAssertEqual(aids.mnemonics.map(\.clue), ["charge -> car battery starts charging"])
-        XCTAssertEqual(aids.collocations.map(\.phrase), ["charge a fee"])
-        XCTAssertEqual(aids.collocations.first?.gloss, "ask for money")
+        XCTAssertEqual(aids.mnemonics.map(\.clue), ["1. charge -> car battery starts charging"])
+        XCTAssertEqual(aids.collocations.map(\.phrase), ["• charge a fee"])
+        XCTAssertEqual(aids.collocations.first?.gloss, "- ask for money")
         XCTAssertNil(aids.collocations.first?.anchor?.note)
+    }
+
+    func testDecodeLearningAidsAcceptsMarkdownFencedJSONAndNormalizesNestedFields() throws {
+        let payload = """
+        Here is the output:
+        ```json
+        {
+          "pitfalls": [
+            {
+              "summary": "  - Avoid raw markdown in the final copy.  ",
+              "details": "  * Keep the learner-facing line plain.  ",
+              "anchor": { "text": "charge", "note": "  keep original snapshot  " }
+            }
+          ],
+          "mnemonics": [],
+          "collocations": []
+        }
+        ```
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            LearningAidsEnvelope.self,
+            from: payload
+        )
+        let aids = LLMService.normalizeLearningAids(decoded)
+
+        XCTAssertEqual(aids.pitfalls.first?.summary, "- Avoid raw markdown in the final copy.")
+        XCTAssertEqual(aids.pitfalls.first?.details, "* Keep the learner-facing line plain.")
+        XCTAssertEqual(aids.pitfalls.first?.anchor?.note, "keep original snapshot")
     }
 
     func testDecodeStructuredOutputThrowsForNonJSONPayload() {
@@ -409,6 +462,62 @@ final class LLMServiceTests: XCTestCase {
             }
             XCTAssertTrue(message.contains("Expected JSON object"))
         }
+    }
+
+    func testGenerateParamsSupportStructuredRequestExtensions() throws {
+        let params = GenerateParams(
+            prompt: "Say hello",
+            systemPrompt: "Be brief",
+            messages: [
+                LLMMessage(role: .system, content: "Use JSON"),
+                LLMMessage(role: .user, content: "Hello")
+            ],
+            tools: [
+                LLMToolDefinition(
+                    name: "lookup",
+                    description: "Look up a term",
+                    parameters: .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "query": .object([
+                                "type": .string("string")
+                            ])
+                        ]),
+                        "required": .array([.string("query")])
+                    ])
+                )
+            ],
+            responseFormat: LLMResponseFormat(
+                kind: .jsonSchema,
+                schema: .object([
+                    "type": .string("object")
+                ]),
+                strict: true
+            ),
+            maxTokens: 128,
+            temperature: 0.2
+        )
+
+        let data = try JSONEncoder().encode(params)
+        let decoded = try JSONDecoder().decode(GenerateParams.self, from: data)
+
+        XCTAssertEqual(decoded.prompt, "Say hello")
+        XCTAssertEqual(decoded.systemPrompt, "Be brief")
+        XCTAssertEqual(decoded.messages?.count, 2)
+        XCTAssertEqual(decoded.tools?.first?.name, "lookup")
+        XCTAssertEqual(decoded.responseFormat?.kind, .jsonSchema)
+        XCTAssertEqual(decoded.maxTokens, 128)
+        XCTAssertEqual(decoded.temperature, 0.2)
+    }
+
+    func testGenerateResultDecodesLegacyPayloadWithoutFinishReason() throws {
+        let payload = #"{"text":"hello","tokensUsed":3,"durationMs":42}"#
+        let result = try JSONDecoder().decode(GenerateResult.self, from: Data(payload.utf8))
+
+        XCTAssertEqual(result.text, "hello")
+        XCTAssertEqual(result.tokensUsed, 3)
+        XCTAssertEqual(result.durationMs, 42)
+        XCTAssertNil(result.finishReason)
     }
 
     private func makeTemporaryDirectory() -> URL {

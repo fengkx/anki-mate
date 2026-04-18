@@ -9,6 +9,7 @@ import AnkiMateRPC
 public final class LLMService: ObservableObject {
     private static let selectedModelIdDefaultsKey = "ankimate.selectedModelId"
     private static let lastSuccessfulModelIdDefaultsKey = "ankimate.lastSuccessfullyLoadedModelId"
+    private static let contextSizeEnvironmentKey = "DICTKIT_LLM_CONTEXT_SIZE"
     private static let gpuLayersEnvironmentKey = "DICTKIT_LLM_GPU_LAYERS"
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
@@ -31,11 +32,27 @@ public final class LLMService: ObservableObject {
 
     public init(defaults: UserDefaults = .standard) {
         let client = RPCClient()
-        self.rpcClient = client
+        self.init(
+            defaults: defaults,
+            registry: ModelRegistry(),
+            downloadManager: ModelDownloadManager(),
+            serverManager: ServerProcessManager(rpcClient: client),
+            rpcClient: client
+        )
+    }
+
+    init(
+        defaults: UserDefaults,
+        registry: ModelRegistry,
+        downloadManager: ModelDownloadManager,
+        serverManager: ServerProcessManager,
+        rpcClient: RPCClient
+    ) {
+        self.rpcClient = rpcClient
         self.defaults = defaults
-        self.registry = ModelRegistry()
-        self.downloadManager = ModelDownloadManager()
-        self.serverManager = ServerProcessManager(rpcClient: client)
+        self.registry = registry
+        self.downloadManager = downloadManager
+        self.serverManager = serverManager
         self.selectedModelId = defaults.string(forKey: Self.selectedModelIdDefaultsKey) ?? ""
 
         // Observe server state changes
@@ -98,7 +115,7 @@ public final class LLMService: ObservableObject {
                 method: RPCMethod.loadModel,
                 params: LoadModelParams(
                     modelPath: modelPath,
-                    contextSize: model.contextSize,
+                    contextSize: Self.contextSizeOverride(defaultValue: model.contextSize),
                     gpuLayers: Self.gpuLayersOverride()
                 ),
                 port: port
@@ -138,7 +155,11 @@ public final class LLMService: ObservableObject {
         guard hasModel else { return }
         guard serverState != .starting, !serverState.isRunning else { return }
 
-        await startServer()
+        do {
+            try await ensureReady()
+        } catch {
+            // Best effort: keep the auto-start path non-fatal and leave the UI state intact.
+        }
     }
 
     // MARK: - High-Level Generation
@@ -695,6 +716,18 @@ public final class LLMService: ObservableObject {
         }
 
         return max(parsed, 0)
+    }
+
+    static func contextSizeOverride(
+        defaultValue: Int,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Int {
+        guard let rawValue = environment[contextSizeEnvironmentKey],
+              let parsed = Int(rawValue) else {
+            return defaultValue
+        }
+
+        return max(parsed, 512)
     }
 }
 
