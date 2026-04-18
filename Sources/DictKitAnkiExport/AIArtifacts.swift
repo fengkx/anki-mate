@@ -33,6 +33,13 @@ public struct AIArtifactAnchorSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct ExampleSentenceArtifact: Codable, Equatable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case translation
+        case note
+        case anchor
+    }
+
     public let text: String
     public let translation: String?
     public let note: String?
@@ -44,11 +51,44 @@ public struct ExampleSentenceArtifact: Codable, Equatable, Sendable {
         note: String? = nil,
         anchor: AIArtifactAnchorSnapshot? = nil
     ) {
-        self.text = text
-        self.translation = translation
-        self.note = note
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.text = normalizedText
+        self.translation = Self.inferredTranslation(from: normalizedText)
+        self.note = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.anchor = anchor
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            text: try container.decode(String.self, forKey: .text),
+            translation: try container.decodeIfPresent(String.self, forKey: .translation),
+            note: try container.decodeIfPresent(String.self, forKey: .note),
+            anchor: try container.decodeIfPresent(AIArtifactAnchorSnapshot.self, forKey: .anchor)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(translation, forKey: .translation)
+        try container.encodeIfPresent(note, forKey: .note)
+        try container.encodeIfPresent(anchor, forKey: .anchor)
+    }
+
+    public var renderedText: String {
+        text
+    }
+
+    public static func inferredTranslation(from text: String) -> String? {
+        guard let separatorRange = text.range(of: "—", options: .backwards) else { return nil }
+
+        let sourceText = text[..<separatorRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let translationText = text[separatorRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceText.isEmpty, !translationText.isEmpty else { return nil }
+        return translationText
+    }
+
 }
 
 public struct DefinitionNoteArtifact: Codable, Equatable, Sendable {
@@ -137,7 +177,25 @@ public struct RecallCardDraft: Codable, Equatable, Sendable {
 }
 
 public struct AIArtifacts: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    private struct RawExampleSentenceArtifact: Codable, Equatable, Sendable {
+        let text: String
+        let translation: String?
+        let note: String?
+        let anchor: AIArtifactAnchorSnapshot?
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case exampleSentences
+        case definitionNote
+        case recallCardDrafts
+        case pitfalls
+        case mnemonics
+        case collocations
+        case generatedIPANotationsByDialect
+    }
+
+    public static let currentSchemaVersion = 2
     public static let empty = AIArtifacts()
 
     public var schemaVersion: Int
@@ -147,6 +205,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     public var pitfalls: AIArtifactSlot<[PitfallArtifact]>
     public var mnemonics: AIArtifactSlot<[MnemonicArtifact]>
     public var collocations: AIArtifactSlot<[CollocationArtifact]>
+    public var generatedIPANotationsByDialect: [String: String]
 
     public init(
         schemaVersion: Int = AIArtifacts.currentSchemaVersion,
@@ -155,7 +214,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         recallCardDrafts: AIArtifactSlot<[RecallCardDraft]> = .init(),
         pitfalls: AIArtifactSlot<[PitfallArtifact]> = .init(),
         mnemonics: AIArtifactSlot<[MnemonicArtifact]> = .init(),
-        collocations: AIArtifactSlot<[CollocationArtifact]> = .init()
+        collocations: AIArtifactSlot<[CollocationArtifact]> = .init(),
+        generatedIPANotationsByDialect: [String: String] = [:]
     ) {
         self.schemaVersion = schemaVersion
         self.exampleSentences = exampleSentences
@@ -164,6 +224,34 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         self.pitfalls = pitfalls
         self.mnemonics = mnemonics
         self.collocations = collocations
+        self.generatedIPANotationsByDialect = generatedIPANotationsByDialect
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self = AIArtifacts(
+            schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? AIArtifacts.currentSchemaVersion,
+            exampleSentences: Self.decodeExampleSentenceSlot(from: container),
+            definitionNote: try container.decodeIfPresent(AIArtifactSlot<DefinitionNoteArtifact>.self, forKey: .definitionNote) ?? .init(),
+            recallCardDrafts: try container.decodeIfPresent(AIArtifactSlot<[RecallCardDraft]>.self, forKey: .recallCardDrafts) ?? .init(),
+            pitfalls: try container.decodeIfPresent(AIArtifactSlot<[PitfallArtifact]>.self, forKey: .pitfalls) ?? .init(),
+            mnemonics: try container.decodeIfPresent(AIArtifactSlot<[MnemonicArtifact]>.self, forKey: .mnemonics) ?? .init(),
+            collocations: try container.decodeIfPresent(AIArtifactSlot<[CollocationArtifact]>.self, forKey: .collocations) ?? .init(),
+            generatedIPANotationsByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedIPANotationsByDialect) ?? [:]
+        ).normalized()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        let normalized = normalized()
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(normalized.schemaVersion, forKey: .schemaVersion)
+        try container.encode(normalized.exampleSentences, forKey: .exampleSentences)
+        try container.encode(normalized.definitionNote, forKey: .definitionNote)
+        try container.encode(normalized.recallCardDrafts, forKey: .recallCardDrafts)
+        try container.encode(normalized.pitfalls, forKey: .pitfalls)
+        try container.encode(normalized.mnemonics, forKey: .mnemonics)
+        try container.encode(normalized.collocations, forKey: .collocations)
+        try container.encode(normalized.generatedIPANotationsByDialect, forKey: .generatedIPANotationsByDialect)
     }
 
     public var isEmpty: Bool {
@@ -178,7 +266,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             mnemonics.suggested == nil &&
             mnemonics.accepted == nil &&
             collocations.suggested == nil &&
-            collocations.accepted == nil
+            collocations.accepted == nil &&
+            generatedIPANotationsByDialect.isEmpty
     }
 
     public init(
@@ -195,7 +284,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         legacySuggestedCollocations: [String] = [],
         legacyAcceptedCollocations: [String] = []
     ) {
-        self.init(
+        self = AIArtifacts(
             exampleSentences: AIArtifactSlot(
                 suggested: Self.makeExampleSentenceArtifacts(from: legacySuggestedExampleSentences),
                 accepted: Self.makeExampleSentenceArtifacts(from: legacyAcceptedExampleSentences)
@@ -219,8 +308,9 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             collocations: AIArtifactSlot(
                 suggested: Self.makeCollocationArtifacts(from: legacySuggestedCollocations),
                 accepted: Self.makeCollocationArtifacts(from: legacyAcceptedCollocations)
-            )
-        )
+            ),
+            generatedIPANotationsByDialect: [:]
+        ).normalized()
     }
 
     public func fillingMissingSlots(
@@ -277,7 +367,39 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             collocations: AIArtifactSlot(
                 suggested: collocations.suggested ?? legacy.collocations.suggested,
                 accepted: collocations.accepted ?? legacy.collocations.accepted
-            )
+            ),
+            generatedIPANotationsByDialect: generatedIPANotationsByDialect
+        ).normalized()
+    }
+
+    public func normalized() -> AIArtifacts {
+        AIArtifacts(
+            schemaVersion: schemaVersion,
+            exampleSentences: AIArtifactSlot(
+                suggested: Self.normalizeExampleArtifacts(exampleSentences.suggested),
+                accepted: Self.normalizeExampleArtifacts(exampleSentences.accepted)
+            ),
+            definitionNote: AIArtifactSlot(
+                suggested: Self.normalizeDefinitionNoteArtifact(definitionNote.suggested),
+                accepted: Self.normalizeDefinitionNoteArtifact(definitionNote.accepted)
+            ),
+            recallCardDrafts: AIArtifactSlot(
+                suggested: Self.normalizeRecallCardDrafts(recallCardDrafts.suggested),
+                accepted: Self.normalizeRecallCardDrafts(recallCardDrafts.accepted)
+            ),
+            pitfalls: AIArtifactSlot(
+                suggested: Self.normalizePitfallArtifacts(pitfalls.suggested),
+                accepted: Self.normalizePitfallArtifacts(pitfalls.accepted)
+            ),
+            mnemonics: AIArtifactSlot(
+                suggested: Self.normalizeMnemonicArtifacts(mnemonics.suggested),
+                accepted: Self.normalizeMnemonicArtifacts(mnemonics.accepted)
+            ),
+            collocations: AIArtifactSlot(
+                suggested: Self.normalizeCollocationArtifacts(collocations.suggested),
+                accepted: Self.normalizeCollocationArtifacts(collocations.accepted)
+            ),
+            generatedIPANotationsByDialect: Self.normalizeGeneratedIPANotations(generatedIPANotationsByDialect)
         )
     }
 
@@ -330,8 +452,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     }
 
     private static func makeExampleSentenceArtifacts(from values: [String]) -> [ExampleSentenceArtifact]? {
-        let items = values.compactMap(Self.makeExampleSentenceArtifact(from:))
-        return items.nilIfEmpty
+        normalizeExampleArtifacts(values.compactMap(Self.makeExampleSentenceArtifact(from:)))
     }
 
     private static func makeExampleSentenceArtifact(from value: String) -> ExampleSentenceArtifact? {
@@ -373,10 +494,123 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         }
         return items.nilIfEmpty
     }
+
+    private static func normalizeExampleArtifacts(_ artifacts: [ExampleSentenceArtifact]?) -> [ExampleSentenceArtifact]? {
+        artifacts?.compactMap { artifact in
+            let normalized = ExampleSentenceArtifact(
+                text: artifact.text,
+                note: artifact.note,
+                anchor: artifact.anchor
+            )
+            return normalized.text.isEmpty ? nil : normalized
+        }.nilIfEmpty
+    }
+
+    private static func decodeExampleSentenceSlot(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) -> AIArtifactSlot<[ExampleSentenceArtifact]> {
+        guard let rawSlot = try? container.decodeIfPresent(
+            AIArtifactSlot<[RawExampleSentenceArtifact]>.self,
+            forKey: .exampleSentences
+        ) else {
+            return .init()
+        }
+
+        return AIArtifactSlot(
+            suggested: rawSlot.suggested?.compactMap(Self.decodeExampleSentenceArtifact(from:)).nilIfEmpty,
+            accepted: rawSlot.accepted?.compactMap(Self.decodeExampleSentenceArtifact(from:)).nilIfEmpty
+        )
+    }
+
+    private static func decodeExampleSentenceArtifact(
+        from raw: RawExampleSentenceArtifact
+    ) -> ExampleSentenceArtifact? {
+        let text = raw.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        let translation = raw.translation?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let effectiveText: String
+        if ExampleSentenceArtifact.inferredTranslation(from: text) == nil, let translation {
+            effectiveText = "\(text) — \(translation)"
+        } else {
+            effectiveText = text
+        }
+
+        return ExampleSentenceArtifact(
+            text: effectiveText,
+            note: raw.note,
+            anchor: raw.anchor
+        )
+    }
+
+    private static func normalizeDefinitionNoteArtifact(_ artifact: DefinitionNoteArtifact?) -> DefinitionNoteArtifact? {
+        guard let trimmed = artifact?.text.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return DefinitionNoteArtifact(text: trimmed, anchor: artifact?.anchor)
+    }
+
+    private static func normalizeRecallCardDrafts(_ drafts: [RecallCardDraft]?) -> [RecallCardDraft]? {
+        drafts?.compactMap { draft in
+            let front = draft.front.trimmingCharacters(in: .whitespacesAndNewlines)
+            let back = draft.back.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !front.isEmpty, !back.isEmpty else { return nil }
+            let hint = draft.hint?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            return RecallCardDraft(
+                mode: draft.mode,
+                front: front,
+                back: back,
+                hint: hint,
+                anchor: draft.anchor
+            )
+        }.nilIfEmpty
+    }
+
+    private static func normalizePitfallArtifacts(_ artifacts: [PitfallArtifact]?) -> [PitfallArtifact]? {
+        artifacts?.compactMap { artifact in
+            let trimmed = artifact.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return PitfallArtifact(text: trimmed, anchor: artifact.anchor)
+        }.nilIfEmpty
+    }
+
+    private static func normalizeMnemonicArtifacts(_ artifacts: [MnemonicArtifact]?) -> [MnemonicArtifact]? {
+        artifacts?.compactMap { artifact in
+            let trimmed = artifact.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return MnemonicArtifact(text: trimmed, anchor: artifact.anchor)
+        }.nilIfEmpty
+    }
+
+    private static func normalizeCollocationArtifacts(_ artifacts: [CollocationArtifact]?) -> [CollocationArtifact]? {
+        artifacts?.compactMap { artifact in
+            let phrase = artifact.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !phrase.isEmpty else { return nil }
+            let note = artifact.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            return CollocationArtifact(phrase: phrase, note: note, anchor: artifact.anchor)
+        }.nilIfEmpty
+    }
+
+    private static func normalizeGeneratedIPANotations(_ values: [String: String]) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: values.compactMap { key, value in
+                let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalizedKey.isEmpty, !normalizedValue.isEmpty else { return nil }
+                return (normalizedKey, normalizedValue)
+            }
+        )
+    }
 }
 
 private extension Array {
     var nilIfEmpty: Self? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
 }

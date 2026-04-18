@@ -160,11 +160,53 @@ final class AnkiFieldFormatterTests: XCTestCase {
         )
 
         XCTAssertTrue(html.contains("Recall Cards"))
+        XCTAssertTrue(html.contains("Learning Aids"))
         XCTAssertTrue(html.contains("reach a ____"))
         XCTAssertTrue(html.contains("Do not confuse it with consent."))
         XCTAssertTrue(html.contains("Consensus sounds like many voices settling down."))
         XCTAssertTrue(html.contains("reach a consensus"))
         XCTAssertTrue(html.contains("AI-generated"))
+    }
+
+    func testDefinitionsHTMLRendersExampleCardsAndGroupedLearningAids() {
+        let result = makeLookupResult(
+            word: "lemmatize",
+            pronunciations: [],
+            senses: [("verb", "reduce a word to its base form", [])]
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(
+            from: result,
+            aiArtifacts: AIArtifacts(
+                exampleSentences: AIArtifactSlot(
+                    accepted: [
+                        ExampleSentenceArtifact(
+                            text: "The software helps lemmatize noisy text before indexing. — 软件会在索引前先把噪声文本还原词形。"
+                        )
+                    ]
+                ),
+                definitionNote: AIArtifactSlot(
+                    accepted: DefinitionNoteArtifact(text: "Use this when you want the base form, not the inflected surface form.")
+                ),
+                pitfalls: AIArtifactSlot(
+                    accepted: [PitfallArtifact(text: "Do not confuse the verb with its infinitive label.")]
+                ),
+                mnemonics: AIArtifactSlot(
+                    accepted: [MnemonicArtifact(text: "Lemma = base form.")]
+                ),
+                collocations: AIArtifactSlot(
+                    accepted: [CollocationArtifact(phrase: "lemmatize text", note: "common NLP wording")]
+                )
+            )
+        )
+
+        XCTAssertTrue(html.contains("ai-study-layer"))
+        XCTAssertTrue(html.contains("Memory-focused notes"))
+        XCTAssertTrue(html.contains("ai-example-grid"))
+        XCTAssertTrue(html.contains("The software helps lemmatize noisy text before indexing."))
+        XCTAssertTrue(html.contains("软件会在索引前先把噪声文本还原词形。"))
+        XCTAssertTrue(html.contains("Learning Aids"))
+        XCTAssertTrue(html.contains("common NLP wording"))
     }
 
     func testAIArtifactsDefinitionsHTMLRendersEmptyAcceptedArtifactSectionsAsOmitted() {
@@ -228,6 +270,44 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("&amp; agreement"))
         XCTAssertTrue(html.contains("&quot;yes&quot;"))
         XCTAssertTrue(html.contains("common &lt;academic&gt; usage"))
+    }
+
+    func testDefinitionsHTMLUsesStabilizedExampleArtifactSemantics() throws {
+        let result = makeLookupResult(
+            word: "analysis",
+            pronunciations: [],
+            senses: [("noun", "careful examination", [])]
+        )
+        let artifacts = try JSONDecoder().decode(
+            AIArtifacts.self,
+            from: Data(
+                """
+                {
+                  "schemaVersion": 1,
+                  "exampleSentences": {
+                    "accepted": [
+                      {
+                        "text": "Before the meeting — 会前准备",
+                        "translation": "stale translation"
+                      },
+                      {
+                        "text": "After the review",
+                        "translation": "复盘后"
+                      }
+                    ]
+                  }
+                }
+                """.utf8
+            )
+        )
+
+        let html = AnkiFieldFormatter.definitionsHTML(from: result, aiArtifacts: artifacts)
+
+        XCTAssertTrue(html.contains("Before the meeting"))
+        XCTAssertTrue(html.contains("会前准备"))
+        XCTAssertTrue(html.contains("After the review"))
+        XCTAssertTrue(html.contains("复盘后"))
+        XCTAssertFalse(html.contains("stale translation"))
     }
 
     // MARK: - Helpers

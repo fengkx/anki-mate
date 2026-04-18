@@ -30,7 +30,7 @@ public struct AnkiExporter: Sendable {
                 legacyAcceptedPitfalls: aiAcceptedPitfalls,
                 legacyAcceptedMnemonics: aiAcceptedMnemonics,
                 legacyAcceptedCollocations: aiAcceptedCollocations
-            )
+            ).normalized()
         }
 
         public var aiAcceptedExampleSentences: [String] { aiArtifacts.acceptedExampleSentences }
@@ -89,7 +89,7 @@ public struct AnkiExporter: Sendable {
 
         for deck in decks {
             for input in deck.words {
-                let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
+                let phonetic = AnkiFieldFormatter.phoneticDisplay(from: input.lookupResult)
                 let definitions = AnkiFieldFormatter.definitionsHTML(
                     from: input.lookupResult,
                     aiArtifacts: input.aiArtifacts
@@ -116,7 +116,7 @@ public struct AnkiExporter: Sendable {
     private static func makeDeckPayload(deckName: String, deckDescription: String, words: [ExportInput]) -> AnkiDeckPayload {
         let deck = AnkiDeckConfig(deckName: deckName, deckDescription: deckDescription)
         let notes = words.map { input in
-            let phonetic = AnkiFieldFormatter.phonetic(from: input.lookupResult)
+            let phonetic = AnkiFieldFormatter.phoneticDisplay(from: input.lookupResult)
             let definitions = AnkiFieldFormatter.definitionsHTML(
                 from: input.lookupResult,
                 aiArtifacts: input.aiArtifacts

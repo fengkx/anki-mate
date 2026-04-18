@@ -178,12 +178,39 @@ public extension Pronunciation {
         return normalized.isEmpty ? nil : normalized
     }
 
+    var displayNotation: String {
+        if let ipa = ttsIPANotation {
+            return ipa
+        }
+
+        let rawGuide = (respelling ?? ipa)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+
+        return Self.lowercasingASCIILetters(in: rawGuide)
+    }
+
+    var usesIPADelimitersForDisplay: Bool {
+        ttsIPANotation != nil
+    }
+
     /// Detects respelling notation by checking for ASCII uppercase letters,
     /// which appear in digraphs like SH, TH, CH but never in real IPA.
     private static func isRespelling(_ text: String) -> Bool {
         text.unicodeScalars.contains { scalar in
             scalar.value >= 0x41 && scalar.value <= 0x5A // A-Z
         }
+    }
+
+    private static func lowercasingASCIILetters(in text: String) -> String {
+        let scalars = text.unicodeScalars.map { scalar -> UnicodeScalar in
+            guard scalar.value >= 0x41, scalar.value <= 0x5A else { return scalar }
+            return UnicodeScalar(scalar.value + 0x20) ?? scalar
+        }
+        return String(String.UnicodeScalarView(scalars))
     }
 
     var defaultSpeechLanguageCode: String? {
