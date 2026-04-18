@@ -159,6 +159,7 @@ final class InferenceEngine {
         // Generate tokens one by one
         var outputTokens: [llama_token] = []
         var streamedText = ""
+        var finishReason: String?
         let eosToken = llama_vocab_eos(vocab)
         let eotToken = llama_vocab_eot(vocab)
 
@@ -167,9 +168,11 @@ final class InferenceEngine {
 
             // Check for end of generation
             if newToken == eosToken || newToken == eotToken {
+                finishReason = "stop"
                 break
             }
             if llama_vocab_is_eog(vocab, newToken) {
+                finishReason = "stop"
                 break
             }
 
@@ -188,8 +191,13 @@ final class InferenceEngine {
             decodeResult = llama_decode(context, batch)
             if decodeResult != 0 {
                 fputs("Warning: llama_decode returned \(decodeResult) during generation\n", stderr)
+                finishReason = "error"
                 break
             }
+        }
+
+        if finishReason == nil, outputTokens.count >= maxTokens {
+            finishReason = "length"
         }
 
         let endTime = DispatchTime.now()
@@ -198,7 +206,8 @@ final class InferenceEngine {
         return GenerateResult(
             text: streamedText.trimmingCharacters(in: .whitespacesAndNewlines),
             tokensUsed: outputTokens.count,
-            durationMs: durationMs
+            durationMs: durationMs,
+            finishReason: finishReason
         )
     }
 
@@ -258,12 +267,14 @@ final class InferenceEngine {
 
         var outputTokens: [llama_token] = []
         var outputText = ""
+        var finishReason: String?
         let eosToken = llama_vocab_eos(vocab)
         let eotToken = llama_vocab_eot(vocab)
 
         for _ in 0..<maxTokens {
             let newToken = llama_sampler_sample(chain, context, -1)
             if newToken == eosToken || newToken == eotToken || llama_vocab_is_eog(vocab, newToken) {
+                finishReason = "stop"
                 break
             }
 
@@ -283,8 +294,13 @@ final class InferenceEngine {
             decodeResult = llama_decode(context, batch)
             if decodeResult != 0 {
                 fputs("Warning: llama_decode returned \(decodeResult) during generation\n", stderr)
+                finishReason = "error"
                 break
             }
+        }
+
+        if finishReason == nil, outputTokens.count >= maxTokens {
+            finishReason = "length"
         }
 
         let endTime = DispatchTime.now()
@@ -292,7 +308,8 @@ final class InferenceEngine {
         return GenerateResult(
             text: outputText.trimmingCharacters(in: .whitespacesAndNewlines),
             tokensUsed: outputTokens.count,
-            durationMs: durationMs
+            durationMs: durationMs,
+            finishReason: finishReason
         )
     }
 }

@@ -16,6 +16,10 @@ public struct ModelRegistry: Sendable {
         self.models = decoded
     }
 
+    public init(models: [ModelInfo]) {
+        self.models = models
+    }
+
     public var recommended: ModelInfo? {
         models.first(where: \.recommended) ?? models.first
     }

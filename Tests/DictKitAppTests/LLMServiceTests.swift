@@ -336,29 +336,20 @@ final class LLMServiceTests: XCTestCase {
         )
     }
 
-    func testDecodeStructuredRecallDraftsPreservesAnchorSnapshotWithoutRemapping() throws {
+    func testDecodeStructuredRecallDraftAcceptsSingleDraftEnvelopeAndPreservesAnchorSnapshot() throws {
         let payload = """
         ```json
         {
-          "drafts": [
-            {
-              "mode": "full_spelling",
-              "front": "根据中文提示写出完整单词",
-              "back": "spelling",
-              "hint": "double l",
-              "anchor": {
-                "text": "speeling",
-                "note": "raw OCR snapshot"
-              }
+          "draft": {
+            "mode": "full_spelling",
+            "front": "Front: 根据中文提示写出完整单词",
+            "back": "Back: spelling",
+            "hint": "Hint: double l",
+            "anchor": {
+              "text": "speeling",
+              "note": "raw OCR snapshot"
             },
-            {
-              "mode": "targetedLetterCloze",
-              "front": "根据提示补全 spe__ing",
-              "back": "spelling",
-              "hint": "watch the ll",
-              "anchor": null
-            }
-          ]
+          }
         }
         ```
         """
@@ -368,13 +359,144 @@ final class LLMServiceTests: XCTestCase {
             from: payload
         )
         let drafts = LLMService.normalizeRecallCardDrafts(
-            decoded.drafts,
-            requestedModes: [.fullSpelling, .targetedLetterCloze, .phraseRecall]
+            [decoded.primaryDraft].compactMap { $0 },
+            requestedModes: [.fullSpelling],
+            target: "spelling"
         )
 
-        XCTAssertEqual(drafts.map(\.mode), [.fullSpelling, .targetedLetterCloze])
+        XCTAssertEqual(drafts.map(\.mode), [.fullSpelling])
+        XCTAssertEqual(drafts.first?.front, "根据中文提示写出完整单词")
+        XCTAssertEqual(drafts.first?.back, "spelling")
+        XCTAssertEqual(drafts.first?.hint, "double l")
         XCTAssertEqual(drafts.first?.anchor?.text, "speeling")
         XCTAssertEqual(drafts.first?.anchor?.note, "raw OCR snapshot")
+    }
+
+    func testDecodeStructuredRecallDraftsStillAcceptLegacyDraftArrayAndNormalizeAliases() throws {
+        let payload = """
+        {
+          "drafts": [
+            {
+              "mode": "targetedLetterCloze",
+              "front": "1. Front: 根据提示补全 spe__ing",
+              "back": "Back: spelling",
+              "hint": "- watch the ll",
+              "anchor": null
+            }
+          ]
+        }
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            decoded.drafts,
+            requestedModes: [.targetedLetterCloze],
+            target: "spelling"
+        )
+
+        XCTAssertEqual(drafts.map(\.mode), [.targetedLetterCloze])
+        XCTAssertEqual(drafts.first?.front, "根据提示补全 spe__ing")
+        XCTAssertEqual(drafts.first?.back, "spelling")
+        XCTAssertEqual(drafts.first?.hint, "watch the ll")
+    }
+
+    func testDecodeStructuredRecallDraftRejectsMismatchedBackValue() throws {
+        let payload = """
+        {
+          "drafts": [
+            {
+              "mode": "targeted_letter_cloze",
+              "front": "根据提示补全 spe__ing",
+              "back": "speling",
+              "hint": "double l"
+            }
+          ]
+        }
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            decoded.drafts,
+            requestedModes: [.targetedLetterCloze],
+            target: "spelling"
+        )
+
+        XCTAssertTrue(drafts.isEmpty)
+    }
+
+    func testRuleBasedRecallDraftBuildsTargetedLetterClozeFallbackForLongWord() throws {
+        let draft = try XCTUnwrap(
+            LLMService.ruleBasedRecallCardDraft(
+                word: "collocation",
+                senses: [
+                    LLMSensePromptInput(
+                        partOfSpeech: "noun",
+                        definition: "the habitual juxtaposition of a word with another word"
+                    )
+                ],
+                mode: .targetedLetterCloze,
+                anchor: nil
+            )
+        )
+
+        XCTAssertEqual(draft.mode, .targetedLetterCloze)
+        XCTAssertEqual(draft.back, "collocation")
+        XCTAssertTrue(draft.front.contains("_"))
+        XCTAssertFalse(draft.front.hasPrefix("_"))
+        XCTAssertTrue(draft.front.contains("habitual juxtaposition"))
+    }
+
+    func testRecallPromptScaffoldPrecomputesStableMaskForTargetedLetterCloze() {
+        let scaffold = LLMService.recallPromptScaffold(
+            word: "collocation",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "noun",
+                    definition: "habitual word pairing",
+                    semanticHint: "word pairing"
+                )
+            ],
+            mode: .targetedLetterCloze
+        )
+
+        XCTAssertEqual(scaffold.learnerCue, "word pairing")
+        XCTAssertEqual(scaffold.hint, "noun · word pairing")
+        XCTAssertEqual(scaffold.requiredMaskedSurface, "co__ocation")
+    }
+
+    func testRuleBasedRecallDraftFallsBackToPhrasePromptForPhraseRecall() throws {
+        let draft = try XCTUnwrap(
+            LLMService.ruleBasedRecallCardDraft(
+                word: "take off",
+                senses: [
+                    LLMSensePromptInput(
+                        partOfSpeech: "verb",
+                        definition: "to leave the ground and begin flying"
+                    )
+                ],
+                mode: .phraseRecall,
+                anchor: LLMAnchorSnapshot(text: "take off", note: "phrase")
+            )
+        )
+
+        XCTAssertEqual(draft.mode, .phraseRecall)
+        XCTAssertEqual(draft.back, "take off")
+        XCTAssertTrue(draft.front.contains("recall the exact phrase"))
+        XCTAssertEqual(draft.anchor?.text, "take off")
+    }
+
+    func testNormalizeGeneratedIPAAcceptsPureIPAAndRejectsRespelling() {
+        XCTAssertEqual(
+            LLMService.normalizeGeneratedIPA(" /ˌkɑləˈkeɪʃən/ "),
+            "ˌkɑləˈkeɪʃən"
+        )
+        XCTAssertNil(LLMService.normalizeGeneratedIPA("käləˈkāSHən"))
     }
 
     func testDecodeLearningAidsTrimsWhitespaceAndKeepsSectionsSeparate() throws {
@@ -412,12 +534,12 @@ final class LLMServiceTests: XCTestCase {
         let aids = LLMService.normalizeLearningAids(decoded)
 
         XCTAssertEqual(aids.pitfalls.count, 1)
-        XCTAssertEqual(aids.pitfalls[0].summary, "- Don't confuse it with fee.")
-        XCTAssertEqual(aids.pitfalls[0].details, "* Money asked for service.")
+        XCTAssertEqual(aids.pitfalls[0].summary, "Don't confuse it with fee.")
+        XCTAssertEqual(aids.pitfalls[0].details, "Money asked for service.")
         XCTAssertEqual(aids.pitfalls[0].anchor?.text, "charge")
-        XCTAssertEqual(aids.mnemonics.map(\.clue), ["1. charge -> car battery starts charging"])
-        XCTAssertEqual(aids.collocations.map(\.phrase), ["• charge a fee"])
-        XCTAssertEqual(aids.collocations.first?.gloss, "- ask for money")
+        XCTAssertEqual(aids.mnemonics.map(\.clue), ["charge -> car battery starts charging"])
+        XCTAssertEqual(aids.collocations.map(\.phrase), ["charge a fee"])
+        XCTAssertEqual(aids.collocations.first?.gloss, "ask for money")
         XCTAssertNil(aids.collocations.first?.anchor?.note)
     }
 
@@ -445,9 +567,61 @@ final class LLMServiceTests: XCTestCase {
         )
         let aids = LLMService.normalizeLearningAids(decoded)
 
-        XCTAssertEqual(aids.pitfalls.first?.summary, "- Avoid raw markdown in the final copy.")
-        XCTAssertEqual(aids.pitfalls.first?.details, "* Keep the learner-facing line plain.")
+        XCTAssertEqual(aids.pitfalls.first?.summary, "Avoid raw markdown in the final copy.")
+        XCTAssertEqual(aids.pitfalls.first?.details, "Keep the learner-facing line plain.")
         XCTAssertEqual(aids.pitfalls.first?.anchor?.note, "keep original snapshot")
+    }
+
+    func testDecodeStructuredUsageHintsNormalizesLabelsAndLegacyKeys() throws {
+        let payload = """
+        preface
+        ```json
+        {
+          "usage": [
+            {
+              "summary": "1. Usage: Often describes ongoing problems rather than one-time events.",
+              "details": "ZH: 常描述持续存在的问题，而不是一次性事件。",
+              "category": "usage tendency",
+              "senseIndex": 1
+            },
+            {
+              "english": "Text: Emphasizes repeated continuation rather than fixed permanence.",
+              "translation": "Translation: 强调反复持续，而不是固定不变。",
+              "kind": "semanticContrast",
+              "senseIndex": 1
+            }
+          ]
+        }
+        ```
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            UsageHintEnvelope.self,
+            from: payload
+        )
+        let hints = LLMService.normalizeUsageHints(
+            decoded.usageHints,
+            senseCount: 1,
+            desiredCount: 2
+        )
+
+        XCTAssertEqual(hints.count, 2)
+        XCTAssertEqual(
+            hints.map(\.text),
+            [
+                "Often describes ongoing problems rather than one-time events.",
+                "Emphasizes repeated continuation rather than fixed permanence."
+            ]
+        )
+        XCTAssertEqual(
+            hints.map(\.translation),
+            [
+                "常描述持续存在的问题，而不是一次性事件。",
+                "强调反复持续，而不是固定不变。"
+            ]
+        )
+        XCTAssertEqual(hints.map(\.kind), ["usage_tendency", "semantic_contrast"])
+        XCTAssertEqual(hints.map(\.senseIndex), [1, 1])
     }
 
     func testDecodeStructuredOutputThrowsForNonJSONPayload() {

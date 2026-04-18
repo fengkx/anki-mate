@@ -24,6 +24,22 @@ public struct LLMSensePromptInput: Sendable, Equatable {
     }
 }
 
+public struct RecallPromptScaffold: Sendable, Equatable {
+    public let learnerCue: String?
+    public let hint: String?
+    public let requiredMaskedSurface: String?
+
+    public init(
+        learnerCue: String?,
+        hint: String?,
+        requiredMaskedSurface: String?
+    ) {
+        self.learnerCue = learnerCue
+        self.hint = hint
+        self.requiredMaskedSurface = requiredMaskedSurface
+    }
+}
+
 public enum LLMPrompt {
     static func exampleSentenceCount(for senses: [LLMSensePromptInput]) -> Int {
         let normalizedCount = max(1, senses.count)
@@ -252,17 +268,20 @@ public enum LLMPrompt {
         word: String,
         senses: [LLMSensePromptInput],
         requestedMode: LLMRecallCardMode,
-        anchor: LLMAnchorSnapshot? = nil
+        anchor: LLMAnchorSnapshot? = nil,
+        scaffold: RecallPromptScaffold? = nil
     ) -> (system: String, user: String) {
         let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSenses = senses.isEmpty
             ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
             : senses
+        let scaffoldBlock = recallScaffoldText(scaffold, requestedMode: requestedMode)
 
         let system = """
         You are a bilingual language learning assistant.
         Generate one recall-oriented flashcard draft as strict JSON.
         Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary.
+        When the prompt gives you a required masked surface or packaging cue, preserve it instead of inventing a new one.
         """
 
         let user = """
@@ -276,6 +295,9 @@ public enum LLMPrompt {
 
         Anchor snapshot:
         \(anchorSnapshotText(anchor))
+
+        Packaging scaffold:
+        \(scaffoldBlock)
 
         Rules:
         - Return a single JSON object with this shape:
@@ -295,7 +317,10 @@ public enum LLMPrompt {
         - back must be the exact target word or phrase, with original spacing preserved
         - For full_spelling, ask the learner to recall the complete target
         - For targeted_letter_cloze, use exactly one continuous underscore gap of 2 or 3 characters, and keep a Chinese meaning cue in front
+        - For targeted_letter_cloze, if a required masked surface is provided above, copy that masked surface exactly and do not invent a different gap position or length
         - For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally
+        - If a learner cue is provided above, use it as the semantic basis of the front instead of drifting to another explanation
+        - If a short hint is provided above, prefer reusing or lightly polishing it rather than inventing a long hint
         - hint is optional and should stay short
         - anchor is optional display metadata only; do not invent source offsets or remap anchors
         - If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null
@@ -382,6 +407,56 @@ public enum LLMPrompt {
         return (system, user)
     }
 
+    public static func phoneticIPA(
+        word: String,
+        dialect: String?,
+        pronunciationGuide: String?,
+        senses: [LLMSensePromptInput]
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+        let normalizedDialect = dialect?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedDialect = normalizedDialect.isEmpty ? nil : normalizedDialect
+        let normalizedGuide = pronunciationGuide?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedGuide = normalizedGuide.isEmpty ? nil : normalizedGuide
+
+        let system = """
+        You are a pronunciation specialist.
+        Convert dictionary pronunciation guides into strict IPA JSON only.
+        Never return respelling, never add slashes, and never add explanations.
+        """
+
+        let user = """
+        Generate a single IPA pronunciation for the target word "\(trimmedWord)".
+
+        Dialect:
+        \(trimmedDialect ?? "unspecified")
+
+        Sense inventory:
+        \(senseInventoryText(from: trimmedSenses))
+
+        Existing pronunciation guide:
+        \(trimmedGuide.map { "\"\($0)\"" } ?? "none")
+
+        Return a single JSON object with this shape:
+        {
+          "ipa": "pure IPA only"
+        }
+
+        Rules:
+        - Output JSON only
+        - "ipa" must be a single IPA string without slashes
+        - Do not return respelling notation such as SH, TH, CH, or uppercase helper text
+        - Do not include the headword, labels, bullets, markdown, or commentary
+        - Prefer the requested dialect if one is provided
+        - Use the pronunciation guide as a hint only; correct it into real IPA
+        """
+
+        return (system, user)
+    }
+
     private static func senseInventoryText(from senses: [LLMSensePromptInput]) -> String {
         guard !senses.isEmpty else {
             return "1. general: no sense inventory provided"
@@ -401,5 +476,28 @@ public enum LLMPrompt {
             return "\"\(anchor.text)\" [note: \(note)]"
         }
         return "\"\(anchor.text)\""
+    }
+
+    private static func recallScaffoldText(
+        _ scaffold: RecallPromptScaffold?,
+        requestedMode: LLMRecallCardMode
+    ) -> String {
+        guard let scaffold else { return "none" }
+
+        var lines: [String] = []
+
+        if let learnerCue = scaffold.learnerCue, !learnerCue.isEmpty {
+            lines.append("- learner cue: \"\(learnerCue)\"")
+        }
+        if let hint = scaffold.hint, !hint.isEmpty {
+            lines.append("- preferred hint: \"\(hint)\"")
+        }
+        if requestedMode == .targetedLetterCloze,
+           let requiredMaskedSurface = scaffold.requiredMaskedSurface,
+           !requiredMaskedSurface.isEmpty {
+            lines.append("- required masked surface: \"\(requiredMaskedSurface)\"")
+        }
+
+        return lines.isEmpty ? "none" : lines.joined(separator: "\n")
     }
 }

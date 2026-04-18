@@ -75,5 +75,11 @@ jobs:
             ~/Library/Application Support/Anki Mate/models/gemma-4-E2B-it-Q6_K.gguf
           key: ${{ steps.model-cache.outputs.cache-primary-key }}
 
-      - name: Run LLM end-to-end tests
+      - name: Run LLM E2E smoke suite
         run: just test-llm-e2e
+
+      - name: Run LLM E2E baseline suite
+        env:
+          DICTKIT_RUN_LLM_E2E_TESTS: 1
+          DICTKIT_RUN_LLM_E2E_BASELINE_TESTS: 1
+        run: swift test --disable-sandbox --scratch-path .build -Xcc -I./vendor/llama-install/include -Xlinker -L./vendor/llama-install/lib --filter 'LLMServiceE2ETests/testBaseline'

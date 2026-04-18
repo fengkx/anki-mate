@@ -122,7 +122,7 @@ public struct JSONRPCRawParams: Decodable, Sendable {
 }
 
 /// Helper for preserving arbitrary JSON values during re-encoding.
-public enum JSONValue: Codable, Sendable {
+public enum JSONValue: Codable, Sendable, Equatable {
     case string(String)
     case number(Double)
     case bool(Bool)
