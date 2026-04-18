@@ -89,7 +89,10 @@ public struct AnkiExporter: Sendable {
 
         for deck in decks {
             for input in deck.words {
-                let phonetic = AnkiFieldFormatter.phoneticDisplay(from: input.lookupResult)
+                let phonetic = AnkiFieldFormatter.phoneticDisplay(
+                    from: input.lookupResult,
+                    aiArtifacts: input.aiArtifacts
+                )
                 let definitions = AnkiFieldFormatter.definitionsHTML(
                     from: input.lookupResult,
                     aiArtifacts: input.aiArtifacts
@@ -116,7 +119,10 @@ public struct AnkiExporter: Sendable {
     private static func makeDeckPayload(deckName: String, deckDescription: String, words: [ExportInput]) -> AnkiDeckPayload {
         let deck = AnkiDeckConfig(deckName: deckName, deckDescription: deckDescription)
         let notes = words.map { input in
-            let phonetic = AnkiFieldFormatter.phoneticDisplay(from: input.lookupResult)
+            let phonetic = AnkiFieldFormatter.phoneticDisplay(
+                from: input.lookupResult,
+                aiArtifacts: input.aiArtifacts
+            )
             let definitions = AnkiFieldFormatter.definitionsHTML(
                 from: input.lookupResult,
                 aiArtifacts: input.aiArtifacts
@@ -134,7 +140,75 @@ public struct AnkiExporter: Sendable {
                 audioFilename: audioFilename,
                 audioData: input.audioData
             )
+        } + words.flatMap { input in
+            makeRecallNotes(for: input)
         }
         return AnkiDeckPayload(deck: deck, notes: notes)
+    }
+
+    private static func makeRecallNotes(for input: ExportInput) -> [AnkiNoteData] {
+        guard let draft = input.aiAcceptedRecallCardDrafts.last else { return [] }
+        let phonetic = AnkiFieldFormatter.phoneticDisplay(
+            from: input.lookupResult,
+            aiArtifacts: input.aiArtifacts
+        )
+        let definitions = AnkiFieldFormatter.definitionsHTML(
+            from: input.lookupResult,
+            aiArtifacts: input.aiArtifacts
+        )
+        let audioFilename = input.audioData.map { _ in
+            input.word
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "_")
+                .lowercased() + ".wav"
+        }
+        return [
+            AnkiNoteData(
+                recallPrompt: escapeHTMLPreservingLineBreaks(draft.front),
+                recallMode: escapeHTML(draft.mode.displayName),
+                recallInstruction: escapeHTML(recallInstruction(for: draft.mode)),
+                recallHint: recallCardHint(for: draft),
+                recallAnswerHTML: escapeHTMLPreservingLineBreaks(draft.back),
+                sourceWord: escapeHTML(input.word),
+                phonetic: escapeHTMLPreservingLineBreaks(phonetic),
+                definitionsHTML: definitions,
+                audioFilename: audioFilename,
+                audioData: input.audioData,
+                sortField: input.word,
+                guidSeed: "\(input.word.lowercased())|recall"
+            )
+        ]
+    }
+
+    private static func recallCardHint(for draft: RecallCardDraft) -> String {
+        let hint = draft.hint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let hint, !hint.isEmpty else { return "" }
+        return escapeHTMLPreservingLineBreaks(hint)
+    }
+
+    private static func recallInstruction(for mode: RecallCardMode) -> String {
+        switch mode {
+        case .fullSpelling:
+            return "Recall the full spelling before revealing the answer."
+        case .targetedLetterCloze:
+            return "Rebuild the missing spelling segment instead of just recognizing the word."
+        case .phraseRecall:
+            return "Use the cue to actively retrieve the missing word in context."
+        }
+    }
+}
+
+private extension AnkiExporter {
+    static func escapeHTML(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    static func escapeHTMLPreservingLineBreaks(_ text: String) -> String {
+        escapeHTML(text)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\n", with: "<br>")
     }
 }

@@ -120,17 +120,29 @@ public enum AnkiSQLiteWriter {
         {"activeDecks":[\(activeDecks)],"curDeck":\(primaryDeck.deckId),"newSpread":0,"collapseTime":1200,"timeLim":0,"estTimes":true,"dueCounts":true,"curModel":\(primaryDeck.modelId),"nextPos":1,"sortType":"noteFld","sortBackwards":false,"addToCur":true}
         """
 
-        let fields = AnkiCardTemplate.fields.enumerated().map { i, name in
-            "{\"name\":\"\(name)\",\"ord\":\(i),\"sticky\":false,\"rtl\":false,\"font\":\"Arial\",\"size\":20,\"media\":[]}"
-        }.joined(separator: ",")
-
-        let tmpls = """
-        [{"name":"Card 1","ord":0,"qfmt":\(jsonString(AnkiCardTemplate.frontTemplate)),"afmt":\(jsonString(AnkiCardTemplate.backTemplate)),"did":null,"bqfmt":"","bafmt":""}]
-        """
-
-        let model = """
-        {"\(primaryDeck.modelId)":{"id":\(primaryDeck.modelId),"name":"\(AnkiCardTemplate.modelName)","type":0,"mod":\(now),"usn":-1,"sortf":0,"did":\(primaryDeck.deckId),"tmpls":\(tmpls),"flds":[\(fields)],"css":\(jsonString(AnkiCardTemplate.css)),"latexPre":"","latexPost":"","latexsvg":false,"req":[[0,"all",[0]]],"vers":[],"tags":[]}}
-        """
+        let models = [
+            modelJSON(
+                id: primaryDeck.modelId,
+                name: AnkiCardTemplate.modelName,
+                deckId: primaryDeck.deckId,
+                fields: AnkiCardTemplate.fields,
+                frontTemplate: AnkiCardTemplate.frontTemplate,
+                backTemplate: AnkiCardTemplate.backTemplate,
+                css: AnkiCardTemplate.css,
+                now: now
+            ),
+            modelJSON(
+                id: primaryDeck.recallModelId,
+                name: AnkiRecallCardTemplate.modelName,
+                deckId: primaryDeck.deckId,
+                fields: AnkiRecallCardTemplate.fields,
+                frontTemplate: AnkiRecallCardTemplate.frontTemplate,
+                backTemplate: AnkiRecallCardTemplate.backTemplate,
+                css: AnkiRecallCardTemplate.css,
+                now: now
+            )
+        ].joined(separator: ",")
+        let model = "{\(models)}"
 
         let deckObjects = decks.map {
             "\"\($0.deckId)\":{\"id\":\($0.deckId),\"name\":\(jsonString($0.deckName)),\"mod\":\(now),\"usn\":-1,\"lrnToday\":[0,0],\"revToday\":[0,0],\"newToday\":[0,0],\"timeToday\":[0,0],\"collapsed\":false,\"desc\":\(jsonString($0.deckDescription)),\"dyn\":0,\"conf\":1,\"extendNew\":10,\"extendRev\":50}"
@@ -167,7 +179,8 @@ public enum AnkiSQLiteWriter {
     private static func insertNotes(db: OpaquePointer?, decks: [AnkiDeckPayload]) throws {
         let now = Int64(Date().timeIntervalSince1970)
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        let modelId = decks.first?.deck.modelId ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary").modelId
+        let standardModelId = decks.first?.deck.modelId ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary").modelId
+        let recallModelId = decks.first?.deck.recallModelId ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary").recallModelId
 
         let noteSQL = "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, ?, 0, '')"
         let cardSQL = "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')"
@@ -197,7 +210,7 @@ public enum AnkiSQLiteWriter {
                 sqlite3_reset(noteStmt)
                 sqlite3_bind_int64(noteStmt, 1, noteId)
                 sqlite3_bind_text(noteStmt, 2, guid, -1, transient)
-                sqlite3_bind_int64(noteStmt, 3, modelId)
+                sqlite3_bind_int64(noteStmt, 3, note.kind == .recall ? recallModelId : standardModelId)
                 sqlite3_bind_int64(noteStmt, 4, now)
                 sqlite3_bind_text(noteStmt, 5, flds, -1, transient)
                 sqlite3_bind_text(noteStmt, 6, sfld, -1, transient)
@@ -236,6 +249,27 @@ public enum AnkiSQLiteWriter {
     private static func sqliteError(db: OpaquePointer?) -> AnkiSQLiteError {
         let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
         return .sqlError(msg)
+    }
+
+    private static func modelJSON(
+        id: Int64,
+        name: String,
+        deckId: Int64,
+        fields: [String],
+        frontTemplate: String,
+        backTemplate: String,
+        css: String,
+        now: Int64
+    ) -> String {
+        let fieldsJSON = fields.enumerated().map { index, field in
+            "{\"name\":\"\(field)\",\"ord\":\(index),\"sticky\":false,\"rtl\":false,\"font\":\"Arial\",\"size\":20,\"media\":[]}"
+        }.joined(separator: ",")
+        let templatesJSON = """
+        [{"name":"Card 1","ord":0,"qfmt":\(jsonString(frontTemplate)),"afmt":\(jsonString(backTemplate)),"did":null,"bqfmt":"","bafmt":""}]
+        """
+        return """
+        "\(id)":{"id":\(id),"name":"\(name)","type":0,"mod":\(now),"usn":-1,"sortf":0,"did":\(deckId),"tmpls":\(templatesJSON),"flds":[\(fieldsJSON)],"css":\(jsonString(css)),"latexPre":"","latexPost":"","latexsvg":false,"req":[[0,"all",[0]]],"vers":[],"tags":[]}
+        """
     }
 
     static func stableAnkiGUID(seed: String) -> String {

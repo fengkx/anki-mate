@@ -39,6 +39,20 @@ public enum AnkiFieldFormatter {
         return ""
     }
 
+    public static func phoneticDisplay(
+        from result: LookupResult,
+        aiArtifacts: AIArtifacts
+    ) -> String {
+        let basePhonetic = phoneticDisplay(from: result)
+        guard let stressSyllables = preferredStressSyllables(from: aiArtifacts) else {
+            return basePhonetic
+        }
+        guard !basePhonetic.isEmpty else {
+            return stressSyllables
+        }
+        return "\(basePhonetic)\n\(stressSyllables)"
+    }
+
     /// Build HTML definitions grouped by part of speech.
     public static func definitionsHTML(
         from result: LookupResult,
@@ -100,9 +114,13 @@ public enum AnkiFieldFormatter {
 
     /// Render a full card HTML page for preview purposes (front or back).
     public static func renderCardHTML(note: AnkiNoteData, showBack: Bool) -> String {
+        if note.kind == .recall {
+            return renderRecallCardHTML(note: note, showBack: showBack)
+        }
+
         var front = AnkiCardTemplate.frontTemplate
         front = front.replacingOccurrences(of: "{{Word}}", with: escapeHTML(note.word))
-        front = front.replacingOccurrences(of: "{{Phonetic}}", with: escapeHTML(note.phonetic))
+        front = front.replacingOccurrences(of: "{{Phonetic}}", with: escapeHTMLPreservingLineBreaks(note.phonetic))
         // Remove sound tag for preview
         front = front.replacingOccurrences(of: "{{Audio}}", with: "")
 
@@ -123,6 +141,96 @@ public enum AnkiFieldFormatter {
         </head>
         <body class="card">
         \(body)
+        </body>
+        </html>
+        """
+    }
+
+    private static func renderRecallCardHTML(note: AnkiNoteData, showBack: Bool) -> String {
+        let prompt = note.fieldValue(at: 0)
+        let mode = note.fieldValue(at: 1)
+        let instruction = note.fieldValue(at: 2)
+        let hint = note.fieldValue(at: 3)
+        let answer = note.fieldValue(at: 4)
+        let sourceWord = note.fieldValue(at: 5)
+        let phonetic = note.fieldValue(at: 6)
+        let definitions = note.fieldValue(at: 7)
+        let audio = note.fieldValue(at: 8)
+
+        let hintHTML = hint.isEmpty ? "" : """
+        <div class="recall-support-card">
+          <div class="recall-section-label">Hint</div>
+          <div class="recall-support-text">\(hint)</div>
+        </div>
+        """
+
+        let front = """
+        <div class="front recall-shell">
+          <div class="recall-eyebrow">Recall Card</div>
+          <div class="recall-topline">
+            <div class="recall-mode-chip">\(mode)</div>
+            <div class="recall-stage-chip">\(showBack ? "Back" : "Front")</div>
+          </div>
+          <div class="recall-instruction">\(instruction)</div>
+          <div class="recall-prompt-card">
+            <div class="recall-section-label">Prompt</div>
+            <div class="recall-front-text">\(prompt)</div>
+          </div>
+          \(hintHTML)
+        </div>
+        """
+
+        if showBack == false {
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <style>\(AnkiRecallCardTemplate.css)</style>
+            </head>
+            <body class="card">
+            \(front)
+            </body>
+            </html>
+            """
+        }
+
+        let phoneticHTML = phonetic.isEmpty ? "" : "<div class=\"phonetic recall-phonetic\">\(phonetic)</div>"
+        let audioHTML = audio.isEmpty ? "" : "<div class=\"recall-audio\">\(audio)</div>"
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>\(AnkiRecallCardTemplate.css)</style>
+        </head>
+        <body class="card">
+        \(front)
+        <hr id="answer">
+        <div class="back recall-answer-shell">
+          <div class="recall-answer-card">
+            <div class="recall-section-label">Answer</div>
+            <div class="recall-answer-text">\(answer)</div>
+          </div>
+          <section class="recall-reference-shell">
+            <div class="recall-reference-kicker">Source Entry</div>
+            <div class="recall-reference-card">
+              <div class="recall-reference-header">
+                <div class="recall-source-word">\(sourceWord)</div>
+                <div class="recall-reference-meta">
+                  \(phoneticHTML)
+                  \(audioHTML)
+                </div>
+              </div>
+              \(definitions.isEmpty ? "" : """
+              <div class="recall-definitions">
+                <div class="recall-section-label">Reference</div>
+                \(definitions)
+              </div>
+              """)
+            </div>
+          </section>
+        </div>
         </body>
         </html>
         """
@@ -150,6 +258,14 @@ public enum AnkiFieldFormatter {
             .replacingOccurrences(of: "\n", with: "<br>")
     }
 
+    private static func preferredStressSyllables(from aiArtifacts: AIArtifacts) -> String? {
+        let normalized = aiArtifacts.normalized()
+        let byDialect = normalized.generatedStressSyllablesByDialect
+        let preferred = byDialect["AmE"] ?? byDialect["BrE"] ?? byDialect.values.first
+        let trimmed = preferred?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
     private static func aiSupplementHTML(aiArtifacts: AIArtifacts) -> String {
         let aiArtifacts = aiArtifacts.normalized()
         var sections: [String] = []
@@ -171,11 +287,6 @@ public enum AnkiFieldFormatter {
         )
         if !learningAidsSection.isEmpty {
             sections.append(learningAidsSection)
-        }
-
-        let recallSection = recallCardsSectionHTML(drafts: aiArtifacts.recallCardDrafts.accepted ?? [])
-        if !recallSection.isEmpty {
-            sections.append(recallSection)
         }
 
         guard !sections.isEmpty else { return "" }
@@ -285,25 +396,6 @@ public enum AnkiFieldFormatter {
         """
     }
 
-    private static func recallCardsSectionHTML(drafts: [RecallCardDraft]) -> String {
-        guard !drafts.isEmpty else { return "" }
-
-        let cards = drafts.map(recallCardDraftHTML(for:)).joined()
-        return """
-        <section class="ai-panel ai-panel-recall">
-          <div class="ai-panel-header">
-            <div>
-              <div class="ai-panel-eyebrow">Saved card</div>
-              <h5 class="ai-panel-title">Recall Cards</h5>
-            </div>
-          </div>
-          <div class="ai-recall-stack">
-            \(cards)
-          </div>
-        </section>
-        """
-    }
-
     private static func exampleSentenceCardHTML(for artifact: ExampleSentenceArtifact) -> String {
         let source = escapeHTMLPreservingLineBreaks(exampleSourceText(for: artifact))
         let translationHTML: String
@@ -360,34 +452,6 @@ public enum AnkiFieldFormatter {
         html += "<div class=\"ai-meta-row\">\(aiGeneratedTagHTML())</div>"
         html += "</li>"
         return html
-    }
-
-    private static func recallCardDraftHTML(for draft: RecallCardDraft) -> String {
-        var html = "<article class=\"ai-recall-card\">"
-        html += "<div class=\"ai-recall-header\">"
-        html += "<span class=\"ai-recall-mode\">\(escapeHTML(draft.mode.displayName))</span>"
-        html += aiGeneratedTagHTML()
-        html += "</div>"
-        html += "<div class=\"ai-recall-prompt-card\">"
-        html += recallFieldHTML(label: "Prompt", value: draft.front)
-        html += "</div>"
-        html += "<div class=\"ai-recall-answer-card\">"
-        html += recallFieldHTML(label: "Answer", value: draft.back)
-        html += "</div>"
-        if let hint = draft.hint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
-            html += recallFieldHTML(label: "Hint", value: hint)
-        }
-        html += "</article>"
-        return html
-    }
-
-    private static func recallFieldHTML(label: String, value: String) -> String {
-        """
-        <div class="ai-recall-field">
-          <div class="ai-field-label">\(escapeHTML(label))</div>
-          <div class="ai-field-value">\(escapeHTMLPreservingLineBreaks(value))</div>
-        </div>
-        """
     }
 
     private static func exampleSourceText(for artifact: ExampleSentenceArtifact) -> String {

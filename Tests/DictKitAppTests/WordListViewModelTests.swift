@@ -381,6 +381,7 @@ final class WordListViewModelTests: XCTestCase {
             RecallCardDraft(mode: .phraseRecall, front: "The committee reached a ____.", back: "consensus")
         ], for: reloadedItem)
         viewModel.saveAIAcceptedRecallCardDrafts([
+            RecallCardDraft(mode: .phraseRecall, front: "first draft", back: "first answer"),
             RecallCardDraft(mode: .fullSpelling, front: "c_nse_sus", back: "consensus", hint: "noun")
         ], for: reloadedItem)
         viewModel.saveAISuggestedPitfalls(["Do not confuse it with consent."], for: reloadedItem)
@@ -395,6 +396,7 @@ final class WordListViewModelTests: XCTestCase {
         let reloaded = try XCTUnwrap(viewModel.words.only)
         XCTAssertEqual(reloaded.aiSuggestedRecallCardDrafts.count, 1)
         XCTAssertEqual(reloaded.aiAcceptedRecallCardDrafts.count, 1)
+        XCTAssertEqual(reloaded.aiAcceptedRecallCardDrafts.first?.front, "c_nse_sus")
         XCTAssertEqual(reloaded.aiSuggestedPitfalls, ["Do not confuse it with consent."])
         XCTAssertEqual(reloaded.aiAcceptedPitfalls, ["Avoid using it for general agreement in every context."])
         XCTAssertEqual(reloaded.aiSuggestedMnemonics, ["Consensus sounds like everyone says yes together."])

@@ -269,7 +269,10 @@ struct CardPreviewView: View {
             if let result = item.lookupResult {
                 let note = AnkiNoteData(
                     word: item.word,
-                    phonetic: item.phonetic,
+                    phonetic: AnkiFieldFormatter.phoneticDisplay(
+                        from: result,
+                        aiArtifacts: item.aiArtifacts
+                    ),
                     definitions: AnkiFieldFormatter.definitionsHTML(
                         from: result,
                         aiArtifacts: item.aiArtifacts
@@ -290,8 +293,35 @@ struct CardPreviewView: View {
 
     private var recallPreview: some View {
         Group {
-            if let draft = item.aiAcceptedRecallCardDrafts.first {
-                AnkiCardWebView(html: recallPreviewHTML(for: draft, showBack: showBack))
+            if let draft = item.aiAcceptedRecallCardDrafts.first, let result = item.lookupResult {
+                let note = AnkiNoteData(
+                    recallPrompt: escapeHTMLPreservingLineBreaks(draft.front),
+                    recallMode: escapeHTML(draft.mode.displayName),
+                    recallInstruction: escapeHTML(recallInstruction(for: draft.mode)),
+                    recallHint: draft.hint.map { escapeHTMLPreservingLineBreaks($0) } ?? "",
+                    recallAnswerHTML: escapeHTMLPreservingLineBreaks(draft.back),
+                    sourceWord: escapeHTML(item.word),
+                    phonetic: escapeHTMLPreservingLineBreaks(
+                        AnkiFieldFormatter.phoneticDisplay(
+                            from: result,
+                            aiArtifacts: item.aiArtifacts
+                        )
+                    ),
+                    definitionsHTML: AnkiFieldFormatter.definitionsHTML(
+                        from: result,
+                        aiArtifacts: item.aiArtifacts
+                    ),
+                    audioFilename: item.audioData.map { _ in
+                        item.word
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .replacingOccurrences(of: " ", with: "_")
+                            .lowercased() + ".wav"
+                    },
+                    audioData: item.audioData,
+                    sortField: item.word,
+                    guidSeed: "\(item.word.lowercased())|preview|recall"
+                )
+                AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "rectangle.and.pencil.and.ellipsis")
@@ -556,152 +586,6 @@ struct CardPreviewView: View {
         }
 
         return nil
-    }
-
-    private func recallPreviewHTML(for draft: RecallCardDraft, showBack: Bool) -> String {
-        let hintHTML = draft.hint.flatMap { hint -> String? in
-            let trimmed = hint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            return """
-            <div class="recall-support-card">
-              <div class="recall-section-label">Hint</div>
-              <div class="recall-support-text">\(escapeHTMLPreservingLineBreaks(trimmed))</div>
-            </div>
-            """
-        } ?? ""
-
-        let front = """
-        <div class="front recall-shell">
-          <div class="recall-eyebrow">Recall Card</div>
-          <div class="recall-topline">
-            <div class="recall-mode-chip">\(escapeHTML(draft.mode.displayName))</div>
-            <div class="recall-stage-chip">\(showBack ? "Back" : "Front")</div>
-          </div>
-          <div class="recall-instruction">\(escapeHTML(recallInstruction(for: draft.mode)))</div>
-          <div class="recall-prompt-card">
-            <div class="recall-section-label">Prompt</div>
-            <div class="recall-front-text">\(escapeHTMLPreservingLineBreaks(draft.front))</div>
-          </div>
-          \(hintHTML)
-        </div>
-        """
-
-        let body: String
-        if showBack {
-            body = """
-            \(front)
-            <hr id="answer">
-            <div class="back recall-answer-shell">
-              <div class="recall-answer-card">
-                <div class="recall-section-label">Answer</div>
-                <div class="recall-answer-text">\(escapeHTMLPreservingLineBreaks(draft.back))</div>
-              </div>
-            </div>
-            """
-        } else {
-            body = front
-        }
-
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <style>\(AnkiCardTemplate.css)
-        .recall-shell {
-          text-align: left;
-          display: flex;
-          flex-direction: column;
-          gap: 14px;
-        }
-        .recall-eyebrow {
-          font-size: 12px;
-          font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: #64748b;
-        }
-        .recall-topline {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        .recall-mode-chip,
-        .recall-stage-chip {
-          display: inline-flex;
-          align-items: center;
-          padding: 6px 12px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 700;
-        }
-        .recall-mode-chip {
-          color: #9a3412;
-          background: #ffedd5;
-        }
-        .recall-stage-chip {
-          color: #475569;
-          background: #e2e8f0;
-        }
-        .recall-instruction {
-          font-size: 18px;
-          line-height: 1.55;
-          color: #334155;
-        }
-        .recall-prompt-card,
-        .recall-support-card,
-        .recall-answer-card {
-          padding: 18px 20px;
-          border-radius: 20px;
-          background: #ffffff;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
-        }
-        .recall-prompt-card {
-          background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
-          border-color: #fdba74;
-        }
-        .recall-answer-card {
-          background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
-          border-color: #93c5fd;
-        }
-        .recall-section-label {
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: #64748b;
-          margin-bottom: 8px;
-        }
-        .recall-front-text,
-        .recall-answer-text {
-          font-size: 32px;
-          font-weight: 760;
-          line-height: 1.22;
-          letter-spacing: -0.03em;
-          color: #0f172a;
-          word-break: break-word;
-        }
-        .recall-answer-text {
-          color: #0b3b8c;
-        }
-        .recall-support-text {
-          font-size: 16px;
-          line-height: 1.6;
-          color: #475569;
-        }
-        .recall-answer-shell {
-          text-align: left;
-        }
-        </style>
-        </head>
-        <body class="card">
-        \(body)
-        </body>
-        </html>
-        """
     }
 
     private func escapeHTML(_ text: String) -> String {

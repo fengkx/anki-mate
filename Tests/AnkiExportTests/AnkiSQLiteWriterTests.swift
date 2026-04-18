@@ -153,6 +153,60 @@ final class AnkiSQLiteWriterTests: XCTestCase {
         XCTAssertTrue(decksJSON.contains("\"desc\":\"Reading vocabulary deck\""))
     }
 
+    func testWriteRegistersRecallModelAndStoresRecallNotesWithRecallModelId() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let dbPath = tempDir.appendingPathComponent("collection.anki2").path
+        let deck = AnkiDeckConfig(deckName: "Recall")
+        try AnkiSQLiteWriter.write(
+            deck: deck,
+            notes: [
+                AnkiNoteData(
+                    word: "collocation",
+                    phonetic: "/ˌkɒləˈkeɪʃən/",
+                    definitions: "<div>noun</div>",
+                    audioFilename: "collocation.wav",
+                    audioData: Data([0x01])
+                ),
+                AnkiNoteData(
+                    recallPrompt: "co__ocation",
+                    recallMode: "Targeted Letter Cloze",
+                    recallInstruction: "Rebuild the missing spelling segment instead of just recognizing the word.",
+                    recallHint: "noun",
+                    recallAnswerHTML: "collocation",
+                    sourceWord: "collocation",
+                    phonetic: "/ˌkɒləˈkeɪʃən/",
+                    definitionsHTML: "<div class=\"ai-study-layer\">study layer</div>",
+                    audioFilename: "collocation.wav",
+                    audioData: Data([0x01]),
+                    sortField: "collocation",
+                    guidSeed: "collocation|recall"
+                )
+            ],
+            to: dbPath
+        )
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT models FROM col", -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+        let modelsJSON = String(cString: sqlite3_column_text(stmt, 0))
+        XCTAssertTrue(modelsJSON.contains(AnkiCardTemplate.modelName))
+        XCTAssertTrue(modelsJSON.contains(AnkiRecallCardTemplate.modelName))
+
+        XCTAssertEqual(
+            scalar(db: db, sql: "SELECT COUNT(*) FROM notes WHERE mid = \(deck.recallModelId)"),
+            1
+        )
+    }
+
     private func scalar(db: OpaquePointer?, sql: String) -> Int {
         var stmt: OpaquePointer?
         sqlite3_prepare_v2(db, sql, -1, &stmt, nil)

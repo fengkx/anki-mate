@@ -98,6 +98,75 @@ final class AnkiFieldFormatterTests: XCTestCase {
         XCTAssertTrue(html.contains("examples"))
     }
 
+    func testPhoneticDisplayAppendsPreferredStressSyllablesOnSecondLine() {
+        let result = makeLookupResult(
+            word: "aesthetic",
+            pronunciations: [Pronunciation(dialect: "AmE", ipa: "ɛsˈθɛtɪk", respelling: nil)]
+        )
+
+        let display = AnkiFieldFormatter.phoneticDisplay(
+            from: result,
+            aiArtifacts: AIArtifacts(generatedStressSyllablesByDialect: ["AmE": "aes-THET-ic"])
+        )
+
+        XCTAssertEqual(display, "/ɛsˈθɛtɪk/\naes-THET-ic")
+    }
+
+    func testRenderCardHTMLPreservesLineBreaksInPhoneticField() {
+        let note = AnkiNoteData(
+            word: "aesthetic",
+            phonetic: "/ɛsˈθɛtɪk/\naes-THET-ic",
+            definitions: "<div>test</div>",
+            audioFilename: nil,
+            audioData: nil
+        )
+
+        let html = AnkiFieldFormatter.renderCardHTML(note: note, showBack: false)
+
+        XCTAssertTrue(html.contains("/ɛsˈθɛtɪk/<br>aes-THET-ic"))
+    }
+
+    func testRenderRecallCardHTMLIncludesAnswerPronunciationAndAISupplementsOnBack() {
+        let note = AnkiNoteData(
+            recallPrompt: "(combining) • co__ocation",
+            recallMode: "Targeted Letter Cloze",
+            recallInstruction: "Rebuild the missing spelling segment instead of just recognizing the word.",
+            recallHint: "noun • (combining)",
+            recallAnswerHTML: "collocation",
+            sourceWord: "collocation",
+            phonetic: "/ˌkɒləˈkeɪʃən/<br>col-LO-ca-tion",
+            definitionsHTML: """
+            <section class="ai-study-layer">
+              <div class="ai-study-title">Memory-focused notes</div>
+              <div class="ai-example-grid"><div class="ai-example-card">example</div></div>
+            </section>
+            """,
+            audioFilename: "collocation.wav",
+            audioData: Data([0x01]),
+            sortField: "collocation",
+            guidSeed: "collocation|recall"
+        )
+
+        let html = AnkiFieldFormatter.renderCardHTML(note: note, showBack: true)
+
+        XCTAssertTrue(html.contains("Targeted Letter Cloze"))
+        XCTAssertTrue(html.contains("Back"))
+        XCTAssertTrue(html.contains("collocation"))
+        XCTAssertTrue(html.contains("Source Entry"))
+        XCTAssertTrue(html.contains("Reference"))
+        XCTAssertTrue(html.contains("/ˌkɒləˈkeɪʃən/<br>col-LO-ca-tion"))
+        XCTAssertTrue(html.contains("[sound:collocation.wav]"))
+        XCTAssertTrue(html.contains("ai-study-layer"))
+        XCTAssertTrue(html.contains("ai-example-grid"))
+    }
+
+    func testCardTemplatesIncludeNightModeThemeOverrides() {
+        XCTAssertTrue(AnkiCardTemplate.css.contains(".nightMode.card"))
+        XCTAssertTrue(AnkiCardTemplate.css.contains("--card-bg"))
+        XCTAssertTrue(AnkiRecallCardTemplate.css.contains(".nightMode.card"))
+        XCTAssertTrue(AnkiRecallCardTemplate.css.contains("--answer-blue"))
+    }
+
     func testDefinitionsHTMLIntegratesAcceptedAIContentWithoutLegacyHeadings() {
         let result = makeLookupResult(
             word: "lemmatize",
@@ -159,11 +228,7 @@ final class AnkiFieldFormatterTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(html.contains("Recall Cards"))
         XCTAssertTrue(html.contains("Learning Aids"))
-        XCTAssertTrue(html.contains("Prompt"))
-        XCTAssertTrue(html.contains("Answer"))
-        XCTAssertTrue(html.contains("reach a ____"))
         XCTAssertTrue(html.contains("Do not confuse it with consent."))
         XCTAssertTrue(html.contains("Consensus sounds like many voices settling down."))
         XCTAssertTrue(html.contains("reach a consensus"))
@@ -228,7 +293,6 @@ final class AnkiFieldFormatterTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(html.contains("Recall Cards"))
         XCTAssertFalse(html.contains("Pitfalls"))
         XCTAssertFalse(html.contains("Mnemonics"))
         XCTAssertFalse(html.contains("Collocations"))
@@ -266,8 +330,7 @@ final class AnkiFieldFormatterTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(html.contains("Targeted Letter Cloze"))
-        XCTAssertTrue(html.contains("&lt;blank&gt;"))
+        XCTAssertFalse(html.contains("Recall Cards"))
         XCTAssertTrue(html.contains("&lt;consent&gt;"))
         XCTAssertTrue(html.contains("&amp; agreement"))
         XCTAssertTrue(html.contains("&quot;yes&quot;"))

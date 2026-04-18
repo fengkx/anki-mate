@@ -952,13 +952,7 @@ struct AIContentView: View {
         guard let index = suggestedRecallState.rowOrder.firstIndex(of: rowID),
               let suggested = item.aiSuggestedRecallCardDrafts[safe: index] else { return }
         let draft = suggestedRecallState.drafts[rowID] ?? suggested
-        var accepted = item.aiAcceptedRecallCardDrafts
-        if accepted.isEmpty {
-            accepted.append(draft)
-        } else {
-            accepted[0] = draft
-        }
-        viewModel.saveAIAcceptedRecallCardDrafts(accepted, for: item)
+        viewModel.saveAIAcceptedRecallCardDrafts([draft], for: item)
 
         var remaining = item.aiSuggestedRecallCardDrafts
         remaining.remove(at: index)
@@ -975,12 +969,9 @@ struct AIContentView: View {
     }
 
     private func deleteAcceptedRecallDraft(rowID: UUID) {
-        guard let index = acceptedRecallState.rowOrder.firstIndex(of: rowID) else { return }
         acceptedRecallAutosaveTasks[rowID]?.cancel()
         acceptedRecallAutosaveTasks.removeValue(forKey: rowID)
-        var drafts = item.aiAcceptedRecallCardDrafts
-        drafts.remove(at: index)
-        viewModel.saveAIAcceptedRecallCardDrafts(drafts, for: item)
+        viewModel.saveAIAcceptedRecallCardDrafts([], for: item)
     }
 
     private func acceptSuggestedPitfall(rowID: UUID) {
@@ -1266,11 +1257,8 @@ struct AIContentView: View {
         acceptedRecallAutosaveTasks[rowID] = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            guard let index = acceptedRecallState.rowOrder.firstIndex(of: rowID) else { return }
-            guard let current = item.aiAcceptedRecallCardDrafts[safe: index], current != value else { return }
-            var drafts = item.aiAcceptedRecallCardDrafts
-            drafts[index] = value
-            viewModel.saveAIAcceptedRecallCardDrafts(drafts, for: item)
+            guard item.aiAcceptedRecallCardDrafts.first != value else { return }
+            viewModel.saveAIAcceptedRecallCardDrafts([value], for: item)
         }
     }
 

@@ -103,7 +103,10 @@ final class WordItem: ObservableObject, Identifiable {
 
     var aiAcceptedRecallCardDrafts: [RecallCardDraft] {
         get { aiArtifacts.recallCardDrafts.accepted ?? [] }
-        set { aiArtifacts.recallCardDrafts.accepted = newValue.nilIfEmpty }
+        set {
+            let normalized = newValue.last.map { [$0] }
+            aiArtifacts.recallCardDrafts.accepted = normalized
+        }
     }
 
     var aiSuggestedPitfalls: [String] {

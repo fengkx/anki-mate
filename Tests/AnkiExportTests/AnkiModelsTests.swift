@@ -44,6 +44,28 @@ final class AnkiModelsTests: XCTestCase {
         XCTAssertEqual(note.sortField, "hello")
     }
 
+    func testRecallNoteFieldsUseDedicatedRecallModelShape() {
+        let note = AnkiNoteData(
+            recallPrompt: "co__ocation",
+            recallMode: "Targeted Letter Cloze",
+            recallInstruction: "Rebuild the missing spelling segment instead of just recognizing the word.",
+            recallHint: "noun",
+            recallAnswerHTML: "collocation",
+            sourceWord: "collocation",
+            phonetic: "/ˌkɒləˈkeɪʃən/",
+            definitionsHTML: "<div>noun</div>",
+            audioFilename: "collocation.wav",
+            audioData: Data([0x01]),
+            sortField: "collocation",
+            guidSeed: "collocation|recall"
+        )
+
+        XCTAssertEqual(note.kind, .recall)
+        XCTAssertEqual(note.fieldValues.count, 9)
+        XCTAssertEqual(note.sortField, "collocation")
+        XCTAssertEqual(note.fieldValues.last, "[sound:collocation.wav]")
+    }
+
     func testDeckConfigGeneratesUniqueIds() {
         let a = AnkiDeckConfig(deckName: "Test")
         let b = AnkiDeckConfig(deckName: "Test")

@@ -335,8 +335,69 @@ final class AnkiExporterTests: XCTestCase {
             to: outputURL
         )
 
-        XCTAssertEqual(result.cardCount, 1)
+        XCTAssertEqual(result.cardCount, 2)
         XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testAIArtifactsExportKeepsOnlyOneAcceptedRecallCard() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let outputURL = tempDir.appendingPathComponent("single_recall.apkg")
+        let lookupResult = LookupResult(
+            query: "consensus",
+            entries: [HeadwordEntry(
+                headword: "consensus",
+                pronunciations: [Pronunciation(dialect: "AmE", ipa: "kənˈsɛnsəs", respelling: nil)],
+                lexicalEntries: [LexicalEntry(
+                    partOfSpeech: .noun,
+                    partOfSpeechLabel: "noun",
+                    displayIndex: 0,
+                    pronunciations: [],
+                    senses: [Sense(
+                        number: 1,
+                        semanticHint: nil,
+                        definition: "general agreement",
+                        examples: [],
+                        registers: [],
+                        countability: nil
+                    )],
+                    grammar: [],
+                    inflections: []
+                )],
+                phraseGroups: [],
+                notes: []
+            )],
+            metadata: LookupMetadata(usedSource: .publicAPI, warnings: []),
+            source: nil
+        )
+
+        let artifacts = AIArtifacts(
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [
+                    RecallCardDraft(mode: .phraseRecall, front: "first prompt", back: "first answer"),
+                    RecallCardDraft(mode: .fullSpelling, front: "second prompt", back: "second answer")
+                ]
+            )
+        )
+
+        let result = try AnkiExporter.export(
+            words: [
+                AnkiExporter.ExportInput(
+                    word: "consensus",
+                    lookupResult: lookupResult,
+                    audioData: nil,
+                    aiArtifacts: artifacts
+                )
+            ],
+            deckName: "Artifacts",
+            to: outputURL
+        )
+
+        XCTAssertEqual(result.cardCount, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
 
@@ -405,7 +466,7 @@ final class AnkiExporterTests: XCTestCase {
             to: outputURL
         )
 
-        XCTAssertEqual(result.cardCount, 1)
+        XCTAssertEqual(result.cardCount, 2)
         XCTAssertTrue(result.warnings.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
     }
