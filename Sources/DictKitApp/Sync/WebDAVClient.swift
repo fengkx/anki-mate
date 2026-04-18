@@ -1,7 +1,17 @@
 import Foundation
 
+protocol WebDAVClientProtocol: Sendable {
+    func get(_ path: String) async throws -> Data?
+    func put(_ path: String, data: Data, contentType: String) async throws
+    func delete(_ path: String) async throws
+    func mkcol(_ path: String) async throws
+    func exists(_ path: String) async throws -> Bool
+    func ensureDirectoryStructure() async throws
+    func listFiles(in path: String) async throws -> [String]
+}
+
 /// Lightweight WebDAV client using URLSession.
-final class WebDAVClient: Sendable {
+final class WebDAVClient: Sendable, WebDAVClientProtocol {
     let baseURL: URL
     private let session: URLSession
     private let authHeader: String

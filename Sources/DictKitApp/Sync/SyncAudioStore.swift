@@ -16,7 +16,7 @@ enum SyncAudioStore {
     }
 
     /// Upload audio data if it doesn't already exist on remote.
-    static func upload(hash: String, data: Data, client: WebDAVClient) async throws {
+    static func upload(hash: String, data: Data, client: any WebDAVClientProtocol) async throws {
         let path = remotePath(for: hash)
         // Check if already exists (avoid re-upload)
         if try await client.exists(path) { return }
@@ -28,7 +28,7 @@ enum SyncAudioStore {
     }
 
     /// Download audio data by hash. Returns nil if not found.
-    static func download(hash: String, client: WebDAVClient) async throws -> Data? {
+    static func download(hash: String, client: any WebDAVClientProtocol) async throws -> Data? {
         let path = remotePath(for: hash)
         guard let data = try await client.get(path) else { return nil }
         // Verify integrity
