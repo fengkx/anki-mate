@@ -439,9 +439,22 @@ struct AIContentView: View {
         .font(.subheadline)
     }
 
+    private func compactActionButtonLabel(systemImage: String, isLoading: Bool) -> some View {
+        Group {
+            if isLoading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: systemImage)
+            }
+        }
+        .frame(width: 14, height: 14)
+    }
+
     private var sentencesSection: some View {
         DisclosureGroup(isExpanded: $isExamplesSectionExpanded) {
             VStack(alignment: .leading, spacing: 10) {
+                sectionDescription("Natural example contexts.")
+
                 if !suggestedExampleState.rowOrder.isEmpty {
                     sectionSubheader("Suggestions")
                     ForEach(suggestedExampleState.rowOrder, id: \.self) { rowID in
@@ -493,7 +506,6 @@ struct AIContentView: View {
         } label: {
             topLevelSectionLabel(
                 title: "Examples",
-                subtitle: "Natural contexts for this word.",
                 summary: examplesSectionSummary,
                 action: .init(
                     title: isGeneratingExamples ? "Generating..." : "Regenerate",
@@ -509,7 +521,7 @@ struct AIContentView: View {
     private var definitionNoteSection: some View {
         DisclosureGroup(isExpanded: $isUsageSectionExpanded) {
             VStack(alignment: .leading, spacing: 10) {
-                sectionDescription("Keep this about usage, not spelling traps.")
+                sectionDescription("Short learner-facing usage cue.")
 
                 if hasSuggestedUsageNote {
                     sectionSubheader("Suggestion")
@@ -543,7 +555,6 @@ struct AIContentView: View {
         } label: {
             topLevelSectionLabel(
                 title: "Usage",
-                subtitle: "A short learner-facing usage cue.",
                 summary: usageSectionSummary,
                 action: .init(
                     title: isGeneratingUsage ? "Generating..." : "Regenerate",
@@ -559,9 +570,7 @@ struct AIContentView: View {
     private var recallCardSection: some View {
         DisclosureGroup(isExpanded: $isRecallSectionExpanded) {
             VStack(alignment: .leading, spacing: 12) {
-                sectionDescription(
-                    "Generate one draft, then save the version worth exporting."
-                )
+                sectionDescription("One active-recall card.")
 
                 if let rowID = primaryAcceptedRecallDraftRowID {
                     workspaceSubsectionHeader(
@@ -617,7 +626,6 @@ struct AIContentView: View {
         } label: {
             topLevelSectionLabel(
                 title: "Recall Card",
-                subtitle: "Shape one active-recall card.",
                 summary: recallSectionSummary,
                 action: .init(
                     title: recallHeaderActionTitle,
@@ -633,7 +641,7 @@ struct AIContentView: View {
     private var learningAidsSection: some View {
         DisclosureGroup(isExpanded: $isLearningAidsSectionExpanded) {
             VStack(alignment: .leading, spacing: 12) {
-                sectionDescription("Keep each cue short. Recall can reuse the strongest saved ones later.")
+                sectionDescription("Pitfalls, mnemonics, and collocations.")
                 learningAidArtifactSection(
                     title: "Pitfalls",
                     suggestedRowIDs: suggestedPitfallState.rowOrder,
@@ -681,7 +689,6 @@ struct AIContentView: View {
         } label: {
             topLevelSectionLabel(
                 title: "Learning Aids",
-                subtitle: "Pitfalls, memory hooks, and collocations.",
                 summary: learningAidsSectionSummary,
                 action: .init(
                     title: isGeneratingLearningAids ? "Generating..." : learningAidsHeaderActionTitle,
@@ -1541,40 +1548,69 @@ struct AIContentView: View {
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.06), lineWidth: 1))
     }
 
-    private func topLevelSectionLabel(title: String, subtitle: String, summary: String, action: SectionHeaderAction? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(title)
-                    .font(.headline.weight(.semibold))
-
-                SectionSummaryBadge(text: summary)
-
-                Spacer(minLength: 0)
-            }
-
-            HStack(alignment: .center, spacing: 12) {
-                Text(subtitle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Spacer(minLength: 12)
-
-                if let action {
-                    Button(action: action.handler) {
-                        actionButtonLabel(
-                            title: action.title,
-                            systemImage: action.systemImage,
-                            isLoading: action.isLoading
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(action.isDisabled)
+    private func topLevelSectionLabel(title: String, summary: String, action: SectionHeaderAction? = nil) -> some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(
+                title: title,
+                summary: summary,
+                trailing: action.map { action in
+                    AnyView(
+                        Button(action: action.handler) {
+                            actionButtonLabel(
+                                title: action.title,
+                                systemImage: action.systemImage,
+                                isLoading: action.isLoading
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(action.isDisabled)
+                    )
                 }
-            }
+            )
+
+            headerRow(
+                title: title,
+                summary: summary,
+                trailing: action.map { action in
+                    AnyView(
+                        Button(action: action.handler) {
+                            compactActionButtonLabel(
+                                systemImage: action.systemImage,
+                                isLoading: action.isLoading
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help(action.title)
+                        .disabled(action.isDisabled)
+                    )
+                }
+            )
+
+            headerRow(title: title, summary: summary)
         }
         .padding(.vertical, 2)
+    }
+
+    private func headerRow(title: String, summary: String, trailing: AnyView? = nil) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(title)
+                .font(.headline.weight(.semibold))
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            SectionSummaryBadge(text: summary)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Spacer(minLength: 0)
+
+            if let trailing {
+                trailing
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func shortPartOfSpeechLabel(_ value: String) -> String {

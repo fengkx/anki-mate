@@ -5,6 +5,8 @@ import SwiftUI
 import WebKit
 
 struct CardPreviewView: View {
+    private static let generateIPATint = Color.blue.opacity(0.9)
+
     @ObservedObject var item: WordItem
     @EnvironmentObject var llmService: LLMService
     @EnvironmentObject var viewModel: WordListViewModel
@@ -117,7 +119,10 @@ struct CardPreviewView: View {
                                             }
                                             .buttonStyle(.borderedProminent)
                                             .controlSize(.small)
-                                            .tint(Color.accentColor.opacity(0.9))
+                                            // Avoid deriving a new tint from AccentColor here.
+                                            // On newer macOS releases this can recurse during AppKit color resolution
+                                            // once the button switches into the ProgressView loading state.
+                                            .tint(Self.generateIPATint)
                                             .disabled(generatingIPADialects.contains(dialectKey))
                                         }
                                     }
@@ -160,7 +165,7 @@ struct CardPreviewView: View {
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .controlSize(.small)
-                                    .tint(Color.accentColor.opacity(0.9))
+                                    .tint(Self.generateIPATint)
                                     .disabled(!item.isReady || generatingIPADialects.contains(defaultDialectKey))
                                 }
                             }

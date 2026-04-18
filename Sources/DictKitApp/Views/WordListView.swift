@@ -34,6 +34,8 @@ struct WordListView: View {
 }
 
 struct WordRowView: View {
+    private static let selectionTint = Color.blue.opacity(0.18)
+
     @ObservedObject var item: WordItem
     @EnvironmentObject var viewModel: WordListViewModel
     let isSelected: Bool
@@ -106,7 +108,7 @@ struct WordRowView: View {
     private var rowBackground: some View {
         if isSelected {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.accentColor.opacity(0.18))
+                .fill(Self.selectionTint)
         } else if isHovered {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(0.04))
