@@ -35,6 +35,10 @@ struct LLMSettingsView: View {
     @AppStorage(LLMDebugSettings.streamDebugEnabledKey) private var streamDebugEnabled = false
     @AppStorage(LLMContentStyle.defaultsKey) private var storedContentStyle = LLMContentStyle.balanced.rawValue
 
+    private var serverGuidance: LLMServerStatusGuidance {
+        LLMServerStatusGuidance.make(for: llmService.serverState)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -123,6 +127,10 @@ struct LLMSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+
+                    if shouldShowServerDiagnosticsActions {
+                        serverDiagnosticsActions
+                    }
                 }
 
                 Spacer(minLength: 12)
@@ -631,19 +639,19 @@ struct LLMSettingsView: View {
     private var serverActionButton: some View {
         switch llmService.serverState {
         case .running:
-            Button("Stop") {
+            Button(serverGuidance.actionButtonTitle) {
                 toggleServer(start: false)
             }
             .buttonStyle(.bordered)
             .disabled(isTogglingServer)
         case .stopped, .failed:
-            Button("Start") {
+            Button(serverGuidance.actionButtonTitle) {
                 toggleServer(start: true)
             }
             .buttonStyle(.borderedProminent)
             .disabled(isTogglingServer)
         case .starting:
-            Button("Starting...") {}
+            Button(serverGuidance.actionButtonTitle) {}
                 .buttonStyle(.bordered)
                 .disabled(true)
         }
@@ -681,38 +689,32 @@ struct LLMSettingsView: View {
     }
 
     private var serverStatusText: String {
-        switch llmService.serverState {
-        case .running: return "Running"
-        case .starting: return "Starting..."
-        case .stopped: return "Stopped"
-        case .failed(let msg): return "Failed: \(msg)"
+        serverGuidance.statusText
+    }
+
+    private var shouldShowServerDiagnosticsActions: Bool {
+        if case .failed = llmService.serverState {
+            return true
         }
+        return false
     }
 
     private var serverStatusSummary: String {
-        switch llmService.serverState {
-        case .running:
-            return "Ready for local AI features."
-        case .starting:
-            return "The local service is starting."
-        case .stopped:
-            return "The service is currently off."
-        case .failed:
-            return "The service needs attention before it can be used."
-        }
+        serverGuidance.summary
     }
 
     private var serverActionHint: String {
-        switch llmService.serverState {
-        case .running:
-            return "The local service is available and can be used when AI content is needed."
-        case .starting:
-            return "This usually takes a few seconds."
-        case .stopped:
-            return "It can be started again when needed."
-        case .failed:
-            return "If it still does not start, checking the log can help."
+        serverGuidance.actionHint
+    }
+
+    @ViewBuilder
+    private var serverDiagnosticsActions: some View {
+        Button("Copy Diagnostics") {
+            LLMServerDiagnostics.copyDiagnostics(service: llmService)
         }
+        .buttonStyle(.link)
+        .font(.caption)
+        .padding(.top, 2)
     }
 
     private var selectedModel: ModelInfo? {
