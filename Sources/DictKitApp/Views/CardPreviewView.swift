@@ -10,6 +10,7 @@ struct CardPreviewView: View {
     @ObservedObject var item: WordItem
     @EnvironmentObject var llmService: LLMService
     @EnvironmentObject var viewModel: WordListViewModel
+    @Environment(\.openWindow) private var openWindow
     @State private var showBack: Bool = true
     @State private var previewFamily: PreviewFamily = .standard
     @AppStorage("cardPreview.aiPanelRatio") private var aiPanelRatio: Double = 0.38
@@ -21,6 +22,7 @@ struct CardPreviewView: View {
     @State private var generatingPronunciationDialects = Set<String>()
     @State private var pronunciationEnhancementErrorMessage: String?
     @State private var attemptedAutomaticPronunciationDialects = Set<String>()
+    @State private var showAIUnavailableAlert = false
 
     private let minAIPanelHeight: CGFloat = 180
     private let maxAIPanelHeight: CGFloat = 520
@@ -111,6 +113,14 @@ struct CardPreviewView: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
+        .alert(LLMGenerationAvailability.alertTitle, isPresented: $showAIUnavailableAlert) {
+            Button(LLMGenerationAvailability.settingsButtonTitle) {
+                openWindow(id: AppWindowIDs.aiSettings)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(LLMGenerationAvailability.alertMessage)
+        }
     }
 
     @ViewBuilder
@@ -442,6 +452,7 @@ struct CardPreviewView: View {
     }
 
     private func generateRecallDraftFromPreview() {
+        guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = recallPromptInputs(from: result)
         guard !senses.isEmpty else {
@@ -482,7 +493,9 @@ struct CardPreviewView: View {
             } catch {
                 await MainActor.run {
                     isGeneratingRecallPreviewDraft = false
-                    recallPreviewErrorMessage = error.localizedDescription
+                    if !presentAIUnavailableAlertIfNeeded(for: error) {
+                        recallPreviewErrorMessage = error.localizedDescription
+                    }
                 }
             }
         }
@@ -591,6 +604,17 @@ struct CardPreviewView: View {
         existingIPA: String?,
         automatic: Bool = false
     ) {
+        if automatic {
+            guard !LLMGenerationAvailability.shouldPromptForManualAction(
+                hasModel: llmService.hasModel,
+                serverState: llmService.serverState
+            ) else {
+                return
+            }
+        } else {
+            guard prepareManualGeneration() else { return }
+        }
+
         guard let result = item.lookupResult else { return }
         let dialectKey = item.dialectStorageKey(for: dialect)
         guard !generatingPronunciationDialects.contains(dialectKey) else { return }
@@ -622,7 +646,10 @@ struct CardPreviewView: View {
             } catch {
                 await MainActor.run {
                     generatingPronunciationDialects.remove(dialectKey)
-                    if !automatic {
+                    if automatic {
+                        return
+                    }
+                    if !presentAIUnavailableAlertIfNeeded(for: error) {
                         pronunciationEnhancementErrorMessage = error.localizedDescription
                     }
                 }
@@ -749,6 +776,31 @@ struct CardPreviewView: View {
         case .phraseRecall:
             return "Use the cue to actively retrieve the missing word in context."
         }
+    }
+
+    private func prepareManualGeneration() -> Bool {
+        if LLMGenerationAvailability.shouldPromptForManualAction(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState
+        ) {
+            showAIUnavailableAlert = true
+            return false
+        }
+
+        return true
+    }
+
+    private func presentAIUnavailableAlertIfNeeded(for error: Error) -> Bool {
+        guard LLMGenerationAvailability.shouldPromptForManualAction(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState,
+            error: error
+        ) else {
+            return false
+        }
+
+        showAIUnavailableAlert = true
+        return true
     }
 
     private func resizeHandle(availableHeight: CGFloat) -> some View {

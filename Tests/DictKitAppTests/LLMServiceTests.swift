@@ -783,6 +783,131 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertNil(result.finishReason)
     }
 
+    func testLearningAidFilterDropsDefinitionParaphrasesAndThinHooks() {
+        let senses = [
+            LLMSensePromptInput(
+                partOfSpeech: "verb",
+                definition: "to knock down and destroy a building or structure"
+            )
+        ]
+        let aids = LLMLearningAids(
+            pitfalls: [
+                LLMPitfall(summary: "Confusing with '拆除'"),
+                LLMPitfall(summary: "Do not confuse demolish with damage.")
+            ],
+            mnemonics: [
+                LLMMnemonic(clue: "Knock down"),
+                LLMMnemonic(clue: "Picture a wrecking ball")
+            ],
+            collocations: [
+                LLMCollocation(phrase: "demolish a building"),
+                LLMCollocation(phrase: "demolish the old wall")
+            ]
+        )
+
+        let filtered = LLMService.filterLearningAids(aids, word: "demolish", senses: senses)
+
+        XCTAssertEqual(filtered.pitfalls.map(\.summary), ["Do not confuse demolish with damage."])
+        XCTAssertEqual(filtered.mnemonics.map(\.clue), ["Picture a wrecking ball"])
+        XCTAssertTrue(filtered.collocations.isEmpty)
+    }
+
+    func testLearningAidFilterCorpusRejectsDefinitionLevelCollocationsAndTranslatesOnlyHooks() {
+        struct FilterCase {
+            let word: String
+            let senses: [LLMSensePromptInput]
+            let aids: LLMLearningAids
+            let requiredPitfalls: [String]
+            let rejectedPitfalls: [String]
+            let requiredMnemonics: [String]
+            let rejectedMnemonics: [String]
+            let rejectedCollocations: [String]
+        }
+
+        let corpus: [FilterCase] = [
+            FilterCase(
+                word: "demolish",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "to knock down and destroy a building or structure")
+                ],
+                aids: LLMLearningAids(
+                    pitfalls: [
+                        LLMPitfall(summary: "Confusing with '拆除'"),
+                        LLMPitfall(summary: "Do not confuse demolish with damage.")
+                    ],
+                    mnemonics: [
+                        LLMMnemonic(clue: "Knock down"),
+                        LLMMnemonic(clue: "Picture a wrecking ball")
+                    ],
+                    collocations: [
+                        LLMCollocation(phrase: "demolish a building"),
+                        LLMCollocation(phrase: "demolish the old wall"),
+                        LLMCollocation(phrase: "demolish public confidence")
+                    ]
+                ),
+                requiredPitfalls: ["Do not confuse demolish with damage."],
+                rejectedPitfalls: ["Confusing with '拆除'"],
+                requiredMnemonics: ["Picture a wrecking ball"],
+                rejectedMnemonics: ["Knock down"],
+                rejectedCollocations: ["demolish a building", "demolish the old wall"]
+            ),
+            FilterCase(
+                word: "principal",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "noun", definition: "head of a school"),
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "most important")
+                ],
+                aids: LLMLearningAids(
+                    pitfalls: [
+                        LLMPitfall(summary: "不要和 principle 混淆"),
+                        LLMPitfall(summary: "Head of a school")
+                    ],
+                    mnemonics: [
+                        LLMMnemonic(clue: "Think of the school head"),
+                        LLMMnemonic(clue: "Main = principal")
+                    ],
+                    collocations: [
+                        LLMCollocation(phrase: "principal reason"),
+                        LLMCollocation(phrase: "principal of the school")
+                    ]
+                ),
+                requiredPitfalls: ["不要和 principle 混淆"],
+                rejectedPitfalls: ["Head of a school"],
+                requiredMnemonics: ["Main = principal"],
+                rejectedMnemonics: ["Think of the school head"],
+                rejectedCollocations: ["principal of the school"]
+            )
+        ]
+
+        for testCase in corpus {
+            let filtered = LLMService.filterLearningAids(
+                testCase.aids,
+                word: testCase.word,
+                senses: testCase.senses
+            )
+
+            let pitfallSummaries = filtered.pitfalls.map(\.summary)
+            let mnemonicClues = filtered.mnemonics.map(\.clue)
+            let collocationPhrases = filtered.collocations.map(\.phrase)
+
+            for expected in testCase.requiredPitfalls {
+                XCTAssertTrue(pitfallSummaries.contains(expected), "word=\(testCase.word) missing required pitfall: \(expected)")
+            }
+            for rejected in testCase.rejectedPitfalls {
+                XCTAssertFalse(pitfallSummaries.contains(rejected), "word=\(testCase.word) should reject pitfall: \(rejected)")
+            }
+            for expected in testCase.requiredMnemonics {
+                XCTAssertTrue(mnemonicClues.contains(expected), "word=\(testCase.word) missing required mnemonic: \(expected)")
+            }
+            for rejected in testCase.rejectedMnemonics {
+                XCTAssertFalse(mnemonicClues.contains(rejected), "word=\(testCase.word) should reject mnemonic: \(rejected)")
+            }
+            for rejected in testCase.rejectedCollocations {
+                XCTAssertFalse(collocationPhrases.contains(rejected), "word=\(testCase.word) should reject collocation: \(rejected)")
+            }
+        }
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

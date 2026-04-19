@@ -642,7 +642,8 @@ public enum LLMPrompt {
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
             "Generate strict JSON learning aids that help with recall, correct usage, and collocations.",
-            "Keep every field concise and practical for flashcards."
+            "Keep every field concise and practical for flashcards.",
+            "Prefer returning fewer, stronger items over filling every section with weak content."
         ])
 
         let user = PromptText.join([
@@ -691,14 +692,40 @@ public enum LLMPrompt {
                 "Rules",
                 value: PromptText.bulletList([
                     "Return JSON only",
-                    "pitfalls: 2-4 items, focus on spelling traps, confusable meanings, or common misuse rather than general usage summaries",
-                    "mnemonics: 1-3 items, make them short and memorable rather than explanatory or definition-like",
-                    "collocations: 2-5 items, prefer high-frequency phrases or short patterns, not full example sentences",
+                    "Only return items that add information the sense inventory does not already state plainly",
+                    "It is acceptable to return an empty array for any section if no candidate adds clear learning value",
+                    "Never output self-referential filler such as \"confusing with '<word>'\", \"<word> = <word>\", or \"think of '<word>' as '<word>'\"",
+                    "Never output a direct definition restatement, a plain translation, or a bilingual paraphrase with no new learning signal",
+                    "pitfalls: prefer genuine mistakes, confusable alternatives, spelling traps, or misuse patterns; name the mistaken alternative or the specific risk, not a vague warning",
+                    "pitfalls: do not output self-confusion, generic labels like \"confusing similar-sounding words\", or broad reminders that could apply to almost any word",
+                    "mnemonics: prefer a memory hook, sound hook, image hook, spelling hook, or contrast hook tied to a concrete cue the learner can remember",
+                    "mnemonics: do not output a definition rewrite, a plain translation, the meaning itself, letter-by-letter respelling with no hook, or a cue that merely repeats the headword",
+                    "collocations: prefer common multiword patterns that help retrieval; do not output a phrase that merely repeats the sense inventory wording or a trivial headword + obvious object from the definition",
+                    "collocations: only return a collocation when it is a real phrase pattern a learner might want to remember; otherwise return an empty array",
+                    "Good items should teach one of: a likely mistake, a spelling danger spot, a memorable contrast, a vivid image, a reusable phrase pattern, or a recall cue",
                     "recallRelevant should be true only when the item directly helps active recall, hint design, or mistake avoidance",
                     "senseIndex is optional and should refer to the numbered sense inventory above when provided",
                     "Keep every string compact and learner-facing",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
-                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null"
+                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
+                    "Bad example pitfalls: \"Confusing with 'reluctant'\", \"Confusing similar-sounding words\"",
+                    "Bad example mnemonics: \"Reluctant = Reluctant to...\", \"habitual word pairing\", \"N-E-C-E-S-S-A-R-Y\"",
+                    "Bad example collocations: a phrase that is just the definition wording restated"
+                ])
+            ),
+            PromptText.labeledBlock(
+                "Examples",
+                value: PromptText.bulletList([
+                    "Good pitfall: receive -> \"the trap is the ie order after c\", because it points to a specific spelling risk",
+                    "Good pitfall: principal -> \"easy to confuse with principle\", because it names the confusable alternative",
+                    "Bad pitfall: reluctant -> \"confusing with reluctant\", because it repeats the headword and teaches nothing",
+                    "Good mnemonic: principal -> \"The principal is your pal at school\", because it gives a memorable hook",
+                    "Good mnemonic: necessary -> \"one collar, two sleeves: neCeSSary\", because it marks the double-consonant pattern",
+                    "Bad mnemonic: reluctant -> \"Reluctant = reluctant to start\", because it is just a self-rewrite",
+                    "Good collocation: collocation -> \"strong collocation\", because it is a real phrase learners may want to retain",
+                    "Good collocation: reluctant -> \"reluctant to admit\", because it is a reusable usage pattern",
+                    "Bad collocation: collocation -> \"habitual word pairing\", because it repeats the definition instead of giving a phrase pattern",
+                    "If the only candidate is a translation rewrite, a definition paraphrase, or a self-referential cue, return an empty array for that section"
                 ])
             )
         ])
@@ -748,6 +775,8 @@ public enum LLMPrompt {
             PromptText.labeledBlock(
                 "Selection principles",
                 value: PromptText.bulletList([
+                    "Only consider candidates that add information the sense inventory does not already state plainly",
+                    "Do not recommend dictionary glosses, direct translations, definition paraphrases, or trivial headword + obvious object phrases",
                     "Pick one candidate that adds the most learning value if the learner accepts only one item in this section",
                     "Prefer short, specific, actionable items",
                     "Prefer candidates that help recall or help avoid likely mistakes",
@@ -755,6 +784,73 @@ public enum LLMPrompt {
                     "Treat overlap as advisory rather than blocking; overlapping items may still remain as alternatives",
                     "Overlap means teaching the same learning point even if the wording differs",
                     "Do not rank by style alone and do not choose generic filler sentences",
+                    "Return JSON only"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
+    public static func learningAidCombinedJudge(
+        word: String,
+        senses: [LLMSensePromptInput],
+        candidatesBySectionJSON: String,
+        acceptedJSON: String
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+
+        let system = PromptText.join([
+            "You are selecting the most useful learning aid candidates for a vocabulary learner.",
+            "Judge all learning-aid sections in one pass, keep overlap advisory, and return strict JSON only.",
+            "Do not rewrite candidates. Do not invent new content.",
+            "A weak section may legitimately return null rather than forcing a recommendation."
+        ])
+
+        let user = PromptText.join([
+            #"Select the default recommendation for each learning-aid section of "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Candidates by section JSON", value: candidatesBySectionJSON),
+            PromptText.labeledBlock("Accepted learning material JSON", value: acceptedJSON),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"pitfalls\": {",
+                "    \"recommendedId\": \"candidate id or null\",",
+                "    \"alternativeIds\": [\"candidate ids that remain valid alternatives\"],",
+                "    \"overlapHints\": [",
+                "      {",
+                "        \"candidateId\": \"candidate id\",",
+                "        \"overlapType\": \"accepted_overlap | candidate_overlap\",",
+                "        \"withItemId\": \"accepted or candidate id\",",
+                "        \"reason\": \"short explanation\"",
+                "      }",
+                "    ],",
+                "    \"whyRecommended\": \"one short sentence\"",
+                "  } | null,",
+                "  \"mnemonics\": { ...same shape... } | null,",
+                "  \"collocations\": { ...same shape... } | null",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Selection principles",
+                value: PromptText.bulletList([
+                    "Judge each section independently even though all sections are provided together",
+                    "It is acceptable for a section to return null if none of its candidates adds clear learning value",
+                    "Only consider candidates that add information the sense inventory does not already state plainly",
+                    "Do not recommend dictionary glosses, direct translations, definition paraphrases, or trivial headword + obvious object phrases",
+                    "Do not fill a weak section just to make every section non-empty",
+                    "Pick one candidate per non-empty section that adds the most learning value if the learner accepts only one item in that section",
+                    "Prefer short, specific, actionable items",
+                    "Prefer candidates that help recall or help avoid likely mistakes",
+                    "Avoid recommending candidates that substantially overlap with already accepted material",
+                    "Prefer no recommendation over a low-increment recommendation",
+                    "Use candidate_overlap when two candidates from the same section teach the same learning point",
+                    "Treat overlap as advisory rather than blocking; overlapping items may still remain as alternatives",
+                    "Do not let a strong section suppress selection quality in another section",
                     "Return JSON only"
                 ])
             )

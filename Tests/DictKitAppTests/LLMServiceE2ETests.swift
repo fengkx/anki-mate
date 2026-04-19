@@ -248,10 +248,6 @@ final class LLMServiceE2ETests: XCTestCase {
                 modelId: service.selectedModelId
             )
 
-            XCTAssertFalse(aids.pitfalls.isEmpty, "\(context) issue=missing pitfalls section")
-            XCTAssertFalse(aids.mnemonics.isEmpty, "\(context) issue=missing mnemonics section")
-            XCTAssertFalse(aids.collocations.isEmpty, "\(context) issue=missing collocations section")
-
             XCTAssertTrue(
                 aids.pitfalls.allSatisfy { isPlainText($0.summary) && !startsWithListMarker($0.summary) },
                 "\(context) issue=pitfall summaries must stay plain and non-bulleted"
@@ -270,10 +266,54 @@ final class LLMServiceE2ETests: XCTestCase {
                 },
                 "\(context) issue=collocations should look like phrases, not full sentences or markdown"
             )
-            XCTAssertNotNil(ranked.selections.pitfalls, "\(context) issue=missing pitfall ranking selection")
-            XCTAssertNotNil(ranked.selections.mnemonics, "\(context) issue=missing mnemonic ranking selection")
-            XCTAssertNotNil(ranked.selections.collocations, "\(context) issue=missing collocation ranking selection")
+            if !aids.pitfalls.isEmpty {
+                XCTAssertNotNil(ranked.selections.pitfalls, "\(context) issue=missing pitfall ranking selection for non-empty section")
+            }
+            if !aids.mnemonics.isEmpty {
+                XCTAssertNotNil(ranked.selections.mnemonics, "\(context) issue=missing mnemonic ranking selection for non-empty section")
+            }
+            if !aids.collocations.isEmpty {
+                XCTAssertNotNil(ranked.selections.collocations, "\(context) issue=missing collocation ranking selection for non-empty section")
+            }
         }
+    }
+
+    func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityWhenEnabled() async throws {
+        let service = try configuredServiceOrSkip(suite: "comparison")
+        defer { Task { await service.stopServer() } }
+        let report = try await runLearningAidsStrategyComparison(
+            service: service,
+            corpus: learningAidsComparisonCorpus3,
+            rounds: 2,
+            label: "3-word"
+        )
+        print(report)
+    }
+
+    func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityAcrossTwoDiagnosticWordsWhenEnabled() async throws {
+        let service = try configuredServiceOrSkip(suite: "comparison")
+        defer { Task { await service.stopServer() } }
+
+        let report = try await runLearningAidsStrategyComparison(
+            service: service,
+            corpus: learningAidsComparisonCorpus2,
+            rounds: 1,
+            label: "2-word-diagnostic"
+        )
+        print(report)
+    }
+
+    func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityAcrossTenWordsWhenEnabled() async throws {
+        let service = try configuredServiceOrSkip(suite: "comparison")
+        defer { Task { await service.stopServer() } }
+
+        let report = try await runLearningAidsStrategyComparison(
+            service: service,
+            corpus: learningAidsComparisonCorpus10,
+            rounds: 1,
+            label: "10-word"
+        )
+        print(report)
     }
 
     private func configuredServiceOrSkip(suite: String, requireBaseline: Bool = false) throws -> LLMService {
@@ -348,6 +388,13 @@ private extension LLMServiceE2ETests {
         let acceptedMnemonics: [String]
         let acceptedCollocations: [String]
         let anchor: LLMAnchorSnapshot?
+    }
+
+    struct LearningAidStrategyMeasurement {
+        let round: Int
+        let strategy: LLMLearningAidJudgeStrategy
+        let durationMs: Double
+        let result: LLMLearningAidsRankedResult
     }
 
     var exampleBaselineCorpus: [ExampleBaselineCase] {
@@ -521,6 +568,158 @@ private extension LLMServiceE2ETests {
         ]
     }
 
+    var learningAidsComparisonCorpus3: [LearningAidsBaselineCase] {
+        [
+            LearningAidsBaselineCase(
+                word: "charge",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation"),
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "ask someone to pay a price")
+                ],
+                acceptedPitfalls: ["容易和负责、收费几个义项混在一起"],
+                acceptedDefinitionNote: "表示收费时是让别人支付一笔钱",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: LLMAnchorSnapshot(text: "charge", note: "snapshot only")
+            ),
+            LearningAidsBaselineCase(
+                word: "principal",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "noun", definition: "head of a school"),
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "most important")
+                ],
+                acceptedPitfalls: ["不要和 principle 混淆"],
+                acceptedDefinitionNote: "作名词时可指学校负责人",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "demolish",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "to knock down and destroy a building or structure")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "常指建筑或结构被拆毁",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            )
+        ]
+    }
+
+    var learningAidsComparisonCorpus10: [LearningAidsBaselineCase] {
+        [
+            learningAidsComparisonCorpus3[0],
+            learningAidsComparisonCorpus3[1],
+            learningAidsComparisonCorpus3[2],
+            LearningAidsBaselineCase(
+                word: "perpetual",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "continuing forever or for a very long time")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "常用于表示问题、噪音、争论等持续不止",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "receive",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "get or be given something")
+                ],
+                acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
+                acceptedDefinitionNote: "表示收到某物，不只是正式接收",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "collocation",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "noun", definition: "habitual word pairing", semanticHint: "word pairing")
+                ],
+                acceptedPitfalls: ["容易漏掉双写的 ll"],
+                acceptedDefinitionNote: "指自然的词语搭配，不是任意两个词放在一起",
+                acceptedMnemonics: [],
+                acceptedCollocations: ["strong collocation"],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "necessary",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "needed in order to achieve something")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "表示某事是必须的，不可避免的",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "fragile",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "easily broken or damaged")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "既可指物理上易碎，也可指关系或制度脆弱",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "reluctant",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "unwilling and hesitant")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "强调不情愿而不是简单地拒绝",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "illuminate",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "light up or make clear")
+                ],
+                acceptedPitfalls: ["既可以指照亮，也可以指阐明含义"],
+                acceptedDefinitionNote: "注意物理照亮和抽象解释两个方向",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            )
+        ]
+    }
+
+    var learningAidsComparisonCorpus2: [LearningAidsBaselineCase] {
+        [
+            LearningAidsBaselineCase(
+                word: "reluctant",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "adjective", definition: "unwilling and hesitant")
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "强调不情愿而不是简单地拒绝",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: nil
+            ),
+            LearningAidsBaselineCase(
+                word: "collocation",
+                senses: [
+                    LLMSensePromptInput(partOfSpeech: "noun", definition: "habitual word pairing", semanticHint: "word pairing")
+                ],
+                acceptedPitfalls: ["容易漏掉双写的 ll"],
+                acceptedDefinitionNote: "指自然的词语搭配，不是任意两个词放在一起",
+                acceptedMnemonics: [],
+                acceptedCollocations: ["strong collocation"],
+                anchor: nil
+            )
+        ]
+    }
+
     func normalizedNonEmptyLines(from text: String) -> [String] {
         text
             .split(separator: "\n")
@@ -631,6 +830,214 @@ private extension LLMServiceE2ETests {
             acceptedMnemonics: testCase.acceptedMnemonics,
             acceptedCollocations: testCase.acceptedCollocations
         )
+    }
+
+    func runLearningAidsStrategyComparison(
+        service: LLMService,
+        corpus: [LearningAidsBaselineCase],
+        rounds: Int,
+        label: String
+    ) async throws -> String {
+        var reportLines: [String] = []
+
+        let environment = ProcessInfo.processInfo.environment
+        let threadSummary = "threads=\(environment["DICTKIT_LLM_THREADS"] ?? "default") batch_threads=\(environment["DICTKIT_LLM_THREADS_BATCH"] ?? "default")"
+
+        for testCase in corpus {
+            let acceptedContext = appLearningAidAcceptedContext(for: testCase)
+            var measurements: [LearningAidStrategyMeasurement] = []
+
+            for round in 1...rounds {
+                let strategies: [LLMLearningAidJudgeStrategy] = round.isMultiple(of: 2)
+                    ? [.combinedSections, .separateSections]
+                    : [.separateSections, .combinedSections]
+
+                for strategy in strategies {
+                    let measurement = try await measureLearningAidStrategy(
+                        service: service,
+                        testCase: testCase,
+                        acceptedContext: acceptedContext,
+                        strategy: strategy,
+                        round: round
+                    )
+                    XCTAssertTrue(
+                        isLearningAidResultWellFormed(measurement.result),
+                        "strategy=\(strategy.rawValue) word=\(testCase.word) round=\(round)"
+                    )
+                    measurements.append(measurement)
+                }
+            }
+
+            reportLines.append(compareSummary(for: testCase, measurements: measurements))
+        }
+
+        return "\n=== Learning Aids judge strategy comparison (\(label), \(threadSummary)) ===\n\(reportLines.joined(separator: "\n\n"))\n"
+    }
+
+    func measureLearningAidStrategy(
+        service: LLMService,
+        testCase: LearningAidsBaselineCase,
+        acceptedContext: LLMLearningAidAcceptedContext,
+        strategy: LLMLearningAidJudgeStrategy,
+        round: Int
+    ) async throws -> LearningAidStrategyMeasurement {
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = try await service.generateRankedLearningAids(
+            word: testCase.word,
+            senses: testCase.senses,
+            acceptedContext: acceptedContext,
+            anchor: testCase.anchor,
+            judgeStrategy: strategy
+        )
+        let elapsed = start.duration(to: clock.now)
+        let durationMs = Double(elapsed.components.seconds) * 1_000
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000
+
+        return LearningAidStrategyMeasurement(
+            round: round,
+            strategy: strategy,
+            durationMs: durationMs,
+            result: result
+        )
+    }
+
+    func isLearningAidResultWellFormed(_ ranked: LLMLearningAidsRankedResult) -> Bool {
+        let aids = ranked.aids
+        return isLearningAidSectionWellFormed(
+            items: aids.pitfalls.map(\.id),
+            selection: ranked.selections.pitfalls
+        ) && isLearningAidSectionWellFormed(
+            items: aids.mnemonics.map(\.id),
+            selection: ranked.selections.mnemonics
+        ) && isLearningAidSectionWellFormed(
+            items: aids.collocations.map(\.id),
+            selection: ranked.selections.collocations
+        )
+    }
+
+    func isLearningAidSectionWellFormed(
+        items: [String],
+        selection: LLMLearningAidSectionSelection?
+    ) -> Bool {
+        if items.isEmpty {
+            return selection == nil || selection?.recommendedID == nil
+        }
+        guard let selection else { return false }
+        if let recommendedID = selection.recommendedID, !items.contains(recommendedID) {
+            return false
+        }
+        return selection.alternativeIDs.allSatisfy(items.contains)
+    }
+
+    func compareSummary(
+        for testCase: LearningAidsBaselineCase,
+        measurements: [LearningAidStrategyMeasurement]
+    ) -> String {
+        let grouped = Dictionary(grouping: measurements, by: \.strategy)
+        let separate = grouped[.separateSections] ?? []
+        let combined = grouped[.combinedSections] ?? []
+
+        return [
+            "word=\(testCase.word)",
+            aggregateSummaryLine(for: .separateSections, measurements: separate, senses: testCase.senses),
+            aggregateSummaryLine(for: .combinedSections, measurements: combined, senses: testCase.senses),
+            "rounds:",
+            measurements
+                .sorted {
+                    if $0.round == $1.round {
+                        return $0.strategy.rawValue < $1.strategy.rawValue
+                    }
+                    return $0.round < $1.round
+                }
+                .map { "r\($0.round) " + summaryLine(for: $0, senses: testCase.senses) }
+                .joined(separator: "\n")
+        ].joined(separator: "\n")
+    }
+
+    func aggregateSummaryLine(
+        for strategy: LLMLearningAidJudgeStrategy,
+        measurements: [LearningAidStrategyMeasurement],
+        senses: [LLMSensePromptInput]
+    ) -> String {
+        guard !measurements.isEmpty else {
+            return "\(strategy.rawValue): no measurements"
+        }
+
+        let sortedDurations = measurements.map(\.durationMs).sorted()
+        let averageMs = sortedDurations.reduce(0, +) / Double(sortedDurations.count)
+        let medianMs = sortedDurations[sortedDurations.count / 2]
+        let last = measurements.sorted { $0.round < $1.round }.last!
+
+        return "\(strategy.rawValue): avg=\(String(format: "%.1f", averageMs))ms median=\(String(format: "%.1f", medianMs))ms"
+            + " | last="
+            + sectionSummary("pitfalls", selection: last.result.selections.pitfalls, textByID: Dictionary(uniqueKeysWithValues: last.result.aids.pitfalls.map { ($0.id, $0.summary) }), senses: senses)
+            + " | "
+            + sectionSummary("mnemonics", selection: last.result.selections.mnemonics, textByID: Dictionary(uniqueKeysWithValues: last.result.aids.mnemonics.map { ($0.id, $0.clue) }), senses: senses)
+            + " | "
+            + sectionSummary("collocations", selection: last.result.selections.collocations, textByID: Dictionary(uniqueKeysWithValues: last.result.aids.collocations.map { ($0.id, $0.phrase) }), senses: senses)
+    }
+
+    func summaryLine(
+        for measurement: LearningAidStrategyMeasurement,
+        senses: [LLMSensePromptInput]
+    ) -> String {
+        let ranked = measurement.result
+        let pitfallTextByID = Dictionary(uniqueKeysWithValues: ranked.aids.pitfalls.map { ($0.id, $0.summary) })
+        let mnemonicTextByID = Dictionary(uniqueKeysWithValues: ranked.aids.mnemonics.map { ($0.id, $0.clue) })
+        let collocationTextByID = Dictionary(uniqueKeysWithValues: ranked.aids.collocations.map { ($0.id, $0.phrase) })
+
+        return "\(measurement.strategy.rawValue): \(String(format: "%.1f", measurement.durationMs))ms"
+            + " | " + sectionSummary("pitfalls", selection: ranked.selections.pitfalls, textByID: pitfallTextByID, senses: senses)
+            + " | " + sectionSummary("mnemonics", selection: ranked.selections.mnemonics, textByID: mnemonicTextByID, senses: senses)
+            + " | " + sectionSummary("collocations", selection: ranked.selections.collocations, textByID: collocationTextByID, senses: senses)
+    }
+
+    func sectionSummary(
+        _ name: String,
+        selection: LLMLearningAidSectionSelection?,
+        textByID: [String: String],
+        senses: [LLMSensePromptInput]
+    ) -> String {
+        guard let selection,
+              let recommendedID = selection.recommendedID,
+              let text = textByID[recommendedID] else {
+            return "\(name)=none"
+        }
+
+        return "\(name)=\(text) [overlap=\(String(format: "%.2f", definitionOverlap(of: text, senses: senses)))]"
+    }
+
+    func definitionOverlap(of text: String, senses: [LLMSensePromptInput]) -> Double {
+        let candidateTokens = overlapTokens(from: text)
+        guard !candidateTokens.isEmpty else { return 0 }
+
+        var best = 0.0
+        for sense in senses {
+            let senseText = [sense.definition, sense.semanticHint].compactMap { $0 }.joined(separator: " ")
+            let senseTokens = overlapTokens(from: senseText)
+            guard !senseTokens.isEmpty else { continue }
+
+            let overlap = Double(Set(candidateTokens).intersection(senseTokens).count)
+                / Double(max(1, min(candidateTokens.count, senseTokens.count)))
+            best = max(best, overlap)
+        }
+
+        return best
+    }
+
+    func overlapTokens(from text: String) -> [String] {
+        let stopWords: Set<String> = [
+            "a", "an", "and", "as", "be", "by", "for", "from", "in", "is", "it", "of", "or", "the",
+            "to", "with", "without", "on", "at", "into", "than", "that", "this", "these", "those",
+            "are", "was", "were", "am", "been", "being"
+        ]
+
+        return text
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && !stopWords.contains($0) }
     }
 
     func failureContext(

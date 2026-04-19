@@ -24,6 +24,11 @@ enum InferenceError: Error, LocalizedError {
 }
 
 final class InferenceEngine: InferenceServing {
+    private enum ThreadingDefaults {
+        static let generationThreadsEnvironmentKey = "DICTKIT_LLM_THREADS"
+        static let batchThreadsEnvironmentKey = "DICTKIT_LLM_THREADS_BATCH"
+    }
+
     struct SamplerPlan: Equatable {
         let seed: UInt32
         let stageNames: [String]
@@ -92,7 +97,9 @@ final class InferenceEngine: InferenceServing {
         var ctxParams = llama_context_default_params()
         ctxParams.n_ctx = UInt32(contextSize)
         ctxParams.n_batch = UInt32(min(contextSize, 2048))
-        ctxParams.n_threads = Int32(max(ProcessInfo.processInfo.activeProcessorCount - 2, 1))
+        let threadSettings = Self.resolveThreadSettings(environment: ProcessInfo.processInfo.environment)
+        ctxParams.n_threads = Int32(threadSettings.generationThreads)
+        ctxParams.n_threads_batch = Int32(threadSettings.batchThreads)
 
         guard let newCtx = llama_init_from_model(newModel, ctxParams) else {
             llama_model_free(newModel)
@@ -105,7 +112,11 @@ final class InferenceEngine: InferenceServing {
         grammarSampler = nil
         loadedModelPath = path
 
-        fputs("Model loaded successfully (ctx=\(contextSize), gpu_layers=\(gpuLayers))\n", stderr)
+        llama_set_n_threads(newCtx, Int32(threadSettings.generationThreads), Int32(threadSettings.batchThreads))
+        fputs(
+            "Model loaded successfully (ctx=\(contextSize), gpu_layers=\(gpuLayers), n_threads=\(threadSettings.generationThreads), n_threads_batch=\(threadSettings.batchThreads))\n",
+            stderr
+        )
     }
 
     func unloadModel() {
@@ -594,6 +605,42 @@ final class InferenceEngine: InferenceServing {
         }
 
         return SamplerPlan(seed: defaultSamplingSeed, stageNames: ["greedy"])
+    }
+
+    struct ThreadSettings: Equatable {
+        let generationThreads: Int
+        let batchThreads: Int
+    }
+
+    static func resolveThreadSettings(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        activeProcessorCount: Int = ProcessInfo.processInfo.activeProcessorCount
+    ) -> ThreadSettings {
+        let safeActiveProcessorCount = max(activeProcessorCount, 1)
+        let defaultGenerationThreads = max(safeActiveProcessorCount - 2, 1)
+        let defaultBatchThreads = max(safeActiveProcessorCount, 1)
+
+        let generationThreads = parsePositiveThreadOverride(
+            environment[ThreadingDefaults.generationThreadsEnvironmentKey]
+        ) ?? defaultGenerationThreads
+        let batchThreads = parsePositiveThreadOverride(
+            environment[ThreadingDefaults.batchThreadsEnvironmentKey]
+        ) ?? defaultBatchThreads
+
+        return ThreadSettings(
+            generationThreads: max(generationThreads, 1),
+            batchThreads: max(batchThreads, 1)
+        )
+    }
+
+    private static func parsePositiveThreadOverride(_ rawValue: String?) -> Int? {
+        guard let rawValue,
+              let parsed = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              parsed > 0 else {
+            return nil
+        }
+
+        return parsed
     }
 
     private static func compileGrammarWithUpstreamBridge(from schema: JSONValue) throws -> String {

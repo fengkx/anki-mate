@@ -38,4 +38,40 @@ final class ServerLaunchConfigurationTests: XCTestCase {
             )
         )
     }
+
+    func testInferenceEngineThreadSettingsDefaultToGenerationMinusTwoAndBatchEqualsAllCores() {
+        let settings = InferenceEngine.resolveThreadSettings(
+            environment: [:],
+            activeProcessorCount: 8
+        )
+
+        XCTAssertEqual(settings.generationThreads, 6)
+        XCTAssertEqual(settings.batchThreads, 8)
+    }
+
+    func testInferenceEngineThreadSettingsHonorPositiveEnvironmentOverrides() {
+        let settings = InferenceEngine.resolveThreadSettings(
+            environment: [
+                "DICTKIT_LLM_THREADS": "3",
+                "DICTKIT_LLM_THREADS_BATCH": "7"
+            ],
+            activeProcessorCount: 8
+        )
+
+        XCTAssertEqual(settings.generationThreads, 3)
+        XCTAssertEqual(settings.batchThreads, 7)
+    }
+
+    func testInferenceEngineThreadSettingsIgnoreInvalidOverrides() {
+        let settings = InferenceEngine.resolveThreadSettings(
+            environment: [
+                "DICTKIT_LLM_THREADS": "0",
+                "DICTKIT_LLM_THREADS_BATCH": "-1"
+            ],
+            activeProcessorCount: 4
+        )
+
+        XCTAssertEqual(settings.generationThreads, 2)
+        XCTAssertEqual(settings.batchThreads, 4)
+    }
 }

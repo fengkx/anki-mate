@@ -10,9 +10,17 @@ let llamaRuntimeRPaths = [
     "@loader_path/../../../../../../vendor/llama-install/lib",
 ]
 
+let llamaRuntimeLibrarySearchPaths = [
+    "vendor/llama-install/lib",
+]
+
 let llamaRuntimeLinkerSettings: [LinkerSetting] = llamaRuntimeRPaths.flatMap { path in
     [
         .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", path])
+    ]
+} + llamaRuntimeLibrarySearchPaths.flatMap { path in
+    [
+        .unsafeFlags(["-L", path])
     ]
 }
 

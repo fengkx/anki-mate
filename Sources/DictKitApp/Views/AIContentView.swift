@@ -210,6 +210,7 @@ struct AIContentView: View {
     @ObservedObject var item: WordItem
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var viewModel: WordListViewModel
+    @Environment(\.openWindow) private var openWindow
 
     @State private var examplesErrorMessage: String?
     @State private var learningAidsErrorMessage: String?
@@ -244,6 +245,7 @@ struct AIContentView: View {
     @State private var isLearningAidsSectionExpanded = false
     @State private var isUsageSectionExpanded = false
     @State private var isRecallSectionExpanded = false
+    @State private var showAIUnavailableAlert = false
 
     private let logger = Logger(subsystem: "AnkiMateApp", category: "AIContentView")
 
@@ -417,6 +419,14 @@ struct AIContentView: View {
         .onDisappear {
             cancelTransientTasks()
             syncGeneratingState()
+        }
+        .alert(LLMGenerationAvailability.alertTitle, isPresented: $showAIUnavailableAlert) {
+            Button(LLMGenerationAvailability.settingsButtonTitle) {
+                openWindow(id: AppWindowIDs.aiSettings)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(LLMGenerationAvailability.alertMessage)
         }
     }
 
@@ -802,6 +812,7 @@ struct AIContentView: View {
 
     private func generateSentences() {
         guard examplesTask == nil else { return }
+        guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let contexts = exampleSenseContexts(from: result)
         let senses = contexts.map(\.promptInput)
@@ -829,6 +840,9 @@ struct AIContentView: View {
                 viewModel.saveAISuggestedExampleArtifacts(artifacts, for: item)
                 logger.info("Regenerate Examples finished, \(artifacts.count) lines")
             } catch {
+                if presentAIUnavailableAlertIfNeeded(for: error) {
+                    return
+                }
                 examplesErrorMessage = error.localizedDescription
                 logger.error("Regenerate Examples failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -837,6 +851,7 @@ struct AIContentView: View {
 
     private func generateLearningAids() {
         guard learningAidsTask == nil else { return }
+        guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
@@ -893,6 +908,9 @@ struct AIContentView: View {
                 isLearningAidsSectionExpanded = true
                 logger.info("Generate Learning Aids finished")
             } catch {
+                if presentAIUnavailableAlertIfNeeded(for: error) {
+                    return
+                }
                 learningAidsErrorMessage = error.localizedDescription
                 logger.error("Generate Learning Aids failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -901,6 +919,7 @@ struct AIContentView: View {
 
     private func optimizeDefinition() {
         guard usageTask == nil else { return }
+        guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
@@ -930,6 +949,9 @@ struct AIContentView: View {
                 suggestedDefinitionState.mergePersistedValue(optimized)
                 logger.info("Regenerate Usage finished")
             } catch {
+                if presentAIUnavailableAlertIfNeeded(for: error) {
+                    return
+                }
                 usageErrorMessage = error.localizedDescription
                 logger.error("Regenerate Usage failed: \(error.localizedDescription, privacy: .public)")
             }
@@ -938,6 +960,7 @@ struct AIContentView: View {
 
     private func generateRecallDraft() {
         guard recallTask == nil else { return }
+        guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
@@ -972,10 +995,38 @@ struct AIContentView: View {
                 isRecallSectionExpanded = true
                 logger.info("Generate Recall Draft finished")
             } catch {
+                if presentAIUnavailableAlertIfNeeded(for: error) {
+                    return
+                }
                 recallErrorMessage = error.localizedDescription
                 logger.error("Generate Recall Draft failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    private func prepareManualGeneration() -> Bool {
+        if LLMGenerationAvailability.shouldPromptForManualAction(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState
+        ) {
+            showAIUnavailableAlert = true
+            return false
+        }
+
+        return true
+    }
+
+    private func presentAIUnavailableAlertIfNeeded(for error: Error) -> Bool {
+        guard LLMGenerationAvailability.shouldPromptForManualAction(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState,
+            error: error
+        ) else {
+            return false
+        }
+
+        showAIUnavailableAlert = true
+        return true
     }
 
     private func acceptSuggestedExample(rowID: UUID) {

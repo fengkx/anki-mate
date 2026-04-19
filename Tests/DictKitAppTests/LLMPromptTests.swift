@@ -312,6 +312,11 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"phrase\""))
         XCTAssertTrue(prompt.user.contains("\"gloss\""))
         XCTAssertTrue(prompt.user.contains("recallRelevant should be true only when the item directly helps active recall"))
+        XCTAssertTrue(prompt.user.contains("It is acceptable to return an empty array for any section"))
+        XCTAssertTrue(prompt.user.contains("pitfalls: prefer genuine mistakes, confusable alternatives, spelling traps, or misuse patterns"))
+        XCTAssertTrue(prompt.user.contains("Never output self-referential filler"))
+        XCTAssertTrue(prompt.user.contains("Bad example mnemonics"))
+        XCTAssertTrue(prompt.user.contains("Good collocation: collocation -> \"strong collocation\""))
         XCTAssertTrue(prompt.user.contains("\"charge\" [note: keep raw]"))
         XCTAssertTrue(prompt.user.contains("do not invent source offsets or remap anchors"))
     }
@@ -342,7 +347,39 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"alternativeIds\""))
         XCTAssertTrue(prompt.user.contains("\"overlapHints\""))
         XCTAssertTrue(prompt.user.contains("\"whyRecommended\""))
+        XCTAssertTrue(
+            prompt.user.contains(
+                "Do not recommend dictionary glosses, direct translations, definition paraphrases, or trivial headword + obvious object phrases"
+            )
+        )
         XCTAssertTrue(prompt.user.contains("Overlap means teaching the same learning point even if the wording differs"))
+    }
+
+    func testLearningAidCombinedJudgePromptRequestsSectionScopedSelections() {
+        let candidatesJSON = """
+        {"pitfalls":[{"id":"cand_1","text":"Do not confuse charge with accuse.","type":"confusable_word"}],"mnemonics":[],"collocations":[]}
+        """
+        let acceptedJSON = """
+        [{"id":"pitfalls-accepted-0","section":"pitfalls","text":"Do not confuse charge with accuse."}]
+        """
+
+        let prompt = LLMPrompt.learningAidCombinedJudge(
+            word: "charge",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation")
+            ],
+            candidatesBySectionJSON: candidatesJSON,
+            acceptedJSON: acceptedJSON
+        )
+
+        XCTAssertTrue(prompt.system.contains("Judge all learning-aid sections in one pass"))
+        XCTAssertTrue(prompt.user.contains("Candidates by section JSON"))
+        XCTAssertTrue(prompt.user.contains("\"pitfalls\""))
+        XCTAssertTrue(prompt.user.contains("\"mnemonics\""))
+        XCTAssertTrue(prompt.user.contains("\"collocations\""))
+        XCTAssertTrue(prompt.user.contains("It is acceptable for a section to return null if none of its candidates adds clear learning value"))
+        XCTAssertTrue(prompt.user.contains("Do not fill a weak section just to make every section non-empty"))
+        XCTAssertTrue(prompt.user.contains("Do not let a strong section suppress selection quality in another section"))
     }
 
     func testPhoneticIPAPromptRequestsPureIPAJSON() {

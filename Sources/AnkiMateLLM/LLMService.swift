@@ -825,14 +825,19 @@ public final class LLMService: ObservableObject {
             responseFormat: LLMResponseFormat(kind: .json)
         )
 
-        return Self.normalizeLearningAids(response)
+        return Self.filterLearningAids(
+            Self.normalizeLearningAids(response),
+            word: word,
+            senses: senses
+        )
     }
 
     public func generateRankedLearningAids(
         word: String,
         senses: [LLMSensePromptInput],
         acceptedContext: LLMLearningAidAcceptedContext,
-        anchor: LLMAnchorSnapshot? = nil
+        anchor: LLMAnchorSnapshot? = nil,
+        judgeStrategy: LLMLearningAidJudgeStrategy = .separateSections
     ) async throws -> LLMLearningAidsRankedResult {
         let aids = try await generateLearningAids(
             word: word,
@@ -841,34 +846,46 @@ public final class LLMService: ObservableObject {
         )
 
         let normalizedContext = Self.normalizeLearningAidAcceptedContext(acceptedContext)
+        let selections: LLMLearningAidSelections
 
-        async let pitfallSelection = rankLearningAidSection(
-            .pitfalls,
-            word: word,
-            senses: senses,
-            aids: aids,
-            acceptedContext: normalizedContext
-        )
-        async let mnemonicSelection = rankLearningAidSection(
-            .mnemonics,
-            word: word,
-            senses: senses,
-            aids: aids,
-            acceptedContext: normalizedContext
-        )
-        async let collocationSelection = rankLearningAidSection(
-            .collocations,
-            word: word,
-            senses: senses,
-            aids: aids,
-            acceptedContext: normalizedContext
-        )
+        switch judgeStrategy {
+        case .separateSections:
+            async let pitfallSelection = rankLearningAidSection(
+                .pitfalls,
+                word: word,
+                senses: senses,
+                aids: aids,
+                acceptedContext: normalizedContext
+            )
+            async let mnemonicSelection = rankLearningAidSection(
+                .mnemonics,
+                word: word,
+                senses: senses,
+                aids: aids,
+                acceptedContext: normalizedContext
+            )
+            async let collocationSelection = rankLearningAidSection(
+                .collocations,
+                word: word,
+                senses: senses,
+                aids: aids,
+                acceptedContext: normalizedContext
+            )
 
-        let selections = await LLMLearningAidSelections(
-            pitfalls: pitfallSelection,
-            mnemonics: mnemonicSelection,
-            collocations: collocationSelection
-        )
+            selections = await LLMLearningAidSelections(
+                pitfalls: pitfallSelection,
+                mnemonics: mnemonicSelection,
+                collocations: collocationSelection
+            )
+
+        case .combinedSections:
+            selections = await rankLearningAidSectionsCombined(
+                word: word,
+                senses: senses,
+                aids: aids,
+                acceptedContext: normalizedContext
+            )
+        }
 
         return LLMLearningAidsRankedResult(
             aids: Self.reorderLearningAids(aids, selections: selections),
@@ -1659,6 +1676,12 @@ struct LearningAidJudgeEnvelope: Decodable {
     let whyRecommended: String?
 }
 
+struct LearningAidCombinedJudgeEnvelope: Decodable {
+    let pitfalls: LearningAidJudgeEnvelope?
+    let mnemonics: LearningAidJudgeEnvelope?
+    let collocations: LearningAidJudgeEnvelope?
+}
+
 struct LearningAidJudgeOverlapHintPayload: Decodable {
     let candidateId: String
     let overlapType: String?
@@ -1739,6 +1762,51 @@ extension LLMService {
             pitfalls: payload.pitfalls.compactMap(normalizePitfall),
             mnemonics: payload.mnemonics.compactMap(normalizeMnemonic),
             collocations: payload.collocations.compactMap(normalizeCollocation)
+        )
+    }
+
+    static func filterLearningAids(
+        _ aids: LLMLearningAids,
+        word: String,
+        senses: [LLMSensePromptInput]
+    ) -> LLMLearningAids {
+        LLMLearningAids(
+            pitfalls: aids.pitfalls.filter {
+                !Self.isLowIncrementLearningAidCandidate(
+                    section: LLMLearningAidSection.pitfalls,
+                    word: word,
+                    text: $0.summary,
+                    translation: $0.translation,
+                    type: $0.category,
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senses: senses
+                )
+            },
+            mnemonics: aids.mnemonics.filter {
+                !Self.isLowIncrementLearningAidCandidate(
+                    section: LLMLearningAidSection.mnemonics,
+                    word: word,
+                    text: $0.clue,
+                    translation: $0.translation,
+                    type: $0.kind,
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senses: senses
+                )
+            },
+            collocations: aids.collocations.filter {
+                !Self.isLowIncrementLearningAidCandidate(
+                    section: LLMLearningAidSection.collocations,
+                    word: word,
+                    text: $0.phrase,
+                    translation: $0.gloss,
+                    type: "collocation",
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senses: senses
+                )
+            }
         )
     }
 
@@ -2548,6 +2616,252 @@ extension LLMService {
         )
     }
 
+    private static func isLowIncrementLearningAidCandidate(
+        section: LLMLearningAidSection,
+        word: String,
+        text: String,
+        translation: String?,
+        type: String?,
+        focus: String?,
+        recallRelevant: Bool?,
+        senses: [LLMSensePromptInput]
+    ) -> Bool {
+        let normalizedText = normalizedLearningAidText(text)
+        let normalizedTranslation = translation.map(normalizedLearningAidText)
+        let contentTokens = learningAidContentTokens(for: [text, translation].compactMap { $0 })
+        let lexicalTokens = lexicalLearningAidTokens(for: text)
+        let normalizedWord = normalizedLearningAidText(word)
+        let maxOverlap = maxDefinitionOverlap(
+            with: [text, translation].compactMap { $0 },
+            senses: senses
+        )
+
+        if isDefinitionParaphraseLike(maxOverlap: maxOverlap, contentTokens: contentTokens, section: section) {
+            return true
+        }
+
+        switch section {
+        case .pitfalls:
+            if normalizedText.contains("confusing with") || normalizedText.contains("confuse with") {
+                if !normalizedText.contains(normalizedWord) {
+                    return true
+                }
+            }
+            if contentTokens.count <= 3 {
+                if let normalizedTranslation,
+                   normalizedTranslation.count <= 8,
+                   !containsAny(normalizedText, ["spelling", "contrast", "misuse"]) {
+                    return true
+                }
+
+                let hasSpecificContrastCue = containsAny(normalizedText, pitfallContrastMarkers)
+                let hasSpecificEnglishToken = lexicalTokens.contains { token in
+                    guard token != normalizedWord else { return false }
+                    return !pitfallContrastNoiseTokens.contains(token)
+                }
+
+                if hasSpecificContrastCue && (normalizedText.contains(normalizedWord) || hasSpecificEnglishToken) {
+                    return false
+                }
+                return true
+            }
+            if type == "usage_tendency" && recallRelevant != true {
+                return true
+            }
+            return false
+
+        case .mnemonics:
+            if contentTokens.count <= 3 {
+                if let normalizedTranslation,
+                   normalizedTranslation.count <= 8,
+                   !containsAny(normalizedText, mnemonicHookMarkers) {
+                    return true
+                }
+                if containsAny(normalizedText, mnemonicHookMarkers) || normalizedText.contains("=") {
+                    return false
+                }
+                if lexicalTokens.contains(where: mnemonicGlueWords.contains) {
+                    return true
+                }
+                return false
+            }
+            if !containsAny(normalizedText, mnemonicHookMarkers) && maxOverlap >= 0.45 {
+                return true
+            }
+            return false
+
+        case .collocations:
+            if normalizedText.contains(normalizedWord) && contentTokens.count <= 4 {
+                return true
+            }
+            if contentTokens.count <= 2 && maxOverlap >= 0.4 {
+                return true
+            }
+            if contentTokens.count <= 4, maxOverlap >= 0.5 {
+                return true
+            }
+            return false
+        }
+    }
+
+    private static let pitfallThinMarkers: [String] = [
+        "confuse",
+        "confusing",
+        "mistake",
+        "mix up",
+        "avoid",
+        "spelling",
+        "trap",
+        "watch out",
+        "instead of",
+        "rather than"
+    ]
+
+    private static let pitfallContrastMarkers: [String] = [
+        "confuse",
+        "confusing",
+        "mistake",
+        "mix up",
+        "avoid",
+        "spelling",
+        "trap",
+        "watch out",
+        "instead of",
+        "rather than",
+        "not",
+        "vs",
+        "contrast",
+        "区别",
+        "对比",
+        "不同",
+        "混淆",
+        "不要",
+        "和"
+    ]
+
+    private static let pitfallContrastNoiseTokens: Set<String> = [
+        "confuse",
+        "confusing",
+        "mistake",
+        "mix",
+        "up",
+        "avoid",
+        "spelling",
+        "trap",
+        "watch",
+        "out",
+        "instead",
+        "rather",
+        "than",
+        "not",
+        "vs",
+        "contrast",
+        "with",
+        "without",
+        "and",
+        "or",
+        "do",
+        "does",
+        "did"
+    ]
+
+    private static let mnemonicHookMarkers: [String] = [
+        "remember",
+        "sounds like",
+        "sound like",
+        "picture",
+        "imagine",
+        "think of",
+        "associate",
+        "visual",
+        "memory",
+        "hook"
+    ]
+
+    private static let mnemonicGlueWords: Set<String> = [
+        "a",
+        "an",
+        "the",
+        "of",
+        "to",
+        "for",
+        "in",
+        "on",
+        "at",
+        "with",
+        "from"
+    ]
+
+    private static func containsAny(_ text: String, _ markers: [String]) -> Bool {
+        markers.contains { text.contains($0) }
+    }
+
+    private static func isDefinitionParaphraseLike(
+        maxOverlap: Double,
+        contentTokens: [String],
+        section: LLMLearningAidSection
+    ) -> Bool {
+        switch section {
+        case .pitfalls:
+            return maxOverlap >= 0.55 && contentTokens.count <= 6
+        case .mnemonics:
+            return maxOverlap >= 0.45 && contentTokens.count <= 5
+        case .collocations:
+            return maxOverlap >= 0.4 && contentTokens.count <= 4
+        }
+    }
+
+    private static func maxDefinitionOverlap(
+        with candidateTexts: [String],
+        senses: [LLMSensePromptInput]
+    ) -> Double {
+        let candidateTokens = learningAidContentTokens(for: candidateTexts)
+        guard !candidateTokens.isEmpty else { return 0 }
+
+        var best: Double = 0
+        for sense in senses {
+            let senseTokens = learningAidContentTokens(for: [sense.definition, sense.semanticHint].compactMap { $0 })
+            guard !senseTokens.isEmpty else { continue }
+            let overlap = Double(Set(candidateTokens).intersection(senseTokens).count)
+                / Double(max(1, min(candidateTokens.count, senseTokens.count)))
+            best = max(best, overlap)
+
+            let normalizedCandidate = candidateTexts.joined(separator: " ").lowercased()
+            let normalizedSense = [sense.definition, sense.semanticHint]
+                .compactMap { $0 }
+                .joined(separator: " ")
+                .lowercased()
+            if !normalizedCandidate.isEmpty, !normalizedSense.isEmpty,
+               (normalizedCandidate.contains(normalizedSense) || normalizedSense.contains(normalizedCandidate)) {
+                best = max(best, 1.0)
+            }
+        }
+
+        return best
+    }
+
+    private static func learningAidContentTokens(for texts: [String]) -> [String] {
+        let stopWords: Set<String> = [
+            "a", "an", "and", "as", "be", "by", "for", "from", "in", "is", "it", "of", "or", "the",
+            "to", "with", "without", "on", "at", "into", "than", "that", "this", "these", "those",
+            "are", "was", "were", "am", "been", "being"
+        ]
+
+        return texts
+            .joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && !stopWords.contains($0) }
+    }
+
+    private static func lexicalLearningAidTokens(for text: String) -> [String] {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
     private struct LearningAidJudgeCandidate: Codable {
         let id: String
         let text: String
@@ -2603,6 +2917,71 @@ extension LLMService {
             return Self.deterministicLearningAidFallback(
                 section: section,
                 candidates: candidates
+            )
+        }
+    }
+
+    private func rankLearningAidSectionsCombined(
+        word: String,
+        senses: [LLMSensePromptInput],
+        aids: LLMLearningAids,
+        acceptedContext: LLMLearningAidAcceptedContext
+    ) async -> LLMLearningAidSelections {
+        let pitfallCandidates = learningAidCandidates(for: .pitfalls, aids: aids)
+        let mnemonicCandidates = learningAidCandidates(for: .mnemonics, aids: aids)
+        let collocationCandidates = learningAidCandidates(for: .collocations, aids: aids)
+        let acceptedItems = judgeAcceptedItems(for: acceptedContext)
+
+        let hasAnyCandidates = !pitfallCandidates.isEmpty || !mnemonicCandidates.isEmpty || !collocationCandidates.isEmpty
+        guard hasAnyCandidates else {
+            return LLMLearningAidSelections()
+        }
+
+        do {
+            let candidatesBySection: [String: [LearningAidJudgeCandidate]] = [
+                LLMLearningAidSection.pitfalls.rawValue: pitfallCandidates,
+                LLMLearningAidSection.mnemonics.rawValue: mnemonicCandidates,
+                LLMLearningAidSection.collocations.rawValue: collocationCandidates
+            ]
+            let prompt = LLMPrompt.learningAidCombinedJudge(
+                word: word,
+                senses: senses,
+                candidatesBySectionJSON: compactJSONString(candidatesBySection),
+                acceptedJSON: compactJSONString(acceptedItems)
+            )
+            let judge: LearningAidCombinedJudgeEnvelope = try await generateStructuredOutput(
+                type: LearningAidCombinedJudgeEnvelope.self,
+                prompt: prompt,
+                maxTokens: 420,
+                temperature: adjustedTemperature(0.2),
+                responseFormat: LLMResponseFormat(kind: .json)
+            )
+
+            return LLMLearningAidSelections(
+                pitfalls: selectionFromCombinedJudge(
+                    section: .pitfalls,
+                    judge: judge.pitfalls,
+                    candidates: pitfallCandidates,
+                    acceptedItems: acceptedItems
+                ),
+                mnemonics: selectionFromCombinedJudge(
+                    section: .mnemonics,
+                    judge: judge.mnemonics,
+                    candidates: mnemonicCandidates,
+                    acceptedItems: acceptedItems
+                ),
+                collocations: selectionFromCombinedJudge(
+                    section: .collocations,
+                    judge: judge.collocations,
+                    candidates: collocationCandidates,
+                    acceptedItems: acceptedItems
+                )
+            )
+        } catch {
+            return LLMLearningAidSelections(
+                pitfalls: Self.deterministicLearningAidFallback(section: .pitfalls, candidates: pitfallCandidates),
+                mnemonics: Self.deterministicLearningAidFallback(section: .mnemonics, candidates: mnemonicCandidates),
+                collocations: Self.deterministicLearningAidFallback(section: .collocations, candidates: collocationCandidates)
             )
         }
     }
@@ -2743,6 +3122,37 @@ extension LLMService {
             whyRecommended: judge.whyRecommended?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             selectionSource: "judge_with_guardrails"
         )
+    }
+
+    private func selectionFromCombinedJudge(
+        section: LLMLearningAidSection,
+        judge: LearningAidJudgeEnvelope?,
+        candidates: [LearningAidJudgeCandidate],
+        acceptedItems: [LearningAidJudgeAcceptedItem]
+    ) -> LLMLearningAidSectionSelection? {
+        guard !candidates.isEmpty else { return nil }
+        guard let judge else {
+            return Self.deterministicLearningAidFallback(section: section, candidates: candidates)
+        }
+
+        let selection = Self.applyLearningAidGuardrails(
+            section: section,
+            judge: judge,
+            candidates: candidates,
+            acceptedItems: acceptedItems
+        )
+
+        if selection.selectionSource == "judge_with_guardrails" {
+            return LLMLearningAidSectionSelection(
+                recommendedID: selection.recommendedID,
+                alternativeIDs: selection.alternativeIDs,
+                overlapHints: selection.overlapHints,
+                whyRecommended: selection.whyRecommended,
+                selectionSource: "combined_judge_with_guardrails"
+            )
+        }
+
+        return selection
     }
 
     private static func deterministicLearningAidFallback(

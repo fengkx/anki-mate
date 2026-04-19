@@ -270,6 +270,11 @@ public enum LLMLearningAidSection: String, Codable, CaseIterable, Sendable {
     case collocations
 }
 
+public enum LLMLearningAidJudgeStrategy: String, Codable, CaseIterable, Sendable {
+    case separateSections
+    case combinedSections
+}
+
 public struct LLMLearningAidAcceptedContext: Codable, Equatable, Sendable {
     public let acceptedPitfalls: [String]
     public let acceptedUsageHints: [String]
