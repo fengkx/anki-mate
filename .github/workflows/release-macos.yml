@@ -89,6 +89,36 @@ jobs:
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve signing mode
+        id: signing-mode
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+
+          has_signing=false
+          if [[ -n "${APPLE_DEVELOPER_ID_CERT_BASE64:-}" && -n "${APPLE_DEVELOPER_ID_CERT_PASSWORD:-}" ]]; then
+            has_signing=true
+          fi
+
+          has_notary=false
+          if [[ "$has_signing" == "true" \
+            && -n "${APPLE_NOTARY_API_KEY_BASE64:-}" \
+            && -n "${APPLE_NOTARY_KEY_ID:-}" \
+            && -n "${APPLE_NOTARY_ISSUER_ID:-}" ]]; then
+            has_notary=true
+          fi
+
+          {
+            echo "has-signing=$has_signing"
+            echo "has-notary=$has_notary"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install CI tools
         run: brew install just cmake openssl@3
 
@@ -105,6 +135,7 @@ jobs:
         run: just build-llama
 
       - name: Import Developer ID signing certificate
+        if: steps.signing-mode.outputs.has-signing == 'true'
         env:
           APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
           APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
@@ -112,6 +143,7 @@ jobs:
         run: ./scripts/import-apple-signing-cert.sh
 
       - name: Write App Store Connect API key
+        if: steps.signing-mode.outputs.has-notary == 'true'
         shell: bash
         env:
           APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
@@ -165,6 +197,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
           RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          HAS_SIGNING: ${{ steps.signing-mode.outputs.has-signing }}
+          HAS_NOTARY: ${{ steps.signing-mode.outputs.has-notary }}
           ZIP_PATH: ${{ steps.package.outputs.zip-path }}
           CHECKSUM_PATH: ${{ steps.package.outputs.checksum-path }}
           MANIFEST_PATH: ${{ steps.package.outputs.manifest-path }}
@@ -176,6 +210,8 @@ jobs:
             echo
             echo "- Tag: \`${RELEASE_TAG}\`"
             echo "- Version: \`${RELEASE_VERSION}\`"
+            echo "- Signing: \`${HAS_SIGNING}\`"
+            echo "- Notarization: \`${HAS_NOTARY}\`"
             echo "- Archive: \`$(basename "${ZIP_PATH}")\`"
             echo "- Checksum: \`$(basename "${CHECKSUM_PATH}")\`"
             echo "- Manifest: \`$(basename "${MANIFEST_PATH}")\`"

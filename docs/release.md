@@ -31,7 +31,7 @@ Recommended protection:
 
 ## Required Secrets
 
-Store these as environment secrets under `release`:
+Store these as environment secrets under `release` if you want a signed and notarized release:
 
 - `APPLE_DEVELOPER_ID_CERT_BASE64`
   Base64-encoded `.p12` containing the Developer ID Application certificate
@@ -45,6 +45,8 @@ Store these as environment secrets under `release`:
   App Store Connect API key ID
 - `APPLE_NOTARY_ISSUER_ID`
   App Store Connect issuer ID
+
+If these secrets are absent, the workflow now falls back to an unsigned, unnotarized zip so packaging and GitHub Release automation can still be exercised.
 
 ## Local Dry Run
 
@@ -105,3 +107,4 @@ The workflow currently publishes:
 - The shipped archive is created only after stapling, so users download an offline-verifiable notarized app bundle.
 - Artifact provenance is generated with GitHub's official attestation action.
 - GitHub artifact attestations for private repositories require GitHub Enterprise Cloud. Public repositories can use them on current GitHub plans.
+- When signing secrets are not configured, the workflow still produces an unsigned package for validation, but that artifact is not suitable for end-user macOS distribution.

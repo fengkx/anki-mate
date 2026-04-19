@@ -182,6 +182,7 @@ manifest = {
     "archive_name": os.path.basename(os.environ["FINAL_ZIP_PATH"]),
     "archive_sha256": os.environ["APP_ARCHIVE_SHA256"],
     "minimum_system_version": os.environ["APP_MINIMUM_SYSTEM_VERSION"],
+    "signed": os.environ["APP_SIGNED"].lower() == "true",
     "notarized": os.environ["DID_NOTARIZE"].lower() == "true",
 }
 
@@ -216,6 +217,12 @@ verify_bundle
 create_release_zip
 APP_ARCHIVE_SHA256="$(awk '{print $1}' "$CHECKSUM_PATH")"
 export APP_ARCHIVE_SHA256
+if [[ -n "${APPLE_DEVELOPER_IDENTITY:-}" ]]; then
+    APP_SIGNED=true
+else
+    APP_SIGNED=false
+fi
+export APP_SIGNED
 export FINAL_ZIP_PATH
 write_release_manifest
 
