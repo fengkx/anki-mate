@@ -67,6 +67,7 @@ just build-cli
 just build-app
 just build-anki
 just build-release
+just package-release 0.1.0
 ```
 
 ## Dependency And Maintenance Commands

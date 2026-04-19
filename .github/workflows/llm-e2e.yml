@@ -47,7 +47,9 @@ jobs:
       DICTKIT_LLM_CONTEXT_SIZE: 4096
       DICTKIT_LLM_GPU_LAYERS: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install CI tools
         run: brew install just cmake openssl@3

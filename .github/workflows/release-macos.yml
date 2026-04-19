@@ -1,0 +1,224 @@
+name: Release macOS App
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing git tag to package and release, for example v0.1.0
+        required: true
+        type: string
+      create_release:
+        description: Create or update the GitHub release after packaging
+        required: true
+        default: true
+        type: boolean
+      publish:
+        description: Publish the GitHub release after uploading assets
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-macos-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install CI tools
+        run: brew install just cmake openssl@3
+
+      - name: Build llama.cpp
+        run: just build-llama
+
+      - name: Run CI suite
+        run: just ci
+
+  release:
+    needs: verify
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: write
+      attestations: write
+      artifact-metadata: write
+      id-token: write
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve release version
+        id: release-meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          version="${tag#v}"
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install CI tools
+        run: brew install just cmake openssl@3
+
+      - name: Install packaging dependencies
+        run: python3 -m pip install --user pillow
+
+      - name: Build llama.cpp
+        run: just build-llama
+
+      - name: Import Developer ID signing certificate
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+        run: ./scripts/import-apple-signing-cert.sh
+
+      - name: Write App Store Connect API key
+        shell: bash
+        env:
+          APPLE_NOTARY_API_KEY_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+        run: |
+          set -euo pipefail
+          decode_base64() {
+            if base64 --help 2>/dev/null | grep -q -- '--decode'; then
+              base64 --decode
+            else
+              base64 -D
+            fi
+          }
+
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_BASE64" | decode_base64 > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_NOTARY_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized release assets
+        id: package
+        env:
+          APP_VERSION: ${{ steps.release-meta.outputs.version }}
+          APP_BUILD_NUMBER: ${{ github.run_number }}
+          APPLE_DEVELOPER_IDENTITY: ${{ env.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_NOTARY_API_KEY_PATH: ${{ env.APPLE_NOTARY_API_KEY_PATH }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./scripts/package-macos-release.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-release-${{ steps.release-meta.outputs.tag }}
+          path: |
+            .build/release-dist/*.zip
+            .build/release-dist/*.sha256
+            .build/release-dist/*.json
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Generate provenance attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            .build/release-dist/*.zip
+            .build/release-dist/*.sha256
+
+      - name: Write release summary
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          ZIP_PATH: ${{ steps.package.outputs.zip-path }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum-path }}
+          MANIFEST_PATH: ${{ steps.package.outputs.manifest-path }}
+          NOTARY_LOG_PATH: ${{ steps.package.outputs.notary-log-path }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## macOS Release"
+            echo
+            echo "- Tag: \`${RELEASE_TAG}\`"
+            echo "- Version: \`${RELEASE_VERSION}\`"
+            echo "- Archive: \`$(basename "${ZIP_PATH}")\`"
+            echo "- Checksum: \`$(basename "${CHECKSUM_PATH}")\`"
+            echo "- Manifest: \`$(basename "${MANIFEST_PATH}")\`"
+            if [[ -n "${NOTARY_LOG_PATH:-}" ]]; then
+              echo "- Notary log: \`$(basename "${NOTARY_LOG_PATH}")\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update draft GitHub release
+        if: github.event_name == 'push' || inputs.create_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-meta.outputs.version }}
+          PRERELEASE: ${{ steps.release-meta.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          assets=(.build/release-dist/*.zip .build/release-dist/*.sha256 .build/release-dist/*.json)
+          title="Anki Mate ${RELEASE_VERSION}"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --title "$title"
+          else
+            args=(gh release create "$RELEASE_TAG" "${assets[@]}" --draft --title "$title" --generate-notes)
+            if [[ "$PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            else
+              args+=(--latest)
+            fi
+            "${args[@]}"
+          fi
+
+      - name: Publish GitHub release
+        if: (github.event_name == 'push' || inputs.create_release) && (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-meta.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Clean up signing material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_KEYCHAIN_PATH:-}" && -f "${APPLE_KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${APPLE_KEYCHAIN_PATH}" || true
+          fi
+          if [[ -n "${APPLE_NOTARY_API_KEY_PATH:-}" && -f "${APPLE_NOTARY_API_KEY_PATH}" ]]; then
+            rm -f "${APPLE_NOTARY_API_KEY_PATH}"
+          fi

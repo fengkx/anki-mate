@@ -9,10 +9,14 @@ on:
 jobs:
   test:
     runs-on: macos-26
+    permissions:
+      contents: read
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install CI tools
         run: brew install just cmake openssl@3

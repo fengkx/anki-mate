@@ -67,6 +67,10 @@ build-release: prepare-swiftpm
         echo "Skipping AnkiMateServer release build: vendor/llama-install is missing. Run 'just build-llama' to enable it."
     fi
 
+# Build a distributable macOS release zip under .build/release-dist.
+package-release version: prepare-swiftpm
+    APP_VERSION="{{version}}" ./scripts/package-macos-release.sh
+
 # ── LLM / Inference ──────────────────────────────────
 
 # Build llama.cpp from vendored submodule
