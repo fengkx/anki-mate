@@ -29,166 +29,28 @@ struct CardPreviewView: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Text(item.word)
-                            .font(.title2.bold())
-
-                        if item.isReady {
-                            Button(action: { viewModel.retryLookup(item) }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Re-lookup with current dictionary")
-                        }
-
-                        Spacer()
-
-                        Picker("", selection: $previewFamily) {
-                            Text("Standard").tag(PreviewFamily.standard)
-                            Text("Recall").tag(PreviewFamily.recall)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 180)
-
-                        Picker("", selection: $showBack) {
-                            Text("Front").tag(false)
-                            Text("Back").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                    }
-
-                    if let sourceDescription = item.sourceDescription {
-                        Text(sourceDescription)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let inflectionDescription = item.inflectionDescription {
-                        Text(inflectionDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
                     let phonetics = item.phoneticsByDialect.sorted {
                         let order = ["AmE": 0, "BrE": 1]
                         return (order[$0.dialect] ?? 2) < (order[$1.dialect] ?? 2)
                     }
-                    if !phonetics.isEmpty {
-                        let sharedStressRefreshTarget = preferredStressRefreshTarget(from: phonetics)
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .center, spacing: 14) {
-                                ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
-                                    let dialectKey = item.dialectStorageKey(for: entry.dialect)
-                                    let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
 
-                                    HStack(alignment: .center, spacing: 4) {
-                                        if !entry.dialect.isEmpty {
-                                            Text(entry.dialect)
-                                                .font(.caption2.weight(.medium))
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(
-                                                    Capsule()
-                                                        .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
-                                                )
-                                        }
-                                        if let generatedIPA {
-                                            Text("/\(generatedIPA)/")
-                                                .font(.body.weight(.medium))
-                                                .foregroundStyle(.primary)
-                                                .help("Generated IPA pronunciation")
-                                        } else {
-                                            Text(entry.usesIPADelimiters ? "/\(entry.notation)/" : entry.notation)
-                                                .font(.body)
-                                                .foregroundStyle(.secondary)
-                                                .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
-                                        }
-
-                                        pronunciationActionGroup(
-                                            isGenerating: generatingPronunciationDialects.contains(dialectKey),
-                                            canRefresh: true,
-                                            canPlay: item.isReady,
-                                            refreshHelp: "Generate pronunciation aid",
-                                            onRefresh: {
-                                                generatePronunciationEnhancement(
-                                                    for: entry.dialect,
-                                                    guide: entry.notation,
-                                                    existingIPA: entry.usesIPADelimiters ? entry.notation : generatedIPA
-                                                )
-                                            },
-                                            onPlay: {
-                                                Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-
-                            if let sharedStressSyllables = item.preferredGeneratedStressSyllables {
-                                HStack(alignment: .center, spacing: 6) {
-                                    Text(sharedStressSyllables)
-                                        .font(.body.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .help("Stress syllables")
-
-                                    if let target = sharedStressRefreshTarget {
-                                        let dialectKey = item.dialectStorageKey(for: target.dialect)
-                                        pronunciationIconButton(
-                                            systemImage: "arrow.clockwise",
-                                            help: "Regenerate stress syllables",
-                                            tint: Self.generateIPATint,
-                                            isLoading: generatingPronunciationDialects.contains(dialectKey),
-                                            disabled: !item.isReady || generatingPronunciationDialects.contains(dialectKey)
-                                        ) {
-                                            generatePronunciationEnhancement(
-                                                for: target.dialect,
-                                                guide: target.guide,
-                                                existingIPA: target.existingIPA
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                    if geometry.size.width >= 860 {
+                        HStack(alignment: .top, spacing: 16) {
+                            pronunciationSummary(phonetics: phonetics)
+                            Spacer(minLength: 0)
+                            previewControls
                         }
                     } else {
-                        HStack(alignment: .center, spacing: 8) {
-                            let defaultDialectKey = item.dialectStorageKey(for: "AmE")
-                            let generatedIPA = item.preferredGeneratedIPA
-                            let generatedStressSyllables = item.generatedStressSyllables(for: "AmE")
-
-                            if let generatedIPA {
-                                Text("/\(generatedIPA)/")
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(.primary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top, spacing: 12) {
+                                pronunciationHeader
+                                Spacer(minLength: 0)
+                                previewControls
                             }
-
-                            if let generatedStressSyllables {
-                                Text(generatedStressSyllables)
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            pronunciationActionGroup(
-                                isGenerating: generatingPronunciationDialects.contains(defaultDialectKey),
-                                canRefresh: item.isReady,
-                                canPlay: item.isReady,
-                                refreshHelp: "Generate pronunciation aid",
-                                onRefresh: {
-                                    generatePronunciationEnhancement(
-                                        for: "AmE",
-                                        guide: nil,
-                                        existingIPA: generatedIPA
-                                    )
-                                },
-                                onPlay: {
-                                    Task { await viewModel.playPronunciation(for: item) }
-                                }
-                            )
+                            pronunciationDetails(phonetics: phonetics)
                         }
                     }
+
                     if let pronunciationEnhancementErrorMessage {
                         Text(pronunciationEnhancementErrorMessage)
                             .font(.caption)
@@ -235,6 +97,209 @@ struct CardPreviewView: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func pronunciationSummary(
+        phonetics: [(dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            pronunciationHeader
+            pronunciationDetails(phonetics: phonetics)
+        }
+    }
+
+    private var pronunciationHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(item.word)
+                    .font(.title2.bold())
+
+                if item.isReady {
+                    Button(action: { viewModel.retryLookup(item) }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Refresh entry from the current dictionary")
+                }
+            }
+
+            if let sourceDescription = item.sourceDescription {
+                Text(sourceDescription)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let inflectionDescription = item.inflectionDescription {
+                Text(inflectionDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pronunciationDetails(
+        phonetics: [(dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)]
+    ) -> some View {
+        if !phonetics.isEmpty {
+            let sharedStressRefreshTarget = preferredStressRefreshTarget(from: phonetics)
+            VStack(alignment: .leading, spacing: 4) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 14) {
+                        ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
+                            pronunciationEntry(entry)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
+                            pronunciationEntry(entry)
+                        }
+                    }
+                }
+
+                if let sharedStressSyllables = item.preferredGeneratedStressSyllables {
+                    HStack(alignment: .center, spacing: 6) {
+                        Text("Stress")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Text(sharedStressSyllables)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .help("Stress syllables")
+
+                        if let target = sharedStressRefreshTarget {
+                            let dialectKey = item.dialectStorageKey(for: target.dialect)
+                            pronunciationIconButton(
+                                systemImage: "arrow.clockwise",
+                                help: "Regenerate stress syllables",
+                                tint: Self.generateIPATint,
+                                isLoading: generatingPronunciationDialects.contains(dialectKey),
+                                disabled: !item.isReady || generatingPronunciationDialects.contains(dialectKey)
+                            ) {
+                                generatePronunciationEnhancement(
+                                    for: target.dialect,
+                                    guide: target.guide,
+                                    existingIPA: target.existingIPA
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                let defaultDialectKey = item.dialectStorageKey(for: "AmE")
+                let generatedIPA = item.preferredGeneratedIPA
+                let generatedStressSyllables = item.generatedStressSyllables(for: "AmE")
+
+                if let generatedIPA {
+                    Text("/\(generatedIPA)/")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                }
+
+                if let generatedStressSyllables {
+                    Text("Stress")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(generatedStressSyllables)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+
+                pronunciationActionGroup(
+                    isGenerating: generatingPronunciationDialects.contains(defaultDialectKey),
+                    canRefresh: item.isReady,
+                    canPlay: item.isReady,
+                    refreshHelp: "Generate pronunciation aid",
+                    onRefresh: {
+                        generatePronunciationEnhancement(
+                            for: "AmE",
+                            guide: nil,
+                            existingIPA: generatedIPA
+                        )
+                    },
+                    onPlay: {
+                        Task { await viewModel.playPronunciation(for: item) }
+                    }
+                )
+            }
+        }
+    }
+
+    private var previewControls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            Picker("", selection: $previewFamily) {
+                Text("Standard").tag(PreviewFamily.standard)
+                Text("Recall").tag(PreviewFamily.recall)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 180)
+
+            Picker("", selection: $showBack) {
+                Text("Front").tag(false)
+                Text("Back").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 140)
+        }
+    }
+
+    private func pronunciationEntry(
+        _ entry: (dialect: String, notation: String, usesIPADelimiters: Bool, pronunciation: Pronunciation)
+    ) -> some View {
+        let dialectKey = item.dialectStorageKey(for: entry.dialect)
+        let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
+
+        return HStack(alignment: .center, spacing: 4) {
+            if !entry.dialect.isEmpty {
+                Text(entry.dialect)
+                    .font(.caption2.weight(.medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(entry.dialect == "BrE" ? Color.blue : Color.orange)
+                    )
+                    .fixedSize()
+            }
+
+            if let generatedIPA {
+                Text("/\(generatedIPA)/")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .help("Generated IPA pronunciation")
+            } else {
+                Text(entry.usesIPADelimiters ? "/\(entry.notation)/" : entry.notation)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
+            }
+
+            pronunciationActionGroup(
+                isGenerating: generatingPronunciationDialects.contains(dialectKey),
+                canRefresh: true,
+                canPlay: item.isReady,
+                refreshHelp: "Generate pronunciation aid",
+                onRefresh: {
+                    generatePronunciationEnhancement(
+                        for: entry.dialect,
+                        guide: entry.notation,
+                        existingIPA: entry.usesIPADelimiters ? entry.notation : generatedIPA
+                    )
+                },
+                onPlay: {
+                    Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
+                }
+            )
+        }
     }
 
     private var standardPreview: some View {
