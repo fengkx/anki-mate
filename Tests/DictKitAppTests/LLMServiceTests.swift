@@ -190,7 +190,7 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(resolved, "b")
     }
 
-    func testResolveAutoSelectedModelPrefersLastSuccessfulDownloadedModel() {
+    func testResolveAutoSelectedModelPrefersCurrentDownloadedModelOverLastSuccessfulModel() {
         let models = [
             ModelInfo(id: "a", displayName: "A", fileName: "a.gguf", url: "https://example.com/a.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
             ModelInfo(id: "b", displayName: "B", fileName: "b.gguf", url: "https://example.com/b.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
@@ -200,6 +200,23 @@ final class LLMServiceTests: XCTestCase {
         let resolved = LLMService.resolveAutoSelectedModelId(
             lastSuccessfullyLoadedModelId: "c",
             currentSelectedModelId: "b",
+            registryModels: models,
+            downloadedModelIDs: ["a", "b", "c"]
+        )
+
+        XCTAssertEqual(resolved, "b")
+    }
+
+    func testResolveAutoSelectedModelFallsBackToLastSuccessfulDownloadedModelWhenCurrentSelectionIsMissing() {
+        let models = [
+            ModelInfo(id: "a", displayName: "A", fileName: "a.gguf", url: "https://example.com/a.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "b", displayName: "B", fileName: "b.gguf", url: "https://example.com/b.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048),
+            ModelInfo(id: "c", displayName: "C", fileName: "c.gguf", url: "https://example.com/c.gguf", sizeBytes: 1, quantization: "Q4", contextSize: 2048)
+        ]
+
+        let resolved = LLMService.resolveAutoSelectedModelId(
+            lastSuccessfullyLoadedModelId: "c",
+            currentSelectedModelId: "missing",
             registryModels: models,
             downloadedModelIDs: ["a", "b", "c"]
         )

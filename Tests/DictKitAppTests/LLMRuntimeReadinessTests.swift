@@ -29,7 +29,7 @@ final class LLMRuntimeReadinessTests: XCTestCase {
         XCTAssertFalse(service.hasModel)
     }
 
-    func testAutoActivationPrefersLastSuccessfulDownloadedModelAndDegradesGracefully() async throws {
+    func testAutoActivationKeepsCurrentDownloadedSelectionEvenWhenAnotherModelWasLastSuccessful() async throws {
         let context = makeContext()
         let models = [
             makeModel(id: "runtime-alpha"),
@@ -39,6 +39,31 @@ final class LLMRuntimeReadinessTests: XCTestCase {
             context: context,
             models: models,
             selectedModelId: models[0].id,
+            lastSuccessfulModelId: models[1].id
+        )
+        try materializeDownloadedModel(models[0], with: service.downloadManager)
+        try materializeDownloadedModel(models[1], with: service.downloadManager)
+
+        service.enableAutoStartOnAvailableModel()
+        await service.autoActivateInferenceServerIfPossible()
+
+        XCTAssertEqual(service.selectedModelId, models[0].id)
+        XCTAssertTrue(service.hasModel)
+        XCTAssertNil(service.loadedModelId)
+        XCTAssertFalse(service.isReady)
+        XCTAssertNotEqual(service.serverState, ServerProcessManager.State.stopped)
+    }
+
+    func testAutoActivationUsesLastSuccessfulModelWhenCurrentSelectionIsMissing() async throws {
+        let context = makeContext()
+        let models = [
+            makeModel(id: "runtime-alpha"),
+            makeModel(id: "runtime-beta")
+        ]
+        let service = makeService(
+            context: context,
+            models: models,
+            selectedModelId: "missing",
             lastSuccessfulModelId: models[1].id
         )
         try materializeDownloadedModel(models[1], with: service.downloadManager)

@@ -1371,12 +1371,14 @@ public final class LLMService: ObservableObject {
         downloadedModelIDs: Set<String>
     ) -> String? {
         guard !downloadedModelIDs.isEmpty else { return nil }
+        // Keep the user's current selection if it is still valid; only fall back
+        // to the last successful model when the current selection is missing.
+        if downloadedModelIDs.contains(currentSelectedModelId) {
+            return currentSelectedModelId
+        }
         if let lastSuccessfullyLoadedModelId,
            downloadedModelIDs.contains(lastSuccessfullyLoadedModelId) {
             return lastSuccessfullyLoadedModelId
-        }
-        if downloadedModelIDs.contains(currentSelectedModelId) {
-            return currentSelectedModelId
         }
         return registryModels.first(where: { downloadedModelIDs.contains($0.id) })?.id
     }
