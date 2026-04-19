@@ -1,126 +1,64 @@
-# macos-dictkit
+# Anki Mate
 
-`macos-dictkit` is a Swift package for querying the macOS built-in Dictionary app and turning its raw payloads into structured, program-friendly models.
+Anki Mate is a macOS study companion that helps you turn words you encounter into review-ready material.
 
-It exposes a parser-focused core library, an opt-in macOS system dictionary client, and a small CLI for ad-hoc inspection.
+It combines system dictionary lookup, pronunciation audio, local-first study workflows, and optional on-device AI features into a single desktop app.
 
 ## Features
 
-- Parse `DCSCopyTextDefinition` output into structured lexical entries, senses, phrase groups, and notes.
-- Parse private HTML dictionary payloads when the private source is available on the current macOS build.
-- Query the active system dictionaries through a dedicated macOS-only client module.
-- Inspect results from the terminal with either human-readable or JSON output.
-
-## Modules
-
-- `DictKit`: Parser models and parsing logic.
-- `DictKitSystemDictionary`: macOS-only lookup client built on Dictionary Services and the private HTML bridge.
-- `dictkit`: Command-line executable.
+- Look up words from the macOS built-in dictionaries and keep structured results for later review.
+- Generate pronunciation audio from dictionary-backed pronunciations.
+- Organize saved words into a local study workflow designed for export to Anki.
+- Support local AI-assisted study features through the bundled on-device inference stack.
 
 ## Requirements
 
 - macOS 10.15 or later
 - Swift 5.9 or later
 
-## Usage
+## Run Locally
 
-Use the parser module when you already have raw payloads:
-
-```swift
-import DictKit
-
-let result = try DictionaryTextParser.parse(
-    query: "apple",
-    raw: rawText,
-    includeSource: false
-)
-```
-
-Use the system dictionary module for live lookups on macOS:
-
-```swift
-import DictKit
-
-#if canImport(DictKitSystemDictionary)
-import DictKitSystemDictionary
-
-let client = SystemDictionaryClient()
-let result = try client.lookup("apple", source: .automatic, includeSource: true)
-#endif
-```
-
-Synthesize speech directly from an existing `Pronunciation`:
-
-```swift
-import DictKit
-import DictKitSystemDictionary
-
-let speechClient = DictionarySpeechClient()
-let audio = try await speechClient.synthesize(
-    SpeechRequest(
-        text: "apple",
-        pronunciation: Pronunciation(dialect: "AmE", ipa: "ˈæp(ə)l", respelling: nil),
-        sourceLabel: "manual"
-    )
-)
-
-try audio.audioData.write(to: outputURL)
-```
-
-Lookup first, then synthesize using the dictionary pronunciation:
-
-```swift
-import DictKitSystemDictionary
-
-let speechClient = DictionarySpeechClient()
-let spoken = try await speechClient.synthesize(
-    LookupSpeechRequest(
-        term: "elaborate",
-        source: .automatic,
-        selection: .lexicalEntry(index: 1, dialect: "AmE")
-    )
-)
-```
-
-Expand all pronunciation candidates for flashcard generation workflows:
-
-```swift
-import DictKitSystemDictionary
-
-let speechClient = DictionarySpeechClient()
-let requests = try speechClient.resolveSpeechRequests(
-    LookupSpeechRequest(term: "what", source: .automatic, selection: .allCandidates)
-)
-let batch = await speechClient.synthesizeBatch(requests)
-```
-
-## CLI
+Build the app:
 
 ```bash
-swift run dictkit apple
-swift run dictkit --json apple
-swift run dictkit --html-json run
-swift run dictkit --raw-html run
-swift run dictkit --list-dicts
-swift run dictkit speech --output ./apple.wav apple
-swift run dictkit speech --output ./elaborate.wav --dialect AmE --lexical-entry 1 --json elaborate
+swift build --product anki-mate
+```
+
+Launch the app through the repo workflow:
+
+```bash
+just run-app
 ```
 
 ## Development
 
-Run the full test suite:
+This repository still contains several internal modules and tools that power Anki Mate:
+
+- `DictKit`: parsing and lexical model layer
+- `DictKitSystemDictionary`: macOS dictionary and speech integration
+- `DictKitAnkiExport`: Anki export pipeline
+- `dictkit`: internal CLI for parser and dictionary inspection
+- `AnkiMateServer`: local inference server used by AI features
+
+Useful commands:
 
 ```bash
-swift test
+just build
+just test
+just lookup apple
+just lookup-json apple
+just test-filter WordListViewModelTests
 ```
 
-Build the CLI:
+If you need the inspection CLI directly:
 
 ```bash
-swift build --product dictkit
+swift run dictkit apple
+swift run dictkit --json apple
+swift run dictkit speech --output ./apple.wav apple
 ```
 
 ## Notes
 
-- The public Dictionary Services API returns flattened definition text rather than a stable structured schema.
-- The private HTML source is useful in practice, but it is not an officially supported API contract from Apple.
+- The app uses Apple's Dictionary Services and related system data sources, which do not expose a stable public structured schema.
+- Some lookup and parsing capabilities rely on behavior that is useful in practice but not guaranteed by Apple as a long-term API contract.
