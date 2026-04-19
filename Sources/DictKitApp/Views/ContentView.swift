@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var viewModel: WordListViewModel
+    @EnvironmentObject var helpCenter: HelpCenterState
     @State private var collectionEditorMode: CollectionEditorMode?
     var onSyncNow: (() async -> Void)?
     var onIntervalChanged: ((SyncInterval) -> Void)?
@@ -36,6 +37,10 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showExportDialog) {
             ExportCollectionsSheet()
                 .environmentObject(viewModel)
+        }
+        .sheet(isPresented: $helpCenter.isGuidePresented) {
+            HelpGuideView()
+                .environmentObject(helpCenter)
         }
         .sheet(isPresented: $viewModel.isExporting) {
             ExportProgressView()

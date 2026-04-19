@@ -28,14 +28,15 @@ struct CardPreviewView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
                         Text(item.word)
                             .font(.title2.bold())
 
                         if item.isReady {
                             Button(action: { viewModel.retryLookup(item) }) {
                                 Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .medium))
                             }
                             .buttonStyle(.borderless)
                             .help("Re-lookup with current dictionary")
@@ -76,13 +77,13 @@ struct CardPreviewView: View {
                     }
                     if !phonetics.isEmpty {
                         let sharedStressRefreshTarget = preferredStressRefreshTarget(from: phonetics)
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .center, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .center, spacing: 14) {
                                 ForEach(Array(phonetics.enumerated()), id: \.offset) { _, entry in
                                     let dialectKey = item.dialectStorageKey(for: entry.dialect)
                                     let generatedIPA = item.generatedIPANotationsByDialect[dialectKey]
 
-                                    HStack(alignment: .center, spacing: 8) {
+                                    HStack(alignment: .center, spacing: 4) {
                                         if !entry.dialect.isEmpty {
                                             Text(entry.dialect)
                                                 .font(.caption2.weight(.medium))
@@ -106,39 +107,28 @@ struct CardPreviewView: View {
                                                 .help(entry.usesIPADelimiters ? "IPA pronunciation" : "Dictionary pronunciation guide")
                                         }
 
-                                        Button(action: {
-                                            generatePronunciationEnhancement(
-                                                for: entry.dialect,
-                                                guide: entry.notation,
-                                                existingIPA: entry.usesIPADelimiters ? entry.notation : generatedIPA
-                                            )
-                                        }) {
-                                            if generatingPronunciationDialects.contains(dialectKey) {
-                                                ProgressView()
-                                                    .controlSize(.small)
-                                            } else {
-                                                Image(systemName: "arrow.clockwise")
-                                                    .font(.caption)
+                                        pronunciationActionGroup(
+                                            isGenerating: generatingPronunciationDialects.contains(dialectKey),
+                                            canRefresh: true,
+                                            canPlay: item.isReady,
+                                            refreshHelp: "Generate pronunciation aid",
+                                            onRefresh: {
+                                                generatePronunciationEnhancement(
+                                                    for: entry.dialect,
+                                                    guide: entry.notation,
+                                                    existingIPA: entry.usesIPADelimiters ? entry.notation : generatedIPA
+                                                )
+                                            },
+                                            onPlay: {
+                                                Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
                                             }
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .foregroundStyle(Self.generateIPATint)
-                                        .help("Generate pronunciation aid")
-                                        .disabled(generatingPronunciationDialects.contains(dialectKey))
-
-                                        Button(action: {
-                                            Task { await viewModel.playPronunciation(for: item, pronunciation: entry.pronunciation) }
-                                        }) {
-                                            Image(systemName: "speaker.wave.2.fill")
-                                                .font(.caption)
-                                        }
-                                        .buttonStyle(.borderless)
+                                        )
                                     }
                                 }
                             }
 
                             if let sharedStressSyllables = item.preferredGeneratedStressSyllables {
-                                HStack(alignment: .center, spacing: 8) {
+                                HStack(alignment: .center, spacing: 6) {
                                     Text(sharedStressSyllables)
                                         .font(.body.weight(.semibold))
                                         .foregroundStyle(.secondary)
@@ -146,31 +136,25 @@ struct CardPreviewView: View {
 
                                     if let target = sharedStressRefreshTarget {
                                         let dialectKey = item.dialectStorageKey(for: target.dialect)
-                                        Button(action: {
+                                        pronunciationIconButton(
+                                            systemImage: "arrow.clockwise",
+                                            help: "Regenerate stress syllables",
+                                            tint: Self.generateIPATint,
+                                            isLoading: generatingPronunciationDialects.contains(dialectKey),
+                                            disabled: !item.isReady || generatingPronunciationDialects.contains(dialectKey)
+                                        ) {
                                             generatePronunciationEnhancement(
                                                 for: target.dialect,
                                                 guide: target.guide,
                                                 existingIPA: target.existingIPA
                                             )
-                                        }) {
-                                            if generatingPronunciationDialects.contains(dialectKey) {
-                                                ProgressView()
-                                                    .controlSize(.small)
-                                            } else {
-                                                Image(systemName: "arrow.clockwise")
-                                                    .font(.caption)
-                                            }
                                         }
-                                        .buttonStyle(.borderless)
-                                        .foregroundStyle(Self.generateIPATint)
-                                        .help("Regenerate stress syllables")
-                                        .disabled(!item.isReady || generatingPronunciationDialects.contains(dialectKey))
                                     }
                                 }
                             }
                         }
                     } else {
-                        HStack(alignment: .center, spacing: 10) {
+                        HStack(alignment: .center, spacing: 8) {
                             let defaultDialectKey = item.dialectStorageKey(for: "AmE")
                             let generatedIPA = item.preferredGeneratedIPA
                             let generatedStressSyllables = item.generatedStressSyllables(for: "AmE")
@@ -187,33 +171,22 @@ struct CardPreviewView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            Button(action: {
-                                generatePronunciationEnhancement(
-                                    for: "AmE",
-                                    guide: nil,
-                                    existingIPA: generatedIPA
-                                )
-                            }) {
-                                if generatingPronunciationDialects.contains(defaultDialectKey) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.caption)
+                            pronunciationActionGroup(
+                                isGenerating: generatingPronunciationDialects.contains(defaultDialectKey),
+                                canRefresh: item.isReady,
+                                canPlay: item.isReady,
+                                refreshHelp: "Generate pronunciation aid",
+                                onRefresh: {
+                                    generatePronunciationEnhancement(
+                                        for: "AmE",
+                                        guide: nil,
+                                        existingIPA: generatedIPA
+                                    )
+                                },
+                                onPlay: {
+                                    Task { await viewModel.playPronunciation(for: item) }
                                 }
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(Self.generateIPATint)
-                            .help("Generate pronunciation aid")
-                            .disabled(!item.isReady || generatingPronunciationDialects.contains(defaultDialectKey))
-
-                            Button(action: {
-                                Task { await viewModel.playPronunciation(for: item) }
-                            }) {
-                                Image(systemName: "speaker.wave.2.fill")
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(!item.isReady)
+                            )
                         }
                     }
                     if let pronunciationEnhancementErrorMessage {
@@ -586,6 +559,65 @@ struct CardPreviewView: View {
         }
 
         return nil
+    }
+
+    @ViewBuilder
+    private func pronunciationActionGroup(
+        isGenerating: Bool,
+        canRefresh: Bool,
+        canPlay: Bool,
+        refreshHelp: String,
+        onRefresh: @escaping () -> Void,
+        onPlay: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .center, spacing: 1) {
+            pronunciationIconButton(
+                systemImage: "arrow.clockwise",
+                help: refreshHelp,
+                tint: Self.generateIPATint,
+                isLoading: isGenerating,
+                disabled: !canRefresh || isGenerating,
+                action: onRefresh
+            )
+
+            pronunciationIconButton(
+                systemImage: "speaker.wave.2.fill",
+                help: "Play pronunciation",
+                tint: .secondary,
+                isLoading: false,
+                disabled: !canPlay,
+                action: onPlay
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func pronunciationIconButton(
+        systemImage: String,
+        help: String,
+        tint: Color,
+        isLoading: Bool,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            ZStack {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+            }
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(disabled ? Color.secondary.opacity(0.4) : tint.opacity(0.9))
+        .help(help)
+        .disabled(disabled)
     }
 
     private func escapeHTML(_ text: String) -> String {

@@ -2,44 +2,71 @@ import SwiftUI
 
 struct WordListView: View {
     @EnvironmentObject var viewModel: WordListViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(viewModel.words) { item in
-                    WordRowView(
-                        item: item,
-                        isSelected: viewModel.selectedWordID == item.id
-                    )
-                    .contentShape(Rectangle())
-                    .hoverCursor()
-                    .onTapGesture {
-                        viewModel.selectedWordID = item.id
-                    }
-                    .contextMenu {
-                        Button("Delete") {
-                            viewModel.removeWord(item)
+        Group {
+            if viewModel.words.isEmpty {
+                emptyState
+            } else {
+                List(selection: $viewModel.selectedWordID) {
+                    ForEach(viewModel.words) { item in
+                        WordRowView(item: item)
+                            .tag(item.id)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button("Delete") {
+                                    viewModel.removeWord(item)
+                                }
+                            }
+                            .help(item.word)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
                         }
-                    }
                 }
+                .listStyle(.inset(alternatesRowBackgrounds: false))
             }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onDeleteCommand {
             viewModel.deleteSelectedWord()
         }
     }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "text.badge.plus")
+                .font(.system(size: 34))
+                .foregroundStyle(.tertiary)
+
+            Text("No words yet")
+                .font(.headline)
+
+            Text("Add a word above, or use Batch Add for a list.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+
+            HStack(spacing: 10) {
+                Button("Batch Add") {
+                    viewModel.showBatchInput = true
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Help") {
+                    openWindow(id: AppWindowIDs.help)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
 }
 
 struct WordRowView: View {
-    private static let selectionTint = Color.blue.opacity(0.18)
-
     @ObservedObject var item: WordItem
     @EnvironmentObject var viewModel: WordListViewModel
-    let isSelected: Bool
-    @State private var isHovered: Bool = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -99,22 +126,7 @@ struct WordRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onHover { isHovered = $0 }
-    }
-
-    @ViewBuilder
-    private var rowBackground: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Self.selectionTint)
-        } else if isHovered {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        } else {
-            Color.clear
-        }
     }
 
     @ViewBuilder

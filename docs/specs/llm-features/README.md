@@ -19,6 +19,7 @@
    - [01-overview.md](./01-overview.md)
 2. 再看运行时与可用性约束
    - [13-runtime-readiness-and-autostart.md](./13-runtime-readiness-and-autostart.md)
+   - [14-settings-information-architecture.md](./14-settings-information-architecture.md)
 3. 再看统一 prompt 架构
    - [11-prompt-architecture.md](./11-prompt-architecture.md)
    - [12-prompt-quality-baseline-tests.md](./12-prompt-quality-baseline-tests.md)
@@ -37,6 +38,8 @@
   - LLM 学习副驾驶的总体需求文档与当前拍板的一期产品策略
 - [13-runtime-readiness-and-autostart.md](./13-runtime-readiness-and-autostart.md)
   - 本地 inference server 的 auto-start、模型选择优先级与不可用时的产品降级
+- [14-settings-information-architecture.md](./14-settings-information-architecture.md)
+  - `LLM Settings` / `AI Settings` 的信息架构、配置分层、推荐配置项与用户文案
 - [11-prompt-architecture.md](./11-prompt-architecture.md)
   - 统一 prompt 设计原则、共享输入上下文、输出 schema 与 post-check 策略
 - [12-prompt-quality-baseline-tests.md](./12-prompt-quality-baseline-tests.md)

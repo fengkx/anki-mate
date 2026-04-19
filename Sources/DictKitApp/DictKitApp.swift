@@ -8,6 +8,7 @@ struct DictKitApp: App {
     @StateObject private var viewModel: WordListViewModel
     @StateObject private var syncStatus: SyncStatus
     @StateObject private var llmService: LLMService
+    @StateObject private var helpCenter: HelpCenterState
     @State private var syncScheduler: SyncScheduler?
 
     init() {
@@ -15,6 +16,7 @@ struct DictKitApp: App {
         _viewModel = StateObject(wrappedValue: WordListViewModel())
         _syncStatus = StateObject(wrappedValue: SyncStatus())
         _llmService = StateObject(wrappedValue: LLMService())
+        _helpCenter = StateObject(wrappedValue: HelpCenterState())
     }
 
     var body: some Scene {
@@ -25,12 +27,29 @@ struct DictKitApp: App {
                 .environmentObject(viewModel)
                 .environmentObject(syncStatus)
                 .environmentObject(llmService)
+                .environmentObject(helpCenter)
                 .onAppear {
                     llmService.enableAutoStartOnAvailableModel()
                     setupSync()
+                    helpCenter.presentGuideIfNeededOnFirstLaunch()
                 }
         }
         .windowStyle(.hiddenTitleBar)
+        Window("Help", id: AppWindowIDs.help) {
+            HelpGuideView(showsCloseButton: false)
+                .environmentObject(viewModel)
+                .environmentObject(helpCenter)
+        }
+        Window("Sync", id: AppWindowIDs.syncSettings) {
+            SyncSettingsView(onSyncNow: syncNow, onIntervalChanged: { interval in
+                syncScheduler?.updateInterval(interval)
+            })
+            .environmentObject(syncStatus)
+        }
+        Window("AI", id: AppWindowIDs.aiSettings) {
+            LLMSettingsView()
+                .environmentObject(llmService)
+        }
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .importExport) {
@@ -40,6 +59,7 @@ struct DictKitApp: App {
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(!viewModel.canExportCurrentCollection)
             }
+            HelpCommands()
         }
     }
 
@@ -74,5 +94,18 @@ struct DictKitApp: App {
 
     private func syncNow() async {
         await syncScheduler?.syncNow()
+    }
+}
+
+private struct HelpCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .help) {
+            Button("Help") {
+                openWindow(id: AppWindowIDs.help)
+            }
+            .keyboardShortcut("/", modifiers: [.command, .shift])
+        }
     }
 }

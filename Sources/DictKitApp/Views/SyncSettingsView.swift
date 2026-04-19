@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Sheet for configuring WebDAV sync.
 struct SyncSettingsView: View {
     @EnvironmentObject var syncStatus: SyncStatus
     @State private var serverURL: String = ""
@@ -17,11 +16,11 @@ struct SyncSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("WebDAV Sync")
+            Text("Sync")
                 .font(.title2.bold())
 
             Form {
-                Section("Server") {
+                Section("WebDAV") {
                     TextField("Server URL", text: $serverURL)
                         .textFieldStyle(.roundedBorder)
                         .help("e.g. https://dav.jianguoyun.com/dav/")
@@ -33,7 +32,7 @@ struct SyncSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
-                Section("Credential Storage") {
+                Section("Storage") {
                     Toggle("Use macOS Keychain", isOn: useKeychainBinding)
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -70,7 +69,7 @@ struct SyncSettingsView: View {
                             .foregroundStyle(.red)
                     }
 
-                    Picker("Auto-sync interval", selection: $syncInterval) {
+                    Picker("Sync interval", selection: $syncInterval) {
                         ForEach(SyncInterval.allCases) { interval in
                             Text(interval.label).tag(interval)
                         }
@@ -103,18 +102,18 @@ struct SyncSettingsView: View {
             }
 
             HStack {
-                Button("Test Connection") {
+                Button("Test") {
                     testConnection()
                 }
                 .disabled(serverURL.isEmpty || username.isEmpty || password.isEmpty || isTesting)
 
                 Spacer()
 
-                Button("Cancel") {
+                Button("Close") {
                     dismiss()
                 }
 
-                Button("Save") {
+                Button("Save and Close") {
                     guard saveCredentials() else { return }
                     dismiss()
                 }
@@ -171,7 +170,7 @@ struct SyncSettingsView: View {
         }
         serverURL = creds.serverURL
         guard creds.save(storageMode: storageMode) else {
-            saveError = "Could not save WebDAV credentials with the selected storage option."
+            saveError = "Couldn’t save your WebDAV settings."
             return false
         }
         syncStatus.isConfigured = creds.isConfigured
@@ -186,7 +185,7 @@ struct SyncSettingsView: View {
             do {
                 let client = try WebDAVClient(credentials: creds)
                 try await client.testConnection()
-                testResult = TestResult(success: true, message: "Connection successful!")
+                testResult = TestResult(success: true, message: "Connection looks good.")
             } catch {
                 testResult = TestResult(success: false, message: error.localizedDescription)
             }

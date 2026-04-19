@@ -203,7 +203,7 @@ public final class LLMService: ObservableObject {
                 prompt: prompt.user,
                 systemPrompt: prompt.system,
                 maxTokens: max(300, sentenceCount * 96),
-                temperature: 0.7
+                temperature: adjustedTemperature(0.7)
             ),
             port: port
         )
@@ -293,7 +293,7 @@ public final class LLMService: ObservableObject {
             type: ExampleSentenceEnvelope.self,
             prompt: prompt,
             maxTokens: max(420, desiredCount * 150),
-            temperature: temperature,
+            temperature: adjustedTemperature(temperature),
             responseFormat: LLMResponseFormat(kind: .json)
         )
 
@@ -343,7 +343,7 @@ public final class LLMService: ObservableObject {
                 prompt: prompt.user,
                 systemPrompt: prompt.system,
                 maxTokens: max(360, sentenceCount * 112),
-                temperature: 0.7
+                temperature: adjustedTemperature(0.7)
             ),
             port: port,
             onDelta: onDelta
@@ -416,7 +416,7 @@ public final class LLMService: ObservableObject {
                 prompt: prompt.user,
                 systemPrompt: prompt.system,
                 maxTokens: max(260, hintCount * 104),
-                temperature: 0.5
+                temperature: adjustedTemperature(0.5)
             ),
             port: port,
             onDelta: onDelta
@@ -454,7 +454,7 @@ public final class LLMService: ObservableObject {
             type: UsageHintEnvelope.self,
             prompt: prompt,
             maxTokens: max(320, desiredCount * 120),
-            temperature: 0.35,
+            temperature: adjustedTemperature(0.35),
             responseFormat: LLMResponseFormat(kind: .json)
         )
 
@@ -525,7 +525,7 @@ public final class LLMService: ObservableObject {
             type: GeneratedIPAPayload.self,
             prompt: prompt,
             maxTokens: 80,
-            temperature: 0.2
+            temperature: adjustedTemperature(0.2)
         )
 
         guard let normalized = Self.normalizeGeneratedIPA(response.ipa) else {
@@ -584,7 +584,7 @@ public final class LLMService: ObservableObject {
             type: GeneratedPronunciationEnhancementPayload.self,
             prompt: prompt,
             maxTokens: 120,
-            temperature: strictSpellingRetry ? 0.1 : 0.2
+            temperature: adjustedTemperature(strictSpellingRetry ? 0.1 : 0.2)
         )
 
         guard let normalizedStress = Self.normalizeStressSyllables(response.stressSyllables, preservingSpellingOf: word) else {
@@ -644,7 +644,7 @@ public final class LLMService: ObservableObject {
                 type: RecallCardDraftEnvelope.self,
                 prompt: prompt,
                 maxTokens: 320,
-                temperature: 0.3,
+                temperature: adjustedTemperature(0.3),
                 responseFormat: LLMResponseFormat(kind: .json)
             )
 
@@ -719,7 +719,7 @@ public final class LLMService: ObservableObject {
             type: LearningAidsEnvelope.self,
             prompt: prompt,
             maxTokens: 560,
-            temperature: 0.4,
+            temperature: adjustedTemperature(0.4),
             responseFormat: LLMResponseFormat(kind: .json)
         )
 
@@ -1073,6 +1073,10 @@ public final class LLMService: ObservableObject {
         )
 
         return try Self.decodeStructuredOutput(type, from: result.text)
+    }
+
+    private func adjustedTemperature(_ base: Float) -> Float {
+        LLMContentStyle.current(defaults: defaults).adjustedTemperature(base)
     }
 
     /// Whether the service is ready for generation (server running, model loaded).

@@ -5,9 +5,8 @@ struct CollectionsSidebarView: View {
     @EnvironmentObject var viewModel: WordListViewModel
     @EnvironmentObject var syncStatus: SyncStatus
     @EnvironmentObject var llmService: LLMService
+    @Environment(\.openWindow) private var openWindow
     @Binding var collectionEditorMode: CollectionEditorMode?
-    @State private var showSyncSettings = false
-    @State private var showLLMSettings = false
     var onSyncNow: (() async -> Void)?
     var onIntervalChanged: ((SyncInterval) -> Void)?
 
@@ -73,44 +72,43 @@ struct CollectionsSidebarView: View {
 
             Divider()
 
-            // Sync status button
-            Button {
-                showSyncSettings = true
-            } label: {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(syncStatusColor)
-                        .frame(width: 8, height: 8)
-                    Text(syncStatus.statusDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Spacer()
+            VStack(spacing: 0) {
+                utilityBarButton(
+                    title: syncStatusLabel,
+                    systemImage: "arrow.trianglehead.2.clockwise",
+                    tint: syncStatusColor,
+                    helpText: "Sync settings"
+                ) {
+                    openWindow(id: AppWindowIDs.syncSettings)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .buttonStyle(.plain)
-            .hoverCursor()
-            .help("Sync settings")
-            .sheet(isPresented: $showSyncSettings) {
-                SyncSettingsView(onSyncNow: onSyncNow, onIntervalChanged: onIntervalChanged)
-            }
 
-            // AI Model button — shows download progress when active
-            Button {
-                showLLMSettings = true
-            } label: {
-                aiModelButtonContent
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                Divider()
+                    .padding(.leading, 12)
+
+                Button {
+                    openWindow(id: AppWindowIDs.aiSettings)
+                } label: {
+                    aiModelButtonContent
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .hoverCursor()
+                .help("AI settings")
+
+                Divider()
+                    .padding(.leading, 12)
+
+                utilityBarButton(
+                    title: "Help",
+                    systemImage: "questionmark.circle",
+                    tint: .secondary,
+                    helpText: "Help"
+                ) {
+                    openWindow(id: AppWindowIDs.help)
+                }
             }
-            .buttonStyle(.plain)
-            .hoverCursor()
-            .help("AI model settings")
-            .sheet(isPresented: $showLLMSettings) {
-                LLMSettingsView()
-            }
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.45))
         }
     }
 
@@ -147,7 +145,7 @@ struct CollectionsSidebarView: View {
                 Image(systemName: "pause.circle")
                     .foregroundStyle(.orange)
                     .font(.caption)
-                Text("Download Paused")
+                Text("Download paused")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -187,13 +185,27 @@ struct CollectionsSidebarView: View {
     private var serverStatusLabel: String {
         switch llmService.serverState {
         case .running:
-            return "Inference Server Running"
+            return "AI is ready"
         case .starting:
-            return "Inference Server Starting..."
+            return "Starting AI"
         case .stopped:
-            return "Inference Server Stopped"
+            return "Set up AI"
         case .failed:
-            return "Inference Server Failed"
+            return "AI needs attention"
+        }
+    }
+
+    private var syncStatusLabel: String {
+        switch syncStatus.state {
+        case .idle:
+            if syncStatus.hasPendingChanges {
+                return "Sync available"
+            }
+            return syncStatus.isConfigured ? "Sync is on" : "Set up sync"
+        case .syncing:
+            return "Syncing"
+        case .error:
+            return "Sync needs attention"
         }
     }
 
@@ -229,5 +241,31 @@ struct CollectionsSidebarView: View {
         case .error:
             return .red
         }
+    }
+
+    private func utilityBarButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        helpText: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(tint)
+                    .font(.caption)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .hoverCursor()
+        .help(helpText)
     }
 }

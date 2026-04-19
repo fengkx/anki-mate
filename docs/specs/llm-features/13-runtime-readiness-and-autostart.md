@@ -11,6 +11,8 @@
 
 它不展开 prompt 设计，也不展开具体能力的 UI 文案。
 
+设置页的信息架构、配置项分层与推荐文案，见 [14-settings-information-architecture.md](./14-settings-information-architecture.md)。
+
 ## 2. 已拍板行为
 
 ### 2.1 app 启动时的 auto-start

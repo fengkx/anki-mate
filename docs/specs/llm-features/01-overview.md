@@ -179,6 +179,7 @@ LLM 功能的判断标准不是“看起来更丰富”，而是：
   - 标准导出
 
 详细运行时规范见 [13-runtime-readiness-and-autostart.md](./13-runtime-readiness-and-autostart.md)。
+设置页的信息架构与配置分层见 [14-settings-information-architecture.md](./14-settings-information-architecture.md)。
 
 ## 6. 功能拆分与并行边界
 

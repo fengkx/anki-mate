@@ -2,31 +2,59 @@ import SwiftUI
 import AnkiMateLLM
 import AnkiMateRPC
 
+private extension LLMContentStyle {
+    var title: String {
+        switch self {
+        case .steadier:
+            return "Steadier"
+        case .balanced:
+            return "Balanced"
+        case .moreVaried:
+            return "More varied"
+        }
+    }
+
+    var caption: String {
+        switch self {
+        case .steadier:
+            return "Often a better fit for more consistent wording."
+        case .balanced:
+            return "A middle ground for most study tasks."
+        case .moreVaried:
+            return "Can feel more flexible, especially for creative phrasing."
+        }
+    }
+
+}
+
 struct LLMSettingsView: View {
     @EnvironmentObject private var llmService: LLMService
     @Environment(\.dismiss) private var dismiss
 
     @State private var isTogglingServer = false
     @AppStorage(LLMDebugSettings.streamDebugEnabledKey) private var streamDebugEnabled = false
+    @AppStorage(LLMContentStyle.defaultsKey) private var storedContentStyle = LLMContentStyle.balanced.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     overviewSection
+                    contentStyleSection
                     if let notice = llmService.downloadManager.latestNotice {
                         noticeBanner(notice)
                     }
-                    mirrorSection
-                    debugSection
                     modelListSection
+                    optionsSection
                 }
                 .padding(20)
+                .frame(maxWidth: 960)
+                .frame(maxWidth: .infinity)
             }
         }
-        .frame(minWidth: 620, minHeight: 560)
+        .frame(minWidth: 700, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -34,24 +62,24 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("AI Model Settings")
+        HStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AI")
                     .font(.title3.weight(.semibold))
-                Text("Manage local models, server state, and download behavior for on-device LLM features.")
+                Text("Set up local AI features and downloads.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Button("Done") {
+            Button("Close") {
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.vertical, 12)
         .background(.bar)
     }
 
@@ -59,57 +87,141 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private var overviewSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            settingsCard(title: "Inference Server", subtitle: serverStatusSummary) {
-                HStack(alignment: .center, spacing: 10) {
-                    StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(serverStatusText)
-                            .font(.body.weight(.medium))
-                        Text(serverActionHint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        GeometryReader { proxy in
+            Group {
+                if proxy.size.width >= 820 {
+                    HStack(alignment: .top, spacing: 12) {
+                        primaryOverviewCard
+                        secondaryOverviewCard
                     }
-                    Spacer()
-                    serverActionButton
-                }
-            }
-
-            settingsCard(title: "Selected Model", subtitle: selectedModelSummary) {
-                if let selectedModel = selectedModel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            Text(selectedModel.displayName)
-                                .font(.body.weight(.medium))
-                            if llmService.loadedModelId == selectedModel.id {
-                                statusBadge(text: "Active", tint: .green)
-                            } else if llmService.downloadManager.isDownloaded(selectedModel) {
-                                statusBadge(text: "Downloaded", tint: .blue)
-                            } else {
-                                statusBadge(text: "Not downloaded", tint: .secondary)
-                            }
-                        }
-
-                        Text("\(selectedModel.quantization) · \(selectedModel.formattedSize)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    Text("Select a local model to enable AI generation in the assistant panel.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 12) {
+                        primaryOverviewCard
+                        secondaryOverviewCard
+                    }
                 }
             }
         }
+        .frame(height: 132)
+    }
+
+    @ViewBuilder
+    private var primaryOverviewCard: some View {
+        settingsCard(
+            title: "Local AI",
+            subtitle: serverStatusSummary,
+            tone: serverCardTone
+        ) {
+            HStack(alignment: .center, spacing: 12) {
+                StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(serverStatusText)
+                        .font(.headline)
+
+                    Text(serverActionHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 12)
+
+                serverActionButton
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryOverviewCard: some View {
+        settingsCard(
+            title: "Current Model",
+            subtitle: selectedModelSummary,
+            tone: .neutral
+        ) {
+            if let selectedModel = selectedModel {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(selectedModel.displayName)
+                            .font(.headline)
+                            .lineLimit(1)
+
+                        if selectedModel.recommended {
+                            statusBadge(text: "Recommended", tint: .blue)
+                        }
+
+                        if llmService.selectedModelId == selectedModel.id,
+                           llmService.downloadManager.isDownloaded(selectedModel) {
+                            statusBadge(text: "Selected", tint: .blue)
+                        }
+                    }
+
+                    Text("\(selectedModel.quantization) · \(selectedModel.formattedSize)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("A model can be selected after it finishes downloading.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // MARK: - Content Style
+
+    @ViewBuilder
+    private var contentStyleSection: some View {
+        settingsCard(
+            title: "Content Style",
+            subtitle: "This setting applies across local AI features.",
+            tone: .neutral
+        ) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 16) {
+                    contentStyleSummary
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    contentStylePicker
+                        .frame(width: 300)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    contentStylePicker
+                    contentStyleSummary
+                }
+            }
+        }
+    }
+
+    private var contentStyleSummary: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(contentStyle.title)
+                .font(.subheadline.weight(.semibold))
+            Text(contentStyle.caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var contentStylePicker: some View {
+        Picker("Content Style", selection: contentStyleBinding) {
+            ForEach(LLMContentStyle.allCases, id: \.rawValue) { style in
+                Text(style.title).tag(style)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .controlSize(.regular)
     }
 
     // MARK: - Mirror
 
     @ViewBuilder
     private var mirrorSection: some View {
-        settingsCard(title: "Download Source", subtitle: "Optional HuggingFace mirror") {
+        settingsCard(title: "Download Source", subtitle: "Optional mirror", tone: .neutral) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     let binding = Binding<String>(
@@ -130,8 +242,8 @@ struct LLMSettingsView: View {
                     }
                 }
 
-                Text("Leave empty to use huggingface.co directly. Use a mirror only when downloads are slow or blocked.")
-                    .font(.caption)
+                Text("Leave this empty unless you need a mirror for downloads.")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
@@ -141,13 +253,84 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private var debugSection: some View {
-        settingsCard(title: "Debug", subtitle: "Streaming diagnostics") {
+        settingsCard(title: "Debug", subtitle: "Advanced logs", tone: .neutral) {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("Enable streaming debug logs", isOn: $streamDebugEnabled)
-                Text("When enabled, stream chunk diagnostics are written to app logs (RPCClient category).")
-                    .font(.caption)
+                Toggle("Enable debug logs", isOn: $streamDebugEnabled)
+                Text("Writes extra AI logs to the app log.")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var optionsSection: some View {
+        settingsCard(title: "More Options", subtitle: "Optional download and troubleshooting settings", tone: .neutral) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    mirrorSectionBody
+                    debugSectionBody
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    mirrorSectionBody
+                    debugSectionBody
+                }
+            }
+        }
+    }
+
+    private var mirrorSectionBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Download Source")
+                .font(.subheadline.weight(.semibold))
+            mirrorControls
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var debugSectionBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Debug")
+                .font(.subheadline.weight(.semibold))
+            debugControls
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var mirrorControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                let binding = Binding<String>(
+                    get: { llmService.downloadManager.hfMirror },
+                    set: { llmService.downloadManager.hfMirror = $0 }
+                )
+
+                TextField("hf-mirror.com", text: binding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.monospaced())
+
+                if !llmService.downloadManager.hfMirror.isEmpty {
+                    Button("Clear") {
+                        llmService.downloadManager.hfMirror = ""
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            Text("Leave this empty unless you need a mirror for downloads.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var debugControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Enable debug logs", isOn: $streamDebugEnabled)
+            Text("Writes extra AI logs to the app log.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -181,7 +364,7 @@ struct LLMSettingsView: View {
             .buttonStyle(.borderless)
             .help("Dismiss")
         }
-        .padding(14)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(notice.kind == .success ? Color.green.opacity(0.08) : Color.orange.opacity(0.08))
@@ -196,14 +379,15 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private var modelListSection: some View {
-        settingsCard(title: "Available Models", subtitle: "Download and manage local GGUF weights") {
-            VStack(spacing: 12) {
+        settingsCard(title: "Available Models", subtitle: "Download and manage local models", tone: .neutral) {
+            VStack(spacing: 0) {
                 if llmService.registry.models.isEmpty {
                     Text("No models available")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 12)
                 } else {
+                    modelListHeader
                     ForEach(llmService.registry.models) { model in
                         modelRow(model)
                     }
@@ -214,12 +398,13 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private func modelRow(_ model: ModelInfo) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(model.displayName)
-                            .font(.body.weight(.medium))
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
 
                         if model.recommended {
                             statusBadge(text: "Recommended", tint: .blue)
@@ -231,9 +416,15 @@ struct LLMSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
+                Spacer(minLength: 12)
 
                 modelStatusBadge(model)
+                    .frame(width: 120, alignment: .trailing)
+
+                HStack(spacing: 8) {
+                    modelActions(model)
+                }
+                .frame(width: 170, alignment: .trailing)
             }
 
             if let progress = llmService.downloadManager.downloads[model.id] {
@@ -241,20 +432,35 @@ struct LLMSettingsView: View {
             } else if llmService.downloadManager.isDeleting(modelId: model.id) {
                 deletingProgressBlock
             }
-
-            HStack(spacing: 8) {
-                modelActions(model)
-            }
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+            Rectangle()
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(rowBorderColor(for: model), lineWidth: 1)
-        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(rowBorderColor(for: model))
+                .frame(height: 1)
+        }
+    }
+
+    private var modelListHeader: some View {
+        HStack(spacing: 12) {
+            Text("Model")
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Status")
+                .frame(width: 120, alignment: .trailing)
+
+            Text("Actions")
+                .frame(width: 170, alignment: .trailing)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
@@ -357,52 +563,38 @@ struct LLMSettingsView: View {
         } else if let progress = dm.downloads[model.id] {
             switch progress.state {
             case .downloading:
-                Button("Pause") {
+                actionButton("Pause") {
                     dm.pause(modelId: model.id)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
-                Button("Cancel", role: .destructive) {
+                actionButton("Cancel", role: .destructive) {
                     dm.cancel(modelId: model.id)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             case .paused:
-                Button("Resume") {
+                actionButton("Resume", prominent: true) {
                     dm.download(model: model)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
 
-                Button("Cancel", role: .destructive) {
+                actionButton("Cancel", role: .destructive) {
                     dm.cancel(modelId: model.id)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             case .completed:
                 downloadedActions(model)
             case .failed:
-                Button(dm.canResume(modelId: model.id) ? "Resume" : "Retry") {
+                actionButton(dm.canResume(modelId: model.id) ? "Resume" : "Retry", prominent: true) {
                     dm.download(model: model)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
 
                 if shouldOfferMirrorShortcut(for: model.id) {
-                    Button("Use Mirror") {
+                    actionButton("Use Mirror") {
                         dm.hfMirror = "hf-mirror.com"
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
         } else {
-            Button("Download") {
+            actionButton("Download", prominent: true) {
                 dm.download(model: model)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
         }
     }
 
@@ -412,21 +604,14 @@ struct LLMSettingsView: View {
             Text("Removing...")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        } else {
-            if llmService.selectedModelId == model.id {
-                Button("Selected") {}
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(true)
-            } else {
-                Button("Select") {
-                    llmService.selectedModelId = model.id
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+        } else if llmService.selectedModelId != model.id {
+            actionButton("Select", prominent: true) {
+                llmService.selectedModelId = model.id
             }
+        }
 
-            Button("Delete", role: .destructive) {
+        if !llmService.downloadManager.isDeleting(modelId: model.id) {
+            actionButton("Delete", role: .destructive) {
                 Task { @MainActor in
                     if llmService.loadedModelId == model.id {
                         await llmService.stopServer()
@@ -437,8 +622,6 @@ struct LLMSettingsView: View {
                     try? await llmService.downloadManager.deleteModel(model)
                 }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
     }
 
@@ -499,7 +682,7 @@ struct LLMSettingsView: View {
 
     private var serverStatusText: String {
         switch llmService.serverState {
-        case .running(let port): return "Running on port \(port)"
+        case .running: return "Running"
         case .starting: return "Starting..."
         case .stopped: return "Stopped"
         case .failed(let msg): return "Failed: \(msg)"
@@ -509,26 +692,26 @@ struct LLMSettingsView: View {
     private var serverStatusSummary: String {
         switch llmService.serverState {
         case .running:
-            return "The local inference server is ready for requests."
+            return "Ready for local AI features."
         case .starting:
-            return "Launching the background process."
+            return "The local service is starting."
         case .stopped:
-            return "Start the server before running AI generation."
+            return "The service is currently off."
         case .failed:
-            return "The server needs attention before it can serve requests."
+            return "The service needs attention before it can be used."
         }
     }
 
     private var serverActionHint: String {
         switch llmService.serverState {
         case .running:
-            return "You can keep it running while reviewing or generating AI content."
+            return "The local service is available and can be used when AI content is needed."
         case .starting:
             return "This usually takes a few seconds."
         case .stopped:
-            return "The first AI request can also start the server lazily."
+            return "It can be started again when needed."
         case .failed:
-            return "Check logs or switch to a downloaded model and retry."
+            return "If it still does not start, checking the log can help."
         }
     }
 
@@ -538,9 +721,21 @@ struct LLMSettingsView: View {
 
     private var selectedModelSummary: String {
         if selectedModel != nil {
-            return "Downloaded and ready to select or use."
+            return "This model is currently selected for local AI features."
         }
-        return "No model selected yet."
+        return "A model can be selected after it finishes downloading."
+    }
+
+    private var contentStyle: LLMContentStyle {
+        get { LLMContentStyle(rawValue: storedContentStyle) ?? .balanced }
+        nonmutating set { storedContentStyle = newValue.rawValue }
+    }
+
+    private var contentStyleBinding: Binding<LLMContentStyle> {
+        Binding(
+            get: { contentStyle },
+            set: { contentStyle = $0 }
+        )
     }
 
     // MARK: - Notice helpers
@@ -589,21 +784,22 @@ struct LLMSettingsView: View {
 
     private func rowBorderColor(for model: ModelInfo) -> Color {
         if llmService.loadedModelId == model.id {
-            return .green.opacity(0.28)
+            return .green.opacity(0.18)
         }
         if llmService.selectedModelId == model.id {
-            return .blue.opacity(0.24)
+            return .blue.opacity(0.16)
         }
-        return .white.opacity(0.06)
+        return Color.primary.opacity(0.06)
     }
 
     @ViewBuilder
     private func settingsCard<Content: View>(
         title: String,
         subtitle: String,
+        tone: SettingsCardTone,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
@@ -614,15 +810,15 @@ struct LLMSettingsView: View {
 
             content()
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.62))
+                .fill(cardBackground(for: tone))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(.white.opacity(0.07), lineWidth: 1)
+                .stroke(cardBorder(for: tone), lineWidth: 1)
         )
     }
 
@@ -635,4 +831,65 @@ struct LLMSettingsView: View {
             .padding(.vertical, 4)
             .background(tint.opacity(0.12), in: Capsule())
     }
+
+    private func actionButton(
+        _ title: String,
+        prominent: Bool = false,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Group {
+            if prominent {
+                Button(title, role: role, action: action)
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Button(title, role: role, action: action)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .controlSize(.small)
+        .frame(minWidth: 76)
+    }
+
+    private var serverCardTone: SettingsCardTone {
+        switch llmService.serverState {
+        case .running:
+            return .accent(.green)
+        case .starting:
+            return .accent(.blue)
+        case .stopped:
+            return .neutral
+        case .failed:
+            return .accent(.orange)
+        }
+    }
+
+    private func cardBackground(for tone: SettingsCardTone) -> some ShapeStyle {
+        switch tone {
+        case .neutral:
+            return AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
+        case .accent(let color):
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [color.opacity(0.10), color.opacity(0.03)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+    }
+
+    private func cardBorder(for tone: SettingsCardTone) -> Color {
+        switch tone {
+        case .neutral:
+            return Color.primary.opacity(0.06)
+        case .accent(let color):
+            return color.opacity(0.18)
+        }
+    }
+}
+
+private enum SettingsCardTone {
+    case neutral
+    case accent(Color)
 }
