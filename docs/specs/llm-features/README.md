@@ -67,6 +67,8 @@
   - `Pitfalls` 与 `Usage` 的产品边界、句式差异与推荐 schema
 - [42-learning-aids-judge-and-storage.md](./42-learning-aids-judge-and-storage.md)
   - Learning Aids 的 generator / judge / local guardrails 流程，以及 SQLite 承载 JSON 的持久化方案
+- [43-inference-performance-hotspots-and-optimization.md](./43-inference-performance-hotspots-and-optimization.md)
+  - 基于真实采样的 inference 热点分析、优化方向、并发验证策略与验收标准
 
 ## 当前拍板结论
 
