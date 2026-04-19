@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AnkiCardTemplate {
-    public static let modelName = "Anki Mate Basic"
+    public static let modelName = AnkiExportIdentity.basicNoteTypeName
 
     public static let fields = ["Word", "Phonetic", "Definitions", "Audio"]
 
@@ -341,7 +341,7 @@ public enum AnkiCardTemplate {
 }
 
 public enum AnkiRecallCardTemplate {
-    public static let modelName = "Anki Mate Recall"
+    public static let modelName = AnkiExportIdentity.recallNoteTypeName
 
     public static let fields = [
         "Prompt",

@@ -62,7 +62,7 @@ public struct AnkiExporter: Sendable {
 
     public static func export(
         words: [ExportInput],
-        deckName: String = "Anki Mate Vocabulary",
+        deckName: String = AnkiExportIdentity.defaultDeckName,
         to outputURL: URL
     ) throws -> ExportResult {
         try export(

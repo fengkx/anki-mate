@@ -12,7 +12,7 @@ public struct AnkiDeckConfig: Sendable {
     public let modelId: Int64
     public let recallModelId: Int64
 
-    public init(deckName: String = "Anki Mate Vocabulary", deckDescription: String = "") {
+    public init(deckName: String = AnkiExportIdentity.defaultDeckName, deckDescription: String = "") {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         self.deckId = now + Int64.random(in: 1...999)
         self.deckName = deckName

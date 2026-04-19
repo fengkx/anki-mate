@@ -72,4 +72,9 @@ final class AnkiModelsTests: XCTestCase {
         // IDs are time-based with random offsets, very unlikely to collide
         XCTAssertNotEqual(a.deckId, b.deckId)
     }
+
+    func testDeckConfigDefaultsToNeutralExportDeckName() {
+        let deck = AnkiDeckConfig()
+        XCTAssertEqual(deck.deckName, "Vocabulary")
+    }
 }

@@ -111,7 +111,7 @@ public enum AnkiSQLiteWriter {
     // MARK: - Collection Row
 
     private static func insertCollectionRow(db: OpaquePointer?, decks: [AnkiDeckConfig]) throws {
-        let primaryDeck = decks.first ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary")
+        let primaryDeck = decks.first ?? AnkiDeckConfig(deckName: AnkiExportIdentity.defaultDeckName)
         let now = Int64(Date().timeIntervalSince1970)
         let nowMs = now * 1000
 
@@ -179,8 +179,8 @@ public enum AnkiSQLiteWriter {
     private static func insertNotes(db: OpaquePointer?, decks: [AnkiDeckPayload]) throws {
         let now = Int64(Date().timeIntervalSince1970)
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        let standardModelId = decks.first?.deck.modelId ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary").modelId
-        let recallModelId = decks.first?.deck.recallModelId ?? AnkiDeckConfig(deckName: "Anki Mate Vocabulary").recallModelId
+        let standardModelId = decks.first?.deck.modelId ?? AnkiDeckConfig(deckName: AnkiExportIdentity.defaultDeckName).modelId
+        let recallModelId = decks.first?.deck.recallModelId ?? AnkiDeckConfig(deckName: AnkiExportIdentity.defaultDeckName).recallModelId
 
         let noteSQL = "INSERT INTO notes VALUES (?, ?, ?, ?, -1, '', ?, ?, ?, 0, '')"
         let cardSQL = "INSERT INTO cards VALUES (?, ?, ?, 0, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')"

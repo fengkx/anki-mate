@@ -98,6 +98,31 @@ final class AnkiPackageWriterTests: XCTestCase {
         XCTAssertEqual(Set(guids).count, 2)
     }
 
+    func testSQLiteWriterUsesNeutralExportMetadata() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let path = tempDir.appendingPathComponent("branding.anki2").path
+        try AnkiSQLiteWriter.write(
+            deck: AnkiDeckConfig(),
+            notes: [
+                AnkiNoteData(word: "brand", phonetic: "", definitions: "<div>test</div>", audioFilename: nil, audioData: nil)
+            ],
+            to: path
+        )
+
+        let collectionRow = try collectionRow(at: path)
+        XCTAssertTrue(collectionRow.models.contains("\"name\":\"Basic\""))
+        XCTAssertTrue(collectionRow.models.contains("\"name\":\"Recall\""))
+        XCTAssertTrue(collectionRow.decks.contains("\"name\":\"Vocabulary\""))
+        XCTAssertFalse(collectionRow.models.localizedCaseInsensitiveContains("anki mate"))
+        XCTAssertFalse(collectionRow.decks.localizedCaseInsensitiveContains("anki mate"))
+        XCTAssertFalse(collectionRow.models.localizedCaseInsensitiveContains("dictkit"))
+        XCTAssertFalse(collectionRow.decks.localizedCaseInsensitiveContains("dictkit"))
+    }
+
     private func noteGUIDs(at path: String) throws -> [String] {
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
@@ -115,6 +140,22 @@ final class AnkiPackageWriterTests: XCTestCase {
             }
         }
         return values
+    }
+
+    private func collectionRow(at path: String) throws -> (models: String, decks: String) {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+
+        let sql = "SELECT models, decks FROM col LIMIT 1"
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        let models = sqlite3_column_text(statement, 0).map { String(cString: $0) } ?? ""
+        let decks = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+        return (models, decks)
     }
 }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import AnkiMateLLM
+import AnkiMateShared
 
 @main
 struct DictKitApp: App {
@@ -17,7 +18,7 @@ struct DictKitApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(AnkiMateIdentity.displayName) {
             ContentView(onSyncNow: syncNow, onIntervalChanged: { interval in
                 syncScheduler?.updateInterval(interval)
             })
