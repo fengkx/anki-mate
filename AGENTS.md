@@ -44,6 +44,8 @@ If the task is parser-, dictionary-, or speech-related, start with the CLI befor
 
 Open only the docs needed for the task:
 
+- Specs directory map: [docs/specs/README.md](/Users/fengkx/me/code/macos-dictkit/docs/specs/README.md)
+- Superpowers spec drafts: [docs/superpowers/specs/README.md](/Users/fengkx/me/code/macos-dictkit/docs/superpowers/specs/README.md)
 - Project map and where to look: [docs/agents/project-map.md](/Users/fengkx/me/code/macos-dictkit/docs/agents/project-map.md)
 - Development workflows and command loops: [docs/agents/dev-workflows.md](/Users/fengkx/me/code/macos-dictkit/docs/agents/dev-workflows.md)
 - Testing strategy and test selection: [docs/agents/testing.md](/Users/fengkx/me/code/macos-dictkit/docs/agents/testing.md)
