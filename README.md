@@ -1,64 +1,45 @@
 # Anki Mate
 
-Anki Mate is a macOS study companion that helps you turn words you encounter into review-ready material.
+Anki Mate is a macOS study companion for collecting words you encounter and turning them into review-ready material.
 
-It combines system dictionary lookup, pronunciation audio, local-first study workflows, and optional on-device AI features into a single desktop app.
+It combines system dictionary lookup, pronunciation audio, local word management, and optional on-device AI features in a single desktop app.
 
-## Features
+## Who It Is For
 
-- Look up words from the macOS built-in dictionaries and keep structured results for later review.
-- Generate pronunciation audio from dictionary-backed pronunciations.
-- Organize saved words into a local study workflow designed for export to Anki.
-- Support local AI-assisted study features through the bundled on-device inference stack.
+Anki Mate is for macOS users who want a lightweight workflow for:
+
+- looking up unfamiliar words
+- saving words worth reviewing later
+- preparing vocabulary for export to Anki
+- keeping study data local on their own device
+
+## What You Can Do
+
+- Look up words with the built-in macOS dictionaries.
+- Save structured word entries for later review.
+- Generate pronunciation audio backed by system dictionary data.
+- Organize a personal word list before exporting it into an Anki workflow.
+- Use optional local AI features without relying on a cloud service.
 
 ## Requirements
 
-- macOS 10.15 or later
-- Swift 5.9 or later
+- macOS 13 or later
 
-## Run Locally
+## Get The App
 
-Build the app:
+Download the latest macOS release from [GitHub Releases](https://github.com/fengkx/anki-mate/releases).
 
-```bash
-swift build --product anki-mate
-```
+After downloading:
 
-Launch the app through the repo workflow:
-
-```bash
-just run-app
-```
-
-## Development
-
-This repository still contains several internal modules and tools that power Anki Mate:
-
-- `DictKit`: parsing and lexical model layer
-- `DictKitSystemDictionary`: macOS dictionary and speech integration
-- `DictKitAnkiExport`: Anki export pipeline
-- `dictkit`: internal CLI for parser and dictionary inspection
-- `AnkiMateServer`: local inference server used by AI features
-
-Useful commands:
-
-```bash
-just build
-just test
-just lookup apple
-just lookup-json apple
-just test-filter WordListViewModelTests
-```
-
-If you need the inspection CLI directly:
-
-```bash
-swift run dictkit apple
-swift run dictkit --json apple
-swift run dictkit speech --output ./apple.wav apple
-```
+1. Open the latest release asset for macOS.
+2. Unzip the app bundle.
+3. Move the app to `Applications` if you want to keep it installed.
+4. Launch `Anki Mate`.
 
 ## Notes
 
-- The app uses Apple's Dictionary Services and related system data sources, which do not expose a stable public structured schema.
-- Some lookup and parsing capabilities rely on behavior that is useful in practice but not guaranteed by Apple as a long-term API contract.
+- Dictionary results depend on the dictionaries and language resources available in macOS.
+- Apple does not provide a stable public structured schema for Dictionary Services, so some lookup details can vary across macOS versions.
+- On-device AI features are optional and may require downloading local model files before first use.
+
+For development and contribution guidance, see [CONTRIBUTE.md](CONTRIBUTE.md).
