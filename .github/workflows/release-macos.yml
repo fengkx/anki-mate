@@ -39,6 +39,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - name: Resolve llama cache key
         id: verify-llama-cache-key
@@ -94,6 +95,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          submodules: recursive
 
       - name: Resolve llama cache key
         id: release-llama-cache-key
