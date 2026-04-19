@@ -469,7 +469,7 @@ final class WordListViewModelTests: XCTestCase {
         let viewModel = try makeViewModel(store: store)
         let reloaded = try XCTUnwrap(viewModel.words.only)
 
-        XCTAssertEqual(reloaded.aiArtifacts, artifacts)
+        XCTAssertEqual(reloaded.aiArtifacts, artifacts.normalized())
         XCTAssertEqual(reloaded.aiAcceptedRecallCardDrafts.count, 1)
         XCTAssertEqual(reloaded.aiAcceptedPitfalls, ["Do not confuse it with consent."])
         XCTAssertEqual(reloaded.aiAcceptedMnemonics, ["Consensus sounds like everyone says yes together."])
@@ -688,8 +688,9 @@ final class WordListViewModelTests: XCTestCase {
 
         let encoded = try JSONEncoder().encode(artifacts)
         let decoded = try JSONDecoder().decode(AIArtifacts.self, from: encoded)
+        let normalized = artifacts.normalized()
 
-        XCTAssertEqual(decoded, artifacts)
+        XCTAssertEqual(decoded, normalized)
         XCTAssertEqual(decoded.schemaVersion, AIArtifacts.currentSchemaVersion)
         XCTAssertEqual(decoded.acceptedExampleSentences, ["Accepted example."])
         XCTAssertEqual(decoded.acceptedDefinitionNoteText, "Keep the learner-facing note brief.")

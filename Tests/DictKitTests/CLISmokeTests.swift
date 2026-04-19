@@ -162,14 +162,14 @@ final class CLISmokeTests: XCTestCase {
         XCTAssertNotEqual(result.exitCode, 0, "Expected non-zero exit for nonexistent word in strict mode")
     }
 
-    func testCLISpeechWithSourceOption() throws {
-        try SystemDictionaryTestSupport.requireAutomaticLookup(for: "apple")
+    func testCLISpeechWithPublicSourceOption() throws {
+        try SystemDictionaryTestSupport.requirePublicLookup(for: "apple")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let outputPath = tempDir.appendingPathComponent("apple.wav").path
-        let result = try run("speech", "--source", "automatic", "--output", outputPath, "apple")
+        let result = try run("speech", "--source", "public", "--output", outputPath, "apple")
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
         let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))

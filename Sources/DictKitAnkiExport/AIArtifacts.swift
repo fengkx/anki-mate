@@ -551,12 +551,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: Self.normalizeCollocationArtifacts(collocations.suggested),
                 accepted: Self.normalizeCollocationArtifacts(collocations.accepted)
             ),
-            learningAidSelections: Self.normalizeLearningAidSelections(
-                learningAidSelections,
-                pitfalls: Self.normalizePitfallArtifacts(pitfalls.suggested),
-                mnemonics: Self.normalizeMnemonicArtifacts(mnemonics.suggested),
-                collocations: Self.normalizeCollocationArtifacts(collocations.suggested)
-            ),
+            learningAidSelections: Self.normalizeLearningAidSelections(learningAidSelections),
             generatedIPANotationsByDialect: Self.normalizeGeneratedStringByDialect(generatedIPANotationsByDialect),
             generatedStressSyllablesByDialect: Self.normalizeGeneratedStringByDialect(generatedStressSyllablesByDialect)
         )
@@ -806,36 +801,30 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     }
 
     private static func normalizeLearningAidSelections(
-        _ selections: LearningAidSelections,
-        pitfalls: [PitfallArtifact]?,
-        mnemonics: [MnemonicArtifact]?,
-        collocations: [CollocationArtifact]?
+        _ selections: LearningAidSelections
     ) -> LearningAidSelections {
+        // Keep explicit selections intact even when the corresponding artifacts
+        // are not present yet; they may be re-applied after a later refresh.
         LearningAidSelections(
-            pitfalls: normalizeSectionSelection(
-                selections.pitfalls,
-                validIDs: Set((pitfalls ?? []).compactMap(\.id))
-            ),
-            mnemonics: normalizeSectionSelection(
-                selections.mnemonics,
-                validIDs: Set((mnemonics ?? []).compactMap(\.id))
-            ),
-            collocations: normalizeSectionSelection(
-                selections.collocations,
-                validIDs: Set((collocations ?? []).compactMap(\.id))
-            )
+            pitfalls: normalizeSectionSelection(selections.pitfalls),
+            mnemonics: normalizeSectionSelection(selections.mnemonics),
+            collocations: normalizeSectionSelection(selections.collocations)
         )
     }
 
     private static func normalizeSectionSelection(
-        _ selection: LearningAidSectionSelection?,
-        validIDs: Set<String>
+        _ selection: LearningAidSectionSelection?
     ) -> LearningAidSectionSelection? {
         guard let selection else { return nil }
 
-        let recommendedID = selection.recommendedID.flatMap { validIDs.contains($0) ? $0 : nil }
-        let alternativeIDs = selection.alternativeIDs.filter { validIDs.contains($0) }
-        let overlapHints = selection.overlapHints.filter { validIDs.contains($0.candidateID) }
+        let recommendedID = selection.recommendedID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let alternativeIDs = selection.alternativeIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let overlapHints = selection.overlapHints.filter {
+            !$0.candidateID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !$0.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
 
         if recommendedID == nil &&
             alternativeIDs.isEmpty &&
