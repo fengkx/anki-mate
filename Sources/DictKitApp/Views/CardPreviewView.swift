@@ -34,19 +34,33 @@ struct CardPreviewView: View {
                         return (order[$0.dialect] ?? 2) < (order[$1.dialect] ?? 2)
                     }
 
-                    if geometry.size.width >= 860 {
+                    if geometry.size.width >= 920 {
                         HStack(alignment: .top, spacing: 16) {
                             pronunciationSummary(phonetics: phonetics)
-                            Spacer(minLength: 0)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             previewControls
+                                .fixedSize()
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .top, spacing: 12) {
-                                pronunciationHeader
-                                Spacer(minLength: 0)
-                                previewControls
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .top, spacing: 12) {
+                                    pronunciationHeader
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    previewControls
+                                        .fixedSize()
+                                }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    pronunciationHeader
+                                    HStack {
+                                        Spacer(minLength: 0)
+                                        previewControls
+                                            .fixedSize()
+                                    }
+                                }
                             }
+
                             pronunciationDetails(phonetics: phonetics)
                         }
                     }
@@ -57,8 +71,8 @@ struct CardPreviewView: View {
                             .foregroundStyle(.red)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
                 .task(id: pronunciationAutoGenerationTaskKey) {
                     triggerAutomaticPronunciationEnhancementIfNeeded()
                 }
@@ -234,20 +248,22 @@ struct CardPreviewView: View {
     }
 
     private var previewControls: some View {
-        VStack(alignment: .trailing, spacing: 8) {
+        VStack(alignment: .trailing, spacing: 6) {
             Picker("", selection: $previewFamily) {
                 Text("Standard").tag(PreviewFamily.standard)
                 Text("Recall").tag(PreviewFamily.recall)
             }
             .pickerStyle(.segmented)
-            .frame(width: 180)
+            .controlSize(.small)
+            .frame(width: 168)
 
             Picker("", selection: $showBack) {
                 Text("Front").tag(false)
                 Text("Back").tag(true)
             }
             .pickerStyle(.segmented)
-            .frame(width: 140)
+            .controlSize(.small)
+            .frame(width: 126)
         }
     }
 

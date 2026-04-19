@@ -86,6 +86,43 @@ final class AIContentDraftStateTests: XCTestCase {
         XCTAssertEqual(rewritten.note, "Keep note")
         XCTAssertNil(plainText.translation)
     }
+
+    func testRecallDraftEditorReducerKeepsLatestSelectedModeDuringTextEdits() {
+        let staleDraft = RecallCardDraft(
+            mode: .fullSpelling,
+            front: "old front",
+            back: "answer",
+            hint: "nudge"
+        )
+
+        let updated = RecallDraftEditorReducer.applying(
+            .front("edited front"),
+            to: staleDraft,
+            selectedMode: .targetedLetterCloze
+        )
+
+        XCTAssertEqual(updated.mode, .targetedLetterCloze)
+        XCTAssertEqual(updated.front, "edited front")
+        XCTAssertEqual(updated.back, "answer")
+        XCTAssertEqual(updated.hint, "nudge")
+    }
+
+    func testRecallDraftEditorReducerCanClearHintExplicitly() {
+        let draft = RecallCardDraft(
+            mode: .phraseRecall,
+            front: "prompt",
+            back: "answer",
+            hint: "remove me"
+        )
+
+        let updated = RecallDraftEditorReducer.applying(
+            .hint(nil),
+            to: draft,
+            selectedMode: .phraseRecall
+        )
+
+        XCTAssertNil(updated.hint)
+    }
 }
 
 private extension Array {

@@ -2,6 +2,7 @@ import SwiftUI
 import DictKit
 import DictKitAnkiExport
 import AnkiMateLLM
+import AppKit
 import os
 
 struct AIInlineTextDraftState: Equatable {
@@ -114,6 +115,45 @@ enum AIDraftListSynchronizer {
     }
 }
 
+struct RecallDraftEditorUpdate {
+    var mode: RecallCardMode?
+    var front: String?
+    var back: String?
+    var hint: String??
+
+    static func mode(_ value: RecallCardMode) -> RecallDraftEditorUpdate {
+        RecallDraftEditorUpdate(mode: value)
+    }
+
+    static func front(_ value: String) -> RecallDraftEditorUpdate {
+        RecallDraftEditorUpdate(front: value)
+    }
+
+    static func back(_ value: String) -> RecallDraftEditorUpdate {
+        RecallDraftEditorUpdate(back: value)
+    }
+
+    static func hint(_ value: String?) -> RecallDraftEditorUpdate {
+        RecallDraftEditorUpdate(hint: .some(value))
+    }
+}
+
+enum RecallDraftEditorReducer {
+    static func applying(
+        _ update: RecallDraftEditorUpdate,
+        to draft: RecallCardDraft,
+        selectedMode: RecallCardMode
+    ) -> RecallCardDraft {
+        RecallCardDraft(
+            mode: update.mode ?? selectedMode,
+            front: update.front ?? draft.front,
+            back: update.back ?? draft.back,
+            hint: update.hint ?? draft.hint,
+            anchor: draft.anchor
+        )
+    }
+}
+
 enum AIExampleArtifactEditor {
     static func artifact(byApplyingEditedText text: String, to artifact: ExampleSentenceArtifact) -> ExampleSentenceArtifact {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,6 +223,7 @@ struct AIContentView: View {
     @State private var acceptedExampleState = AIDraftListState<ExampleSentenceArtifact, String>()
     @State private var suggestedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
     @State private var acceptedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
+    @State private var pendingAcceptedRecallPersistedEcho: RecallCardDraft?
     @State private var suggestedPitfallState = AIDraftListState<String, String>()
     @State private var acceptedPitfallState = AIDraftListState<String, String>()
     @State private var suggestedMnemonicState = AIDraftListState<String, String>()
@@ -342,6 +383,10 @@ struct AIContentView: View {
         }
         .onChange(of: item.aiSuggestedRecallCardDrafts) { _ in syncRecallDrafts() }
         .onChange(of: item.aiAcceptedRecallCardDrafts) { _ in
+            if consumeAcceptedRecallPersistedEchoIfNeeded() {
+                if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
+                return
+            }
             syncRecallDrafts()
             if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
         }
@@ -581,6 +626,7 @@ struct AIContentView: View {
                         draft: bindingForAcceptedRecallDraft(rowID: rowID),
                         secondaryButtonTitle: "Delete Saved Card",
                         tagText: "Saved",
+                        onModeChange: { persistAcceptedRecallModeChange(rowID: rowID, value: $0) },
                         onDraftChange: { scheduleAcceptedRecallAutosave(rowID: rowID, value: $0) },
                         onSecondary: { deleteAcceptedRecallDraft(rowID: rowID) }
                     )
@@ -727,6 +773,7 @@ struct AIContentView: View {
                             draft: bindingForAcceptedRecallDraft(rowID: rowID),
                             secondaryButtonTitle: "Delete Legacy Card",
                             tagText: "Legacy saved",
+                            onModeChange: { persistAcceptedRecallModeChange(rowID: rowID, value: $0) },
                             onDraftChange: { scheduleAcceptedRecallAutosave(rowID: rowID, value: $0) },
                             onSecondary: { deleteAcceptedRecallDraft(rowID: rowID) }
                         )
@@ -1086,6 +1133,20 @@ struct AIContentView: View {
         acceptedRecallState = acceptedResult.state
     }
 
+    private func consumeAcceptedRecallPersistedEchoIfNeeded() -> Bool {
+        guard let pending = pendingAcceptedRecallPersistedEcho else { return false }
+        guard item.aiAcceptedRecallCardDrafts == [pending],
+              let rowID = acceptedRecallState.rowOrder.first else {
+            pendingAcceptedRecallPersistedEcho = nil
+            return false
+        }
+
+        acceptedRecallState.persistedByRowID[rowID] = pending
+        acceptedRecallState.drafts[rowID] = pending
+        pendingAcceptedRecallPersistedEcho = nil
+        return true
+    }
+
     private func syncPitfallDrafts() {
         suggestedPitfallState = AIDraftListSynchronizer.sync(
             persistedValues: item.aiSuggestedPitfalls,
@@ -1258,8 +1319,17 @@ struct AIContentView: View {
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
             guard item.aiAcceptedRecallCardDrafts.first != value else { return }
+            pendingAcceptedRecallPersistedEcho = value
             viewModel.saveAIAcceptedRecallCardDrafts([value], for: item)
         }
+    }
+
+    private func persistAcceptedRecallModeChange(rowID: UUID, value: RecallCardDraft) {
+        acceptedRecallAutosaveTasks[rowID]?.cancel()
+        acceptedRecallAutosaveTasks.removeValue(forKey: rowID)
+        guard item.aiAcceptedRecallCardDrafts.first != value else { return }
+        pendingAcceptedRecallPersistedEcho = value
+        viewModel.saveAIAcceptedRecallCardDrafts([value], for: item)
     }
 
     private func scheduleAcceptedPitfallAutosave(rowID: UUID, value: String) {
@@ -1818,11 +1888,20 @@ private struct EditableAITextCard: View {
 }
 
 private struct EditableRecallDraftCard: View {
+    fileprivate enum FocusField: Hashable {
+        case front
+        case back
+        case hint
+    }
+
     @Binding var draft: RecallCardDraft
+    @State private var selectedMode: RecallCardMode
+    @FocusState private var focusedField: FocusField?
 
     let primaryButtonTitle: String?
     let secondaryButtonTitle: String
     let tagText: String?
+    let onModeChange: ((RecallCardDraft) -> Void)?
     let onDraftChange: ((RecallCardDraft) -> Void)?
     let onPrimary: () -> Void
     let onSecondary: () -> Void
@@ -1832,14 +1911,17 @@ private struct EditableRecallDraftCard: View {
         primaryButtonTitle: String? = nil,
         secondaryButtonTitle: String,
         tagText: String? = nil,
+        onModeChange: ((RecallCardDraft) -> Void)? = nil,
         onDraftChange: ((RecallCardDraft) -> Void)? = nil,
         onPrimary: @escaping () -> Void = {},
         onSecondary: @escaping () -> Void
     ) {
         _draft = draft
+        _selectedMode = State(initialValue: draft.wrappedValue.mode)
         self.primaryButtonTitle = primaryButtonTitle
         self.secondaryButtonTitle = secondaryButtonTitle
         self.tagText = tagText
+        self.onModeChange = onModeChange
         self.onDraftChange = onDraftChange
         self.onPrimary = onPrimary
         self.onSecondary = onSecondary
@@ -1858,9 +1940,11 @@ private struct EditableRecallDraftCard: View {
                 prompt: frontPrompt,
                 text: Binding(
                     get: { draft.front },
-                    set: { updateDraft(front: $0) }
+                    set: { applyUpdate(.front($0)) }
                 ),
-                minHeight: 78
+                minHeight: 78,
+                focusedField: $focusedField,
+                field: EditableRecallDraftCard.FocusField.front
             )
 
             RecallDraftEditorField(
@@ -1868,9 +1952,11 @@ private struct EditableRecallDraftCard: View {
                 prompt: "Put the canonical answer here.",
                 text: Binding(
                     get: { draft.back },
-                    set: { updateDraft(back: $0) }
+                    set: { applyUpdate(.back($0)) }
                 ),
-                minHeight: 64
+                minHeight: 64,
+                focusedField: $focusedField,
+                field: EditableRecallDraftCard.FocusField.back
             )
 
             RecallDraftEditorField(
@@ -1880,10 +1966,12 @@ private struct EditableRecallDraftCard: View {
                     get: { draft.hint ?? "" },
                     set: { next in
                         let trimmed = next.trimmingCharacters(in: .whitespacesAndNewlines)
-                        updateDraft(hint: trimmed.isEmpty ? nil : trimmed)
+                        applyUpdate(.hint(trimmed.isEmpty ? nil : trimmed))
                     }
                 ),
-                minHeight: 58
+                minHeight: 58,
+                focusedField: $focusedField,
+                field: EditableRecallDraftCard.FocusField.hint
             )
 
             HStack(spacing: 8) {
@@ -1900,6 +1988,11 @@ private struct EditableRecallDraftCard: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.025)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.05), lineWidth: 1))
+        .onChange(of: draft.mode) { next in
+            if selectedMode != next {
+                selectedMode = next
+            }
+        }
     }
 
     private var header: some View {
@@ -1921,35 +2014,37 @@ private struct EditableRecallDraftCard: View {
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: Binding(
-            get: { draft.mode },
-            set: { next in updateDraft(mode: next) }
-        )) {
-            ForEach(RecallCardMode.allCases, id: \.self) { mode in
-                Text(mode.displayName).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
+        RecallModeSegmentedControl(selection: modeSelection)
+            .frame(height: 26)
     }
 
-    private func updateDraft(
-        mode: RecallCardMode? = nil,
-        front: String? = nil,
-        back: String? = nil,
-        hint: String? = nil
-    ) {
-        draft = RecallCardDraft(
-            mode: mode ?? draft.mode,
-            front: front ?? draft.front,
-            back: back ?? draft.back,
-            hint: hint ?? draft.hint,
-            anchor: draft.anchor
+    private var modeSelection: Binding<RecallCardMode> {
+        Binding(
+            get: { selectedMode },
+            set: { next in
+                guard selectedMode != next else { return }
+                focusedField = nil
+                applyUpdate(.mode(next))
+            }
         )
+    }
+
+    private func applyUpdate(_ update: RecallDraftEditorUpdate) {
+        let nextDraft = RecallDraftEditorReducer.applying(
+            update,
+            to: draft,
+            selectedMode: selectedMode
+        )
+        selectedMode = nextDraft.mode
+        draft = nextDraft
+        if update.mode != nil {
+            onModeChange?(draft)
+        }
         onDraftChange?(draft)
     }
 
     private var modeDescription: String {
-        switch draft.mode {
+        switch selectedMode {
         case .fullSpelling:
             return "Use a short cue that makes the learner recall the complete spelling."
         case .targetedLetterCloze:
@@ -1960,7 +2055,7 @@ private struct EditableRecallDraftCard: View {
     }
 
     private var frontPrompt: String {
-        switch draft.mode {
+        switch selectedMode {
         case .fullSpelling:
             return "Example: start from a meaning cue or partial scaffold instead of copying the answer."
         case .targetedLetterCloze:
@@ -1972,11 +2067,72 @@ private struct EditableRecallDraftCard: View {
 
 }
 
+private struct RecallModeSegmentedControl: NSViewRepresentable {
+    let selection: Binding<RecallCardMode>
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selection: selection)
+    }
+
+    func makeNSView(context: Context) -> FirstClickSegmentedControl {
+        let control = FirstClickSegmentedControl(labels: RecallCardMode.allCases.map(\.displayName), trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.selectionDidChange(_:)))
+        control.segmentStyle = .rounded
+        control.controlSize = .regular
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        updateSelection(on: control)
+        return control
+    }
+
+    func updateNSView(_ nsView: FirstClickSegmentedControl, context: Context) {
+        context.coordinator.selection = selection
+        if nsView.segmentCount != RecallCardMode.allCases.count {
+            nsView.segmentCount = RecallCardMode.allCases.count
+            for (index, mode) in RecallCardMode.allCases.enumerated() {
+                nsView.setLabel(mode.displayName, forSegment: index)
+            }
+        }
+        updateSelection(on: nsView)
+    }
+
+    private func updateSelection(on control: NSSegmentedControl) {
+        if let index = RecallCardMode.allCases.firstIndex(of: selection.wrappedValue) {
+            control.selectedSegment = index
+        } else {
+            control.selectedSegment = -1
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var selection: Binding<RecallCardMode>
+
+        init(selection: Binding<RecallCardMode>) {
+            self.selection = selection
+        }
+
+        @objc func selectionDidChange(_ sender: NSSegmentedControl) {
+            let index = sender.selectedSegment
+            guard RecallCardMode.allCases.indices.contains(index) else { return }
+            selection.wrappedValue = RecallCardMode.allCases[index]
+        }
+    }
+}
+
+private final class FirstClickSegmentedControl: NSSegmentedControl {
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(nil)
+        super.mouseDown(with: event)
+    }
+}
+
 private struct RecallDraftEditorField: View {
+    typealias FocusField = EditableRecallDraftCard.FocusField
+
     let title: String
     let prompt: String
     @Binding var text: String
     let minHeight: CGFloat
+    let focusedField: FocusState<FocusField?>.Binding
+    let field: FocusField
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1998,6 +2154,7 @@ private struct RecallDraftEditorField: View {
                 TextEditor(text: $text)
                     .font(.body)
                     .scrollContentBackground(.hidden)
+                    .focused(focusedField, equals: field)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(minHeight: minHeight)
