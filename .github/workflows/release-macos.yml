@@ -40,11 +40,38 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve llama cache key
+        id: verify-llama-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_ref="$(git ls-tree HEAD vendor/llama.cpp | awk '{print $3}')"
+          echo "ref=${llama_ref:-missing}" >> "$GITHUB_OUTPUT"
+
       - name: Install CI tools
         run: brew install just cmake openssl@3
 
+      - name: Restore llama build cache
+        id: verify-llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: llama-build-${{ runner.os }}-${{ steps.verify-llama-cache-key.outputs.ref }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/patch-llama-openssl.sh') }}
+
       - name: Build llama.cpp
+        if: steps.verify-llama-cache.outputs.cache-hit != 'true'
         run: just build-llama
+
+      - name: Save llama build cache
+        if: steps.verify-llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: ${{ steps.verify-llama-cache.outputs.cache-primary-key }}
 
       - name: Run CI suite
         run: just ci
@@ -67,6 +94,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Resolve llama cache key
+        id: release-llama-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_ref="$(git ls-tree HEAD vendor/llama.cpp | awk '{print $3}')"
+          echo "ref=${llama_ref:-missing}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release version
         id: release-meta
@@ -122,6 +157,15 @@ jobs:
       - name: Install CI tools
         run: brew install just cmake openssl@3
 
+      - name: Restore llama build cache
+        id: release-llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: llama-build-${{ runner.os }}-${{ steps.release-llama-cache-key.outputs.ref }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/patch-llama-openssl.sh') }}
+
       - name: Install packaging dependencies
         shell: bash
         run: |
@@ -132,7 +176,17 @@ jobs:
           echo "$venv_path/bin" >> "$GITHUB_PATH"
 
       - name: Build llama.cpp
+        if: steps.release-llama-cache.outputs.cache-hit != 'true'
         run: just build-llama
+
+      - name: Save llama build cache
+        if: steps.release-llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: ${{ steps.release-llama-cache.outputs.cache-primary-key }}
 
       - name: Import Developer ID signing certificate
         if: steps.signing-mode.outputs.has-signing == 'true'

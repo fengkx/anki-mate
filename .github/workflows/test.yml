@@ -18,11 +18,38 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve llama cache key
+        id: llama-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_ref="$(git ls-tree HEAD vendor/llama.cpp | awk '{print $3}')"
+          echo "ref=${llama_ref:-missing}" >> "$GITHUB_OUTPUT"
+
       - name: Install CI tools
         run: brew install just cmake openssl@3
 
+      - name: Restore llama build cache
+        id: llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: llama-build-${{ runner.os }}-${{ steps.llama-cache-key.outputs.ref }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/patch-llama-openssl.sh') }}
+
       - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
         run: just build-llama
+
+      - name: Save llama build cache
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: ${{ steps.llama-cache.outputs.cache-primary-key }}
 
       - name: Build & Test
         run: just ci

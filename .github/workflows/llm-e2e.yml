@@ -51,8 +51,25 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve llama cache key
+        id: llama-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_ref="$(git ls-tree HEAD vendor/llama.cpp | awk '{print $3}')"
+          echo "ref=${llama_ref:-missing}" >> "$GITHUB_OUTPUT"
+
       - name: Install CI tools
         run: brew install just cmake openssl@3
+
+      - name: Restore llama build cache
+        id: llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: llama-build-${{ runner.os }}-${{ steps.llama-cache-key.outputs.ref }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/patch-llama-openssl.sh') }}
 
       # Keep the cache scope narrow so the 4.5 GB GGUF does not crowd out unrelated caches.
       - name: Restore pinned LLM model cache
@@ -64,7 +81,17 @@ jobs:
           key: llm-e2e-model-${{ runner.os }}-gemma-4-e2b-it-q6k-${{ hashFiles('ci/llm-e2e-model.lock.json') }}
 
       - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
         run: just build-llama
+
+      - name: Save llama build cache
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: ${{ steps.llama-cache.outputs.cache-primary-key }}
 
       - name: Prepare pinned LLM E2E model
         run: just prepare-llm-e2e-model
