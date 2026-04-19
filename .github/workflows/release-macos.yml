@@ -93,7 +93,13 @@ jobs:
         run: brew install just cmake openssl@3
 
       - name: Install packaging dependencies
-        run: python3 -m pip install --user pillow
+        shell: bash
+        run: |
+          set -euo pipefail
+          venv_path="$RUNNER_TEMP/release-python"
+          python3 -m venv "$venv_path"
+          "$venv_path/bin/pip" install pillow
+          echo "$venv_path/bin" >> "$GITHUB_PATH"
 
       - name: Build llama.cpp
         run: just build-llama
