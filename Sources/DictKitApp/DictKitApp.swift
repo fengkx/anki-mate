@@ -9,14 +9,17 @@ struct DictKitApp: App {
     @StateObject private var syncStatus: SyncStatus
     @StateObject private var llmService: LLMService
     @StateObject private var helpCenter: HelpCenterState
+    @StateObject private var commandPalette: CommandPaletteViewModel
     @State private var syncScheduler: SyncScheduler?
 
     init() {
         AppStorageMigrator.migrateCurrentDeviceData()
-        _viewModel = StateObject(wrappedValue: WordListViewModel())
+        let wordListViewModel = WordListViewModel()
+        _viewModel = StateObject(wrappedValue: wordListViewModel)
         _syncStatus = StateObject(wrappedValue: SyncStatus())
         _llmService = StateObject(wrappedValue: LLMService())
         _helpCenter = StateObject(wrappedValue: HelpCenterState())
+        _commandPalette = StateObject(wrappedValue: CommandPaletteViewModel(wordListViewModel: wordListViewModel))
     }
 
     var body: some Scene {
@@ -28,6 +31,7 @@ struct DictKitApp: App {
                 .environmentObject(syncStatus)
                 .environmentObject(llmService)
                 .environmentObject(helpCenter)
+                .environmentObject(commandPalette)
                 .onAppear {
                     llmService.enableAutoStartOnAvailableModel()
                     setupSync()
@@ -58,6 +62,10 @@ struct DictKitApp: App {
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(!viewModel.canExportCurrentCollection)
+                Button("Command Palette") {
+                    commandPalette.togglePresentation()
+                }
+                .keyboardShortcut("k", modifiers: .command)
             }
             HelpCommands()
         }

@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: WordListViewModel
     @EnvironmentObject var helpCenter: HelpCenterState
+    @EnvironmentObject var commandPalette: CommandPaletteViewModel
+    @Environment(\.openWindow) private var openWindow
     @State private var collectionEditorMode: CollectionEditorMode?
     var onSyncNow: (() async -> Void)?
     var onIntervalChanged: ((SyncInterval) -> Void)?
@@ -30,6 +32,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 700, minHeight: 450)
+        .overlay {
+            CommandPaletteView()
+                .environmentObject(commandPalette)
+        }
         .sheet(isPresented: $viewModel.showBatchInput) {
             BatchInputSheet()
                 .environmentObject(viewModel)
@@ -75,6 +81,20 @@ struct ContentView: View {
             Button("OK") { viewModel.dismissStoreError() }
         } message: {
             Text(viewModel.storeErrorMessage ?? "")
+        }
+        .onAppear {
+            commandPalette.configure(actions: .init(
+                openBatchAdd: { viewModel.showBatchInput = true },
+                openExport: { viewModel.showExportDialog = true },
+                openNewCollection: { collectionEditorMode = .create },
+                openCollectionSettings: { collectionEditorMode = .rename },
+                openWindow: { openWindow(id: $0) },
+                syncNow: {
+                    if let onSyncNow {
+                        await onSyncNow()
+                    }
+                }
+            ))
         }
     }
 }

@@ -134,6 +134,46 @@ final class WordListViewModel: ObservableObject {
         currentCollection != nil && !isExporting
     }
 
+    func searchableWordsInCurrentCollection() -> [WordItem] {
+        words
+    }
+
+    func wordItem(for id: UUID) -> WordItem? {
+        wordCache[id]
+    }
+
+    func selectWord(id: UUID) {
+        selectedWordID = id
+    }
+
+    func containsNormalizedWordInCurrentCollection(_ text: String) -> Bool {
+        let normalizedWord = WordListStore.normalizedWord(for: text)
+        return words.contains(where: { $0.normalizedWord == normalizedWord })
+    }
+
+    func validateWordCanBeAdded(_ query: String) async -> WordAddValidationResult {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .notFound }
+
+        let normalizedWord = WordListStore.normalizedWord(for: trimmed)
+        if let existing = words.first(where: { $0.normalizedWord == normalizedWord }) {
+            return .duplicateExistingWord(existingWordID: existing.id)
+        }
+
+        guard let currentCollection else {
+            return .failed("No collection selected")
+        }
+
+        do {
+            let resolved = try await resolvedLookupService.resolve(trimmed, dictionaryName: currentCollection.dictionaryName)
+            return .dictionaryMatch(canonicalWord: resolved.word)
+        } catch LookupError.notFound {
+            return .notFound
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
     func exportableWordCount(for collectionID: UUID) -> Int {
         ((try? store.loadWords(in: collectionID)) ?? []).filter { record in
             if let item = wordCache[record.id] {
