@@ -2,6 +2,18 @@ import AppKit
 import AnkiMateLLM
 
 enum LLMServerDiagnostics {
+    struct ReportSnapshot {
+        let appVersion: String
+        let serverState: ServerProcessManager.State
+        let selectedModelId: String
+        let hasDownloadedSelectedModel: Bool
+        let downloadedModelCount: Int
+        let bundleServerBinaryDescription: String
+        let developmentServerBinaryDescription: String
+        let releaseServerBinaryDescription: String
+        let workingDirectory: String
+    }
+
     @MainActor
     static func copyDiagnostics(service: LLMService) {
         let pasteboard = NSPasteboard.general
@@ -11,19 +23,38 @@ enum LLMServerDiagnostics {
 
     @MainActor
     static func makeReport(service: LLMService) -> String {
+        makeReport(snapshot: snapshot(for: service))
+    }
+
+    static func makeReport(snapshot: ReportSnapshot) -> String {
         [
             "Anki Mate Local AI Diagnostics",
-            "App version: \(appVersionString())",
-            "Server state: \(describe(service.serverState))",
-            "Selected model: \(service.selectedModelId.isEmpty ? "none" : service.selectedModelId)",
-            "Has downloaded selected model: \(service.hasModel ? "yes" : "no")",
-            "Downloaded model count: \(downloadedModelCount(service))",
-            "Bundle server binary: \(describe(path: bundleServerBinaryPath()))",
-            "Development server binary: \(describe(path: developmentServerBinaryPath()))",
-            "Release server binary: \(describe(path: releaseServerBinaryPath()))",
-            "Working directory: \(FileManager.default.currentDirectoryPath)",
+            "App version: \(snapshot.appVersion)",
+            "Server state: \(describe(snapshot.serverState))",
+            "Selected model: \(snapshot.selectedModelId.isEmpty ? "none" : snapshot.selectedModelId)",
+            "Has downloaded selected model: \(snapshot.hasDownloadedSelectedModel ? "yes" : "no")",
+            "Downloaded model count: \(snapshot.downloadedModelCount)",
+            "Bundle server binary: \(snapshot.bundleServerBinaryDescription)",
+            "Development server binary: \(snapshot.developmentServerBinaryDescription)",
+            "Release server binary: \(snapshot.releaseServerBinaryDescription)",
+            "Working directory: \(snapshot.workingDirectory)",
         ]
         .joined(separator: "\n")
+    }
+
+    @MainActor
+    private static func snapshot(for service: LLMService) -> ReportSnapshot {
+        ReportSnapshot(
+            appVersion: appVersionString(),
+            serverState: service.serverState,
+            selectedModelId: service.selectedModelId,
+            hasDownloadedSelectedModel: service.hasModel,
+            downloadedModelCount: downloadedModelCount(service),
+            bundleServerBinaryDescription: describe(path: bundleServerBinaryPath()),
+            developmentServerBinaryDescription: describe(path: developmentServerBinaryPath()),
+            releaseServerBinaryDescription: describe(path: releaseServerBinaryPath()),
+            workingDirectory: FileManager.default.currentDirectoryPath
+        )
     }
 
     private static func describe(_ state: ServerProcessManager.State) -> String {
