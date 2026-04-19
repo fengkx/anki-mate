@@ -1,6 +1,21 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
+let llamaRuntimeRPaths = [
+    "@executable_path/../Frameworks",
+    "@loader_path/../../vendor/llama-install/lib",
+    "@loader_path/../../../vendor/llama-install/lib",
+    "@loader_path/../../../../vendor/llama-install/lib",
+    "@loader_path/../../../../../vendor/llama-install/lib",
+    "@loader_path/../../../../../../vendor/llama-install/lib",
+]
+
+let llamaRuntimeLinkerSettings: [LinkerSetting] = llamaRuntimeRPaths.flatMap { path in
+    [
+        .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", path])
+    ]
+}
+
 let package = Package(
     name: "macos-dictkit",
     platforms: [
@@ -124,9 +139,15 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
             path: "Sources/AnkiMateServer",
-            linkerSettings: [
-                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
-            ]
+            linkerSettings: llamaRuntimeLinkerSettings
+        ),
+        .testTarget(
+            name: "AnkiMateServerTests",
+            dependencies: [
+                "AnkiMateRPC",
+                "AnkiMateServer"
+            ],
+            path: "Tests/AnkiMateServerTests"
         ),
         .testTarget(
             name: "DictKitTests",

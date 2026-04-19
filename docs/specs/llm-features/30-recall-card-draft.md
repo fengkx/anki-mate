@@ -10,61 +10,66 @@
 但真正容易丢分和遗忘的部分通常是 recall：
 
 - 能否完整拼出单词
-- 能否记住短语关键部分
 - 能否在易错字母处不出错
 
 因此第一阶段最重要的新卡型应是 Recall Card Draft，而不是继续堆叠展示型内容。
 
 ## 2. 功能目标
 
-为单词或短语生成 recall 导向卡片草稿，用于后续卡片预览与导出。
+为单个词条生成一张 `Chinese cue -> English word` 的 recall card 草稿，用于后续卡片预览与导出。
 
-第一阶段支持三种模式：
+Recall Card 的核心定义是：
 
-- 完整拼写回忆
-- 定向字母挖空
-- 短语回忆
+- 正面给出中文释义、中文提示或学习线索
+- 用户根据正面主动回忆英文单词
+- 背面给出英文答案与必要提示
 
-但当前拍板的一期重心是：
+第一阶段支持两种形态：
 
-- 主推 `full spelling`
-- 主推 `targeted letter cloze`
-- `phrase recall` 先做 schema 支持和弱入口，不做重 UI
+- `standard recall`
+- `targeted letter cloze`
+
+其中：
+
+- `standard recall` 是默认形态
+- `targeted letter cloze` 是 Recall Card 的一个变体，而不是独立卡型
 
 ## 3. 范围
 
 覆盖内容：
 
 - Recall Card Draft 的生成
-- 草稿模式切换与展示
-- 完整拼写与挖空拼写的统一承载
-- 短语回忆支持
+- 单卡草稿的展示与编辑
+- `standard recall` 与 `targeted letter cloze` 两种变体
 - 与导出层挂接
 
 不覆盖内容：
 
 - 大规模模板自定义
-- 批量卡型推荐
+- 多张 Recall Card 并行生成
+- `phrase recall`
 - 基于用户历史错误自动调整策略
 
 ## 4. 总览实施计划
 
-### 4.1 统一卡型抽象
+### 4.1 单卡定义
 
-将 recall 训练抽象为统一草稿，而不是分裂成多套功能：
+Recall Card 是一个明确的反向词汇卡型，而不是泛化的 recall 训练工作台。
 
-- `full spelling`
-- `targeted letter cloze`
-- `phrase recall`
+一期约束：
+
+- 每个词条最多只有 `1` 张 Recall Card
+- Recall Card 的默认目标是“看到中文提示，回忆英文单词”
+- `targeted letter cloze` 只作为这张卡的可选变体存在
 
 ### 4.2 正反面内容
 
 草稿需包含：
 
-- 正面提示
-- 背面答案
-- 当前卡型模式
-- 挖空信息或关键提示
+- 正面中文提示
+- 背面英文答案
+- 当前变体类型
+- 必要时附带 hint
 
 正面提示优先基于：
 
@@ -74,12 +79,12 @@
 
 ### 4.3 Recall Prompt 输入策略
 
-Recall prompt 不应再按“给每个 mode 都生成一张”的思路建模，而应围绕单草稿工作台设计。
+Recall prompt 应围绕“生成一张反向卡”建模，而不是围绕多 mode 工作台设计。
 
 一期推荐输入：
 
 - `headword`
-- `requestedMode`
+- `requestedVariant`
 - `senses[]`
 - `acceptedPitfalls[]`
 - `acceptedUsageHints[]`
@@ -95,7 +100,7 @@ Recall prompt 不应再按“给每个 mode 都生成一张”的思路建模，
 
 ### 4.4 交互模型
 
-`Recall Card` 不是普通建议列表，而是用户主动触发的卡片工作台。
+`Recall Card` 不是普通建议列表，而是用户主动触发的单卡草稿编辑器。
 
 当前拍板交互：
 
@@ -133,19 +138,14 @@ Recall 采用四态模型：
 
 ### 4.6 默认策略
 
-系统可给出默认模式建议：
+系统可给出默认变体建议：
 
-- 高频短词：完整拼写
-- 长词或易错词：定向字母挖空
-- 短语：短语回忆
-
-用户可手动切换模式。
-
-一期更保守的默认规则：
-
-- 短词、规则词：优先 `full spelling`
+- 短词、规则词：优先 `standard recall`
 - 长词、双写词、易混元音词、词缀易错词：优先 `targeted letter cloze`
-- 短语：schema 支持，但 UI 弱入口
+
+用户可手动切换变体。
+
+这里的切换不是在不同卡型之间切换，而是在同一张 Recall Card 的展示/训练变体之间切换。
 
 ### 4.7 targeted letter cloze 的挖空原则
 
@@ -196,17 +196,17 @@ back: perpetual
 
 ```text
 Recall Card                       suggested draft ready           [Open] [>]
-Turn this word into an active-recall card.
+Recall the English word from its Chinese meaning.
 ```
 
 展开态：
 
 ```text
 Recall Card                                                  [Close] [v]
-Train active recall instead of recognition.
+Generate one reverse vocabulary card for active recall.
 
-Mode
-[ Full Spelling ] [ Targeted Letter Cloze ] [ Phrase Recall ]
+Variant
+[ Standard Recall ] [ Targeted Letter Cloze ]
 
 Front
 [ editable ]
@@ -224,7 +224,7 @@ Hint
 
 ```text
 Saved Recall Card
-Mode: Targeted Letter Cloze
+Variant: Targeted Letter Cloze
 Front: perpe__al
 Back: perpetual
 Hint: Focus on the middle "tu" segment.
@@ -245,13 +245,13 @@ Hint: Focus on the middle "tu" segment.
 ## 5. 验收点
 
 - 用户可为单个词条生成 Recall Card Draft
-- 草稿至少支持完整拼写与定向字母挖空两种模式
-- 草稿对短语类词条可正常工作
+- 每个词条最多只有一张 Recall Card
+- 草稿至少支持 `standard recall` 与 `targeted letter cloze` 两种变体
 - 用户可编辑 Recall Card Draft
 - 用户需要显式保存 Recall Card
 - 被采纳草稿可参与卡片预览
 - 被采纳草稿可进入导出结果
-- 切换卡型不会破坏已采纳的其他 AI 内容
+- 切换变体不会破坏已采纳的其他 AI 内容
 
 ## 6. 并行开发边界
 

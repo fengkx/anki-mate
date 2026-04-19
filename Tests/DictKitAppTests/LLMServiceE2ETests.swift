@@ -147,57 +147,64 @@ final class LLMServiceE2ETests: XCTestCase {
         defer { Task { await service.stopServer() } }
 
         for testCase in recallBaselineCorpus {
-            let drafts = try await service.generateRecallCardDrafts(
+            let decision = try await service.generateRecallCardDraftDecision(
                 word: testCase.word,
                 senses: testCase.senses,
-                modes: testCase.modes,
+                context: testCase.context,
+                allowedModes: testCase.allowedModes,
+                modePrior: testCase.modePrior,
                 anchor: testCase.anchor
             )
             let context = failureContext(
                 suite: "baseline",
-                promptFamily: "recall_drafts",
+                promptFamily: "recall_draft_decision",
                 word: testCase.word,
                 modelId: service.selectedModelId
             )
 
-            XCTAssertEqual(
-                Set(drafts.map(\.mode)),
-                Set(testCase.modes),
-                "\(context) issue=requested modes \(testCase.modes.map(\.rawValue)) but got \(drafts.map(\.mode.rawValue))"
-            )
-            XCTAssertTrue(
-                drafts.allSatisfy { !$0.front.isEmpty && !$0.back.isEmpty },
-                "\(context) issue=front/back must both be non-empty"
-            )
-            XCTAssertTrue(
-                drafts.allSatisfy { isPlainText($0.front) && isPlainText($0.back) },
-                "\(context) issue=unexpected markdown or labels in recall draft"
-            )
-            XCTAssertTrue(
-                drafts.allSatisfy { $0.back == testCase.word },
-                "\(context) issue=back side must preserve the exact target word or phrase"
-            )
+            XCTAssertTrue(!decision.draft.front.isEmpty && !decision.draft.back.isEmpty, "\(context) issue=front/back must both be non-empty")
+            XCTAssertTrue(isPlainText(decision.draft.front) && isPlainText(decision.draft.back), "\(context) issue=unexpected markdown or labels in recall draft")
+            XCTAssertEqual(decision.draft.back, testCase.word, "\(context) issue=back side must preserve the exact target word or phrase")
+            XCTAssertEqual(decision.draft.mode, testCase.expectedMode, "\(context) issue=unexpected recall mode")
+            XCTAssertTrue(testCase.allowedModes.contains(decision.draft.mode), "\(context) issue=returned mode must stay within allowed modes")
 
-            if testCase.modes.contains(.targetedLetterCloze) {
-                let targeted = try XCTUnwrap(
-                    drafts.first(where: { $0.mode == .targetedLetterCloze }),
-                    "\(context) issue=missing targeted_letter_cloze draft"
-                )
-                let maskedSurface = [targeted.front, targeted.hint ?? ""].joined(separator: " ")
+            let selectionReason = try XCTUnwrap(
+                decision.selectionReason,
+                "\(context) issue=selectionReason is required for recall baseline coverage"
+            )
+            XCTAssertEqual(
+                selectionReason.primaryGoal,
+                testCase.expectedPrimaryGoal,
+                "\(context) issue=unexpected primary goal"
+            )
+            XCTAssertFalse(selectionReason.evidence.isEmpty, "\(context) issue=selectionReason.evidence must not be empty")
+
+            for needle in testCase.requiredFrontContains {
                 XCTAssertTrue(
-                    maskedSurface.contains("_"),
-                    "\(context) issue=targeted_letter_cloze did not surface an underscore mask"
+                    decision.draft.front.contains(needle),
+                    "\(context) issue=front missing expected cue substring \(needle)"
                 )
+            }
+
+            for needle in testCase.requiredFrontExcludes {
                 XCTAssertFalse(
-                    maskedSurface.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_"),
-                    "\(context) issue=targeted_letter_cloze masked the leading characters first"
+                    decision.draft.front.contains(needle),
+                    "\(context) issue=front should not contain forbidden substring \(needle)"
                 )
-                if let expectedTargetedMask = testCase.expectedTargetedMask {
-                    XCTAssertTrue(
-                        maskedSurface.contains(expectedTargetedMask),
-                        "\(context) issue=targeted_letter_cloze mask drifted expected=\(expectedTargetedMask) actual=\(maskedSurface)"
-                    )
-                }
+            }
+
+            if decision.draft.mode == .targetedLetterCloze {
+                let surface = decision.draft.front
+                XCTAssertTrue(surface.contains("_"), "\(context) issue=targeted_letter_cloze did not surface an underscore mask")
+                XCTAssertEqual(
+                    underscoreGroupCount(in: surface),
+                    1,
+                    "\(context) issue=targeted_letter_cloze must contain exactly one continuous underscore gap"
+                )
+                let gapLength = longestUnderscoreRun(in: surface)
+                XCTAssertTrue((2...3).contains(gapLength), "\(context) issue=targeted_letter_cloze gap length must be 2 or 3, got \(gapLength)")
+                XCTAssertFalse(surface.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_"), "\(context) issue=targeted_letter_cloze masked the leading characters first")
+                XCTAssertTrue(surface.containsHanScript, "\(context) issue=targeted_letter_cloze front must retain a Chinese cue")
             }
         }
     }
@@ -294,11 +301,17 @@ private extension LLMServiceE2ETests {
     }
 
     struct RecallBaselineCase {
+        let id: String
         let word: String
         let senses: [LLMSensePromptInput]
-        let modes: [LLMRecallCardMode]
+        let context: LLMRecallGenerationContext
+        let allowedModes: [LLMRecallCardMode]
+        let modePrior: LLMRecallCardMode?
         let anchor: LLMAnchorSnapshot?
-        let expectedTargetedMask: String?
+        let expectedMode: LLMRecallCardMode
+        let expectedPrimaryGoal: String
+        let requiredFrontContains: [String]
+        let requiredFrontExcludes: [String]
     }
 
     struct LearningAidsBaselineCase {
@@ -333,49 +346,116 @@ private extension LLMServiceE2ETests {
     var recallBaselineCorpus: [RecallBaselineCase] {
         [
             RecallBaselineCase(
+                id: "recall_take_off_phrase",
                 word: "take off",
                 senses: [
-                    LLMSensePromptInput(partOfSpeech: "verb", definition: "leave the ground and begin to fly"),
-                    LLMSensePromptInput(partOfSpeech: "verb", definition: "remove clothing")
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "起飞；脱下", semanticHint: "起飞")
                 ],
-                modes: [.fullSpelling, .targetedLetterCloze, .phraseRecall],
+                context: LLMRecallGenerationContext(
+                    acceptedPitfalls: [],
+                    acceptedUsageHints: ["在飞机语境中表示起飞"],
+                    acceptedMnemonics: [],
+                    acceptedCollocations: []
+                ),
+                allowedModes: [.phraseRecall],
+                modePrior: .phraseRecall,
                 anchor: LLMAnchorSnapshot(text: "take ___", note: "optional snapshot"),
-                expectedTargetedMask: nil
+                expectedMode: .phraseRecall,
+                expectedPrimaryGoal: "phrase_chunk_retrieval",
+                requiredFrontContains: [],
+                requiredFrontExcludes: []
             ),
             RecallBaselineCase(
+                id: "recall_receive_ie_order",
                 word: "receive",
                 senses: [
-                    LLMSensePromptInput(partOfSpeech: "verb", definition: "get or accept something that is sent or given")
+                    LLMSensePromptInput(partOfSpeech: "verb", definition: "收到；接收", semanticHint: "收到")
                 ],
-                modes: [.fullSpelling, .targetedLetterCloze],
+                context: LLMRecallGenerationContext(
+                    acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
+                    acceptedUsageHints: [],
+                    acceptedMnemonics: [],
+                    acceptedCollocations: []
+                ),
+                allowedModes: [.fullSpelling, .targetedLetterCloze],
+                modePrior: .targetedLetterCloze,
                 anchor: nil,
-                expectedTargetedMask: nil
+                expectedMode: .targetedLetterCloze,
+                expectedPrimaryGoal: "local_spelling_calibration",
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["receive"]
             ),
             RecallBaselineCase(
+                id: "recall_collocation_local_spelling",
                 word: "collocation",
                 senses: [
                     LLMSensePromptInput(
                         partOfSpeech: "noun",
-                        definition: "habitual word pairing",
-                        semanticHint: "word pairing"
+                        definition: "固定搭配；常见词语搭配",
+                        semanticHint: "常见词语搭配"
                     )
                 ],
-                modes: [.targetedLetterCloze],
+                context: LLMRecallGenerationContext(
+                    acceptedPitfalls: ["容易漏掉双写的 ll", "中间元音和后半段顺序容易写错"],
+                    acceptedUsageHints: ["指自然的词语搭配，不是任意两个词放在一起"],
+                    acceptedMnemonics: [],
+                    acceptedCollocations: ["strong collocation"]
+                ),
+                allowedModes: [.fullSpelling, .targetedLetterCloze],
+                modePrior: .targetedLetterCloze,
                 anchor: nil,
-                expectedTargetedMask: "co__ocation"
+                expectedMode: .targetedLetterCloze,
+                expectedPrimaryGoal: "local_spelling_calibration",
+                requiredFrontContains: ["搭配"],
+                requiredFrontExcludes: ["collocation"]
             ),
             RecallBaselineCase(
-                word: "lemmatize",
+                id: "recall_perpetual_whole_word",
+                word: "perpetual",
                 senses: [
                     LLMSensePromptInput(
-                        partOfSpeech: "verb",
-                        definition: "reduce a word to its base form",
-                        semanticHint: "base form"
+                        partOfSpeech: "adjective",
+                        definition: "持续不断的；长期不止的",
+                        semanticHint: "持续不断的"
                     )
                 ],
-                modes: [.targetedLetterCloze],
+                context: LLMRecallGenerationContext(
+                    acceptedPitfalls: [],
+                    acceptedUsageHints: ["常用于表示问题、噪音、争论等持续不止"],
+                    acceptedMnemonics: [],
+                    acceptedCollocations: []
+                ),
+                allowedModes: [.fullSpelling, .targetedLetterCloze],
+                modePrior: .fullSpelling,
                 anchor: nil,
-                expectedTargetedMask: "le__atize"
+                expectedMode: .fullSpelling,
+                expectedPrimaryGoal: "whole_word_recall",
+                requiredFrontContains: ["持续"],
+                requiredFrontExcludes: ["perpetual"]
+            ),
+            RecallBaselineCase(
+                id: "recall_necessary_resist_signal_bias",
+                word: "necessary",
+                senses: [
+                    LLMSensePromptInput(
+                        partOfSpeech: "adjective",
+                        definition: "必要的；必需的",
+                        semanticHint: "必要的"
+                    )
+                ],
+                context: LLMRecallGenerationContext(
+                    acceptedPitfalls: [],
+                    acceptedUsageHints: ["表示某事是必须的，不可避免的"],
+                    acceptedMnemonics: [],
+                    acceptedCollocations: []
+                ),
+                allowedModes: [.fullSpelling, .targetedLetterCloze],
+                modePrior: .fullSpelling,
+                anchor: nil,
+                expectedMode: .fullSpelling,
+                expectedPrimaryGoal: "whole_word_recall",
+                requiredFrontContains: ["必要"],
+                requiredFrontExcludes: ["necessary"]
             )
         ]
     }
@@ -427,6 +507,36 @@ private extension LLMServiceE2ETests {
         ) != nil
     }
 
+    func underscoreGroupCount(in text: String) -> Int {
+        var count = 0
+        var previousWasUnderscore = false
+        for character in text {
+            if character == "_" {
+                if !previousWasUnderscore {
+                    count += 1
+                }
+                previousWasUnderscore = true
+            } else {
+                previousWasUnderscore = false
+            }
+        }
+        return count
+    }
+
+    func longestUnderscoreRun(in text: String) -> Int {
+        var longest = 0
+        var current = 0
+        for character in text {
+            if character == "_" {
+                current += 1
+                longest = max(longest, current)
+            } else {
+                current = 0
+            }
+        }
+        return longest
+    }
+
     func failureContext(
         suite: String,
         promptFamily: String,
@@ -439,5 +549,18 @@ private extension LLMServiceE2ETests {
             message += " issue=\(issue)"
         }
         return message
+    }
+}
+
+private extension String {
+    var containsHanScript: Bool {
+        unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0x20000...0x2A6DF, 0x2A700...0x2B73F, 0x2B740...0x2B81F, 0x2B820...0x2CEAF, 0xF900...0xFAFF:
+                return true
+            default:
+                return false
+            }
+        }
     }
 }

@@ -49,6 +49,64 @@ public struct LLMRecallCardDraft: Codable, Equatable, Sendable {
     }
 }
 
+public struct LLMRecallGenerationContext: Codable, Equatable, Sendable {
+    public let acceptedPitfalls: [String]
+    public let acceptedUsageHints: [String]
+    public let acceptedMnemonics: [String]
+    public let acceptedCollocations: [String]
+
+    public init(
+        acceptedPitfalls: [String] = [],
+        acceptedUsageHints: [String] = [],
+        acceptedMnemonics: [String] = [],
+        acceptedCollocations: [String] = []
+    ) {
+        self.acceptedPitfalls = acceptedPitfalls
+        self.acceptedUsageHints = acceptedUsageHints
+        self.acceptedMnemonics = acceptedMnemonics
+        self.acceptedCollocations = acceptedCollocations
+    }
+}
+
+public struct LLMRecallWordSignals: Codable, Equatable, Sendable {
+    public let isPhrase: Bool
+    public let hasRepeatedLetters: Bool
+    public let hasConfusableVowelCluster: Bool
+
+    public init(
+        isPhrase: Bool,
+        hasRepeatedLetters: Bool,
+        hasConfusableVowelCluster: Bool
+    ) {
+        self.isPhrase = isPhrase
+        self.hasRepeatedLetters = hasRepeatedLetters
+        self.hasConfusableVowelCluster = hasConfusableVowelCluster
+    }
+}
+
+public struct LLMRecallSelectionReason: Codable, Equatable, Sendable {
+    public let primaryGoal: String
+    public let evidence: [String]
+
+    public init(primaryGoal: String, evidence: [String]) {
+        self.primaryGoal = primaryGoal.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.evidence = evidence.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+}
+
+public struct RecallCardDraftDecisionEnvelope: Codable, Equatable, Sendable {
+    public let draft: LLMRecallCardDraft
+    public let selectionReason: LLMRecallSelectionReason?
+
+    public init(
+        draft: LLMRecallCardDraft,
+        selectionReason: LLMRecallSelectionReason? = nil
+    ) {
+        self.draft = draft
+        self.selectionReason = selectionReason
+    }
+}
+
 public struct LLMPitfall: Codable, Equatable, Sendable {
     public let summary: String
     public let details: String?

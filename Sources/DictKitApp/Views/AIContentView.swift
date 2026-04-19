@@ -918,11 +918,14 @@ struct AIContentView: View {
             }
 
             do {
-                let generated = try await llmService.generateRecallCardDraft(
+                let decision = try await llmService.generateRecallCardDraftDecision(
                     word: item.word,
                     senses: senses,
-                    mode: defaultRecallMode
+                    context: recallGenerationContext,
+                    allowedModes: recommendedRecallAllowedModes,
+                    modePrior: recommendedRecallModePrior
                 )
+                let generated = decision.draft
                 let draft = RecallCardDraft(
                     mode: RecallCardMode(rawValue: generated.mode.rawValue) ?? .fullSpelling,
                     front: generated.front,
@@ -1715,14 +1718,38 @@ struct AIContentView: View {
         return "Generate Draft"
     }
 
-    private var defaultRecallMode: LLMRecallCardMode {
-        if item.word.contains(" ") {
-            return .phraseRecall
-        }
-        if item.word.count >= 9 {
-            return .targetedLetterCloze
-        }
-        return .fullSpelling
+    private var recallGenerationContext: LLMRecallGenerationContext {
+        LLMService.normalizeRecallGenerationContext(
+            LLMRecallGenerationContext(
+                acceptedPitfalls: item.aiAcceptedPitfalls,
+                acceptedUsageHints: acceptedUsageHints(from: item.aiAcceptedDefinitionNote),
+                acceptedMnemonics: item.aiAcceptedMnemonics,
+                acceptedCollocations: item.aiAcceptedCollocations
+            )
+        )
+    }
+
+    private var recommendedRecallAllowedModes: [LLMRecallCardMode] {
+        LLMService.recommendedRecallAllowedModes(
+            for: item.word,
+            context: recallGenerationContext
+        )
+    }
+
+    private var recommendedRecallModePrior: LLMRecallCardMode? {
+        LLMService.recommendedRecallModePrior(
+            for: item.word,
+            context: recallGenerationContext,
+            allowedModes: recommendedRecallAllowedModes
+        )
+    }
+
+    private func acceptedUsageHints(from note: String?) -> [String] {
+        guard let note else { return [] }
+        return note
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     private func sectionHeader(title: String) -> some View {

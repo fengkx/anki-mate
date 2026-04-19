@@ -619,71 +619,129 @@ public final class LLMService: ObservableObject {
         )
     }
 
-    public func generateRecallCardDraft(
+    public func generateRecallCardDraftDecision(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        context: LLMRecallGenerationContext,
+        allowedModes: [LLMRecallCardMode],
+        modePrior: LLMRecallCardMode? = nil,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> RecallCardDraftDecisionEnvelope {
+        try await generateRecallCardDraftDecision(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            context: context,
+            allowedModes: allowedModes,
+            modePrior: modePrior,
+            anchor: anchor
+        )
+    }
+
+    public func generateRecallCardDraftDecision(
         word: String,
         senses: [LLMSensePromptInput],
-        mode: LLMRecallCardMode,
+        context: LLMRecallGenerationContext,
+        allowedModes: [LLMRecallCardMode],
+        modePrior: LLMRecallCardMode? = nil,
         anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> LLMRecallCardDraft {
+    ) async throws -> RecallCardDraftDecisionEnvelope {
         let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSenses = normalizedRecallSenses(senses)
+        let normalizedAllowedModes = Self.normalizeAllowedRecallModes(
+            allowedModes,
+            word: normalizedWord
+        )
+        let normalizedContext = Self.normalizeRecallGenerationContext(context)
+        let normalizedModePrior = Self.normalizeModePrior(
+            modePrior,
+            allowedModes: normalizedAllowedModes
+        )
         let scaffold = Self.recallPromptScaffold(
             word: normalizedWord,
-            senses: senses,
-            mode: mode
+            senses: normalizedSenses
         )
-        let prompt = LLMPrompt.recallCardDraft(
+        let wordSignals = Self.recallWordSignals(for: normalizedWord)
+        let prompt = LLMPrompt.recallCardDecision(
             word: normalizedWord,
-            senses: senses,
-            requestedMode: mode,
+            senses: normalizedSenses,
+            context: normalizedContext,
+            allowedModes: normalizedAllowedModes,
+            modePrior: normalizedModePrior,
             anchor: anchor,
+            wordSignals: wordSignals,
             scaffold: scaffold
         )
 
         do {
-            let response: RecallCardDraftEnvelope = try await generateStructuredOutput(
-                type: RecallCardDraftEnvelope.self,
+            let response: RecallCardDecisionPayload = try await generateStructuredOutput(
+                type: RecallCardDecisionPayload.self,
                 prompt: prompt,
-                maxTokens: 320,
-                temperature: adjustedTemperature(0.3),
-                responseFormat: LLMResponseFormat(kind: .json)
+                maxTokens: 360,
+                temperature: adjustedTemperature(0.25),
+                responseFormat: Self.recallDecisionResponseFormat(allowedModes: normalizedAllowedModes)
             )
 
-            if let payload = response.primaryDraft ?? response.drafts.first,
-               let draft = Self.normalizeRecallCardDraft(
-                   payload,
-                   expectedMode: mode,
-                   target: normalizedWord
-               ) {
-                return Self.enforceRecallDraftContract(
-                    draft,
-                    scaffold: scaffold,
-                    fallbackAnchor: anchor
-                )
+            if let decision = Self.normalizeRecallCardDecision(
+                response,
+                allowedModes: normalizedAllowedModes,
+                target: normalizedWord,
+                fallbackAnchor: anchor
+            ) {
+                return decision
             }
         } catch {
             if let fallback = Self.ruleBasedRecallCardDraft(
                 word: normalizedWord,
-                senses: senses,
-                mode: mode,
+                senses: normalizedSenses,
+                mode: normalizedModePrior ?? normalizedAllowedModes.first ?? .fullSpelling,
                 anchor: anchor
             ) {
-                return fallback
+                return RecallCardDraftDecisionEnvelope(
+                    draft: fallback,
+                    selectionReason: Self.fallbackSelectionReason(for: fallback.mode)
+                )
             }
             throw error
         }
 
         if let fallback = Self.ruleBasedRecallCardDraft(
             word: normalizedWord,
-            senses: senses,
-            mode: mode,
+            senses: normalizedSenses,
+            mode: normalizedModePrior ?? normalizedAllowedModes.first ?? .fullSpelling,
             anchor: anchor
         ) {
-            return fallback
+            return RecallCardDraftDecisionEnvelope(
+                draft: fallback,
+                selectionReason: Self.fallbackSelectionReason(for: fallback.mode)
+            )
         }
 
         throw LLMServiceError.invalidStructuredOutput(
-            "Expected one valid recall draft for mode \(mode.rawValue)"
+            "Expected one valid recall decision envelope"
         )
+    }
+
+    public func generateRecallCardDraft(
+        word: String,
+        senses: [LLMSensePromptInput],
+        mode: LLMRecallCardMode,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMRecallCardDraft {
+        let decision = try await generateRecallCardDraftDecision(
+            word: word,
+            senses: senses,
+            context: .init(),
+            allowedModes: [mode],
+            modePrior: mode,
+            anchor: anchor
+        )
+        return decision.draft
     }
 
     public func generateLearningAids(
@@ -820,6 +878,23 @@ public final class LLMService: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func normalizedRecallSenses(_ senses: [LLMSensePromptInput]) -> [LLMSensePromptInput] {
+        let normalized = senses.compactMap { sense -> LLMSensePromptInput? in
+            let partOfSpeech = sense.partOfSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
+            let definition = sense.definition.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !definition.isEmpty else { return nil }
+            return LLMSensePromptInput(
+                partOfSpeech: partOfSpeech.isEmpty ? "general" : partOfSpeech,
+                definition: definition,
+                semanticHint: sense.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            )
+        }
+
+        return normalized.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : normalized
+    }
 
     private func parseSentences(_ text: String) -> [String] {
         text.split(separator: "\n")
@@ -1079,6 +1154,94 @@ public final class LLMService: ObservableObject {
         LLMContentStyle.current(defaults: defaults).adjustedTemperature(base)
     }
 
+    public static func normalizeRecallGenerationContext(
+        _ context: LLMRecallGenerationContext
+    ) -> LLMRecallGenerationContext {
+        LLMRecallGenerationContext(
+            acceptedPitfalls: normalizeRecallTextItems(context.acceptedPitfalls, limit: 2),
+            acceptedUsageHints: normalizeRecallTextItems(context.acceptedUsageHints, limit: 2),
+            acceptedMnemonics: normalizeRecallTextItems(context.acceptedMnemonics, limit: 1),
+            acceptedCollocations: normalizeRecallTextItems(context.acceptedCollocations, limit: 2)
+        )
+    }
+
+    public static func recallWordSignals(for word: String) -> LLMRecallWordSignals {
+        let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = normalizedWord.lowercased()
+        let repeatedLetters = hasRepeatedLetter(in: lowercased)
+        let confusableVowelClusters = ["ie", "ei", "ea", "oa", "ou", "io", "ae", "oe"]
+        let hasConfusableVowelCluster = confusableVowelClusters.contains { lowercased.contains($0) }
+
+        return LLMRecallWordSignals(
+            isPhrase: normalizedWord.contains(" "),
+            hasRepeatedLetters: repeatedLetters,
+            hasConfusableVowelCluster: hasConfusableVowelCluster
+        )
+    }
+
+    public static func normalizeAllowedRecallModes(
+        _ allowedModes: [LLMRecallCardMode],
+        word: String
+    ) -> [LLMRecallCardMode] {
+        var seen = Set<LLMRecallCardMode>()
+        let uniqueModes = allowedModes.filter { seen.insert($0).inserted }
+        if !uniqueModes.isEmpty {
+            return uniqueModes
+        }
+        return word.contains(" ") ? [.phraseRecall] : [.fullSpelling]
+    }
+
+    public static func normalizeModePrior(
+        _ modePrior: LLMRecallCardMode?,
+        allowedModes: [LLMRecallCardMode]
+    ) -> LLMRecallCardMode? {
+        guard let modePrior else { return allowedModes.first }
+        return allowedModes.contains(modePrior) ? modePrior : allowedModes.first
+    }
+
+    public static func recommendedRecallAllowedModes(
+        for word: String,
+        context: LLMRecallGenerationContext
+    ) -> [LLMRecallCardMode] {
+        let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedWord.contains(" ") {
+            return [.phraseRecall]
+        }
+
+        let normalizedContext = normalizeRecallGenerationContext(context)
+        let signals = recallWordSignals(for: normalizedWord)
+        let hasLocalSpellingEvidence = normalizedContext.acceptedPitfalls.contains {
+            seemsLikeLocalSpellingPitfall($0)
+        }
+
+        if hasLocalSpellingEvidence || signals.hasRepeatedLetters || signals.hasConfusableVowelCluster {
+            return [.fullSpelling, .targetedLetterCloze]
+        }
+        return [.fullSpelling]
+    }
+
+    public static func recommendedRecallModePrior(
+        for word: String,
+        context: LLMRecallGenerationContext,
+        allowedModes: [LLMRecallCardMode]? = nil
+    ) -> LLMRecallCardMode? {
+        let resolvedAllowedModes = normalizeAllowedRecallModes(
+            allowedModes ?? recommendedRecallAllowedModes(for: word, context: context),
+            word: word
+        )
+        if resolvedAllowedModes == [.phraseRecall] {
+            return .phraseRecall
+        }
+
+        let normalizedContext = normalizeRecallGenerationContext(context)
+        if normalizedContext.acceptedPitfalls.contains(where: seemsLikeLocalSpellingPitfall),
+           resolvedAllowedModes.contains(.targetedLetterCloze) {
+            return .targetedLetterCloze
+        }
+
+        return resolvedAllowedModes.first
+    }
+
     /// Whether the service is ready for generation (server running, model loaded).
     public var isReady: Bool {
         serverState.isRunning && loadedModelId != nil
@@ -1156,6 +1319,16 @@ struct RecallCardDraftEnvelope: Decodable {
     }
 }
 
+struct RecallCardDecisionPayload: Decodable {
+    let draft: RecallCardDraftPayload?
+    let selectionReason: RecallSelectionReasonPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case draft
+        case selectionReason
+    }
+}
+
 private struct GeneratedIPAPayload: Decodable {
     let ipa: String
 }
@@ -1226,6 +1399,16 @@ struct RecallCardDraftPayload: Decodable {
             ?? ""
         self.hint = try container.decodeIfPresent(String.self, forKey: .hint)
         self.anchor = try container.decodeIfPresent(LLMAnchorSnapshot.self, forKey: .anchor)
+    }
+}
+
+struct RecallSelectionReasonPayload: Decodable {
+    let primaryGoal: String
+    let evidence: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case primaryGoal
+        case evidence
     }
 }
 
@@ -1381,6 +1564,35 @@ extension LLMService {
         return requestedModes.compactMap { draftsByMode[$0] }
     }
 
+    static func normalizeRecallCardDecision(
+        _ payload: RecallCardDecisionPayload,
+        allowedModes: [LLMRecallCardMode],
+        target: String,
+        fallbackAnchor: LLMAnchorSnapshot?
+    ) -> RecallCardDraftDecisionEnvelope? {
+        guard let draftPayload = payload.draft,
+              let draft = normalizeRecallCardDraft(
+                  draftPayload,
+                  allowedModes: allowedModes,
+                  target: target
+              ),
+              let selectionReason = normalizeRecallSelectionReason(
+                  payload.selectionReason,
+                  selectedMode: draft.mode
+              ) else {
+            return nil
+        }
+
+        let enforcedDraft = enforceRecallDraftContract(
+            draft,
+            fallbackAnchor: fallbackAnchor
+        )
+        return RecallCardDraftDecisionEnvelope(
+            draft: enforcedDraft,
+            selectionReason: selectionReason
+        )
+    }
+
     static func normalizeLearningAids(_ payload: LearningAidsEnvelope) -> LLMLearningAids {
         LLMLearningAids(
             pitfalls: payload.pitfalls.compactMap(normalizePitfall),
@@ -1477,6 +1689,124 @@ extension LLMService {
         return nil
     }
 
+    private static func normalizeRecallTextItems(
+        _ values: [String],
+        limit: Int
+    ) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let normalized = value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            guard !normalized.isEmpty else { return nil }
+            let limited = normalized.count > 120
+                ? String(normalized.prefix(120)).trimmingCharacters(in: .whitespacesAndNewlines)
+                : normalized
+            let key = limited.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return limited
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    private static func seemsLikeLocalSpellingPitfall(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        let keywords = [
+            "spell", "spelling", "letter", "letters", "double", "vowel", "consonant",
+            "suffix", "prefix", "顺序", "拼写", "字母", "双写", "元音", "辅音", "漏掉", "写反"
+        ]
+        return keywords.contains { normalized.contains($0) }
+    }
+
+    private static func recallDecisionResponseFormat(
+        allowedModes: [LLMRecallCardMode]
+    ) -> LLMResponseFormat {
+        LLMResponseFormat(
+            kind: .jsonSchema,
+            schema: recallDecisionSchema(allowedModes: allowedModes),
+            strict: true
+        )
+    }
+
+    private static func recallDecisionSchema(
+        allowedModes: [LLMRecallCardMode]
+    ) -> JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "required": .array([.string("draft"), .string("selectionReason")]),
+            "properties": .object([
+                "draft": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([
+                        .string("mode"),
+                        .string("front"),
+                        .string("back")
+                    ]),
+                    "properties": .object([
+                        "mode": .object([
+                            "type": .string("string"),
+                            "enum": .array(allowedModes.map { .string($0.rawValue) })
+                        ]),
+                        "front": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(120)
+                        ]),
+                        "back": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(120)
+                        ]),
+                        "hint": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(80)
+                        ]),
+                        "anchor": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .bool(false),
+                            "required": .array([.string("text")]),
+                            "properties": .object([
+                                "text": .object([
+                                    "type": .string("string"),
+                                    "maxLength": .number(160)
+                                ]),
+                                "note": .object([
+                                    "type": .string("string"),
+                                    "maxLength": .number(160)
+                                ])
+                            ])
+                        ])
+                    ])
+                ]),
+                "selectionReason": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([.string("primaryGoal"), .string("evidence")]),
+                    "properties": .object([
+                        "primaryGoal": .object([
+                            "type": .string("string"),
+                            "enum": .array([
+                                .string("whole_word_recall"),
+                                .string("local_spelling_calibration"),
+                                .string("phrase_chunk_retrieval")
+                            ])
+                        ]),
+                        "evidence": .object([
+                            "type": .string("array"),
+                            "items": .object([
+                                "type": .string("string"),
+                                "maxLength": .number(120)
+                            ]),
+                            "minItems": .number(1),
+                            "maxItems": .number(3)
+                        ])
+                    ])
+                ])
+            ])
+        ])
+    }
+
     private static func normalizedRecallCardMode(from rawValue: String) -> LLMRecallCardMode? {
         let normalized = rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1501,8 +1831,20 @@ extension LLMService {
         expectedMode: LLMRecallCardMode,
         target: String
     ) -> LLMRecallCardDraft? {
+        normalizeRecallCardDraft(
+            payload,
+            allowedModes: [expectedMode],
+            target: target
+        )
+    }
+
+    private static func normalizeRecallCardDraft(
+        _ payload: RecallCardDraftPayload,
+        allowedModes: [LLMRecallCardMode],
+        target: String
+    ) -> LLMRecallCardDraft? {
         guard let mode = normalizedRecallCardMode(from: payload.mode),
-              mode == expectedMode else {
+              allowedModes.contains(mode) else {
             return nil
         }
 
@@ -1517,18 +1859,17 @@ extension LLMService {
         guard !front.isEmpty, !back.isEmpty else { return nil }
         guard back == target.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
 
-        if mode == .targetedLetterCloze,
-           !front.contains("_"),
-           !(payload.hint?.contains("_") ?? false) {
-            return nil
-        }
-
         let hint = payload.hint.map {
             normalizeGeneratedLine(
                 $0,
                 stripFieldLabels: true
             )
         }?.nilIfEmpty
+
+        if mode == .targetedLetterCloze,
+           !isValidTargetedLetterClozeSurface(front, hint: hint) {
+            return nil
+        }
         let anchor = normalizeAnchor(payload.anchor)
         return LLMRecallCardDraft(
             mode: mode,
@@ -1541,28 +1882,13 @@ extension LLMService {
 
     static func enforceRecallDraftContract(
         _ draft: LLMRecallCardDraft,
-        scaffold: RecallPromptScaffold,
         fallbackAnchor: LLMAnchorSnapshot?
     ) -> LLMRecallCardDraft {
-        guard draft.mode == .targetedLetterCloze,
-              let requiredMaskedSurface = scaffold.requiredMaskedSurface?.nilIfEmpty else {
-            return draft
-        }
-
-        let surfacedText = [draft.front, draft.hint ?? ""].joined(separator: " ")
-        guard !surfacedText.contains(requiredMaskedSurface) else {
-            return draft
-        }
-
-        let repairedFront = scaffold.learnerCue?.nilIfEmpty.map {
-            "\($0) · \(requiredMaskedSurface)"
-        } ?? requiredMaskedSurface
-
         return LLMRecallCardDraft(
             mode: draft.mode,
-            front: repairedFront,
+            front: draft.front,
             back: draft.back,
-            hint: draft.hint?.nilIfEmpty ?? scaffold.hint,
+            hint: draft.hint?.nilIfEmpty,
             anchor: draft.anchor ?? normalizeAnchor(fallbackAnchor)
         )
     }
@@ -1578,8 +1904,7 @@ extension LLMService {
 
         let scaffold = recallPromptScaffold(
             word: normalizedWord,
-            senses: senses,
-            mode: mode
+            senses: senses
         )
         let cue = scaffold.learnerCue ?? ""
         let hint = scaffold.hint
@@ -1617,6 +1942,119 @@ extension LLMService {
                 anchor: resolvedAnchor
             )
         }
+    }
+
+    private static func normalizeRecallSelectionReason(
+        _ payload: RecallSelectionReasonPayload?,
+        selectedMode: LLMRecallCardMode
+    ) -> LLMRecallSelectionReason? {
+        guard let payload else { return nil }
+        let primaryGoal = normalizeGeneratedLine(payload.primaryGoal, stripFieldLabels: true)
+        guard !primaryGoal.isEmpty,
+              isExpectedPrimaryGoal(primaryGoal, for: selectedMode) else {
+            return nil
+        }
+
+        let evidence = payload.evidence
+            .map { normalizeGeneratedLine($0, stripFieldLabels: true) }
+            .filter { !$0.isEmpty }
+        guard !evidence.isEmpty else { return nil }
+
+        return LLMRecallSelectionReason(
+            primaryGoal: primaryGoal,
+            evidence: Array(evidence.prefix(3))
+        )
+    }
+
+    private static func fallbackSelectionReason(for mode: LLMRecallCardMode) -> LLMRecallSelectionReason {
+        switch mode {
+        case .fullSpelling:
+            return LLMRecallSelectionReason(
+                primaryGoal: "whole_word_recall",
+                evidence: ["fallback selected a whole-word recall card"]
+            )
+        case .targetedLetterCloze:
+            return LLMRecallSelectionReason(
+                primaryGoal: "local_spelling_calibration",
+                evidence: ["fallback selected a local spelling calibration card"]
+            )
+        case .phraseRecall:
+            return LLMRecallSelectionReason(
+                primaryGoal: "phrase_chunk_retrieval",
+                evidence: ["fallback selected a phrase-level recall card"]
+            )
+        }
+    }
+
+    private static func isExpectedPrimaryGoal(
+        _ primaryGoal: String,
+        for mode: LLMRecallCardMode
+    ) -> Bool {
+        switch mode {
+        case .fullSpelling:
+            return primaryGoal == "whole_word_recall"
+        case .targetedLetterCloze:
+            return primaryGoal == "local_spelling_calibration"
+        case .phraseRecall:
+            return primaryGoal == "phrase_chunk_retrieval"
+        }
+    }
+
+    private static func isValidTargetedLetterClozeSurface(
+        _ front: String,
+        hint: String?
+    ) -> Bool {
+        let combined = [front, hint ?? ""].joined(separator: " ")
+        guard combined.contains("_") else { return false }
+        guard underscoreGroupCount(in: combined) == 1 else { return false }
+        let gapLength = longestUnderscoreRun(in: combined)
+        guard (2...3).contains(gapLength) else { return false }
+        return !combined.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_")
+    }
+
+    private static func underscoreGroupCount(in text: String) -> Int {
+        var count = 0
+        var previousWasUnderscore = false
+        for character in text {
+            if character == "_" {
+                if !previousWasUnderscore {
+                    count += 1
+                }
+                previousWasUnderscore = true
+            } else {
+                previousWasUnderscore = false
+            }
+        }
+        return count
+    }
+
+    private static func longestUnderscoreRun(in text: String) -> Int {
+        var longest = 0
+        var current = 0
+        for character in text {
+            if character == "_" {
+                current += 1
+                longest = max(longest, current)
+            } else {
+                current = 0
+            }
+        }
+        return longest
+    }
+
+    private static func hasRepeatedLetter(in text: String) -> Bool {
+        var previous: Character?
+        for character in text {
+            guard character.isLetter else {
+                previous = nil
+                continue
+            }
+            if previous == character {
+                return true
+            }
+            previous = character
+        }
+        return false
     }
 
     static func normalizeGeneratedIPA(_ rawValue: String?) -> String? {
@@ -1692,15 +2130,11 @@ extension LLMService {
 
     static func recallPromptScaffold(
         word: String,
-        senses: [LLMSensePromptInput],
-        mode: LLMRecallCardMode
+        senses: [LLMSensePromptInput]
     ) -> RecallPromptScaffold {
         RecallPromptScaffold(
             learnerCue: fallbackRecallCue(from: senses).nilIfEmpty,
-            hint: fallbackRecallHint(from: senses),
-            requiredMaskedSurface: mode == .targetedLetterCloze
-                ? ruleBasedMaskedSurface(for: word)
-                : nil
+            hint: fallbackRecallHint(from: senses)
         )
     }
 

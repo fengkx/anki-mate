@@ -27,8 +27,11 @@
    - 例句： [20-example-suggestions.md](./20-example-suggestions.md)
    - 发音增强： [21-pronunciation-memory-display.md](./21-pronunciation-memory-display.md)
    - Recall： [30-recall-card-draft.md](./30-recall-card-draft.md)
+   - Recall 生成规则： [31-recall-card-generation-rules.md](./31-recall-card-generation-rules.md)
+   - Recall 变体选择与 structured output 实施： [32-recall-card-selection-with-learning-aids.md](./32-recall-card-selection-with-learning-aids.md)
    - Learning Aids 总览： [40-pitfalls-and-usage-notes.md](./40-pitfalls-and-usage-notes.md)
    - `Pitfalls` 与 `Usage` 的精确定义： [41-pitfalls-vs-usage.md](./41-pitfalls-vs-usage.md)
+   - Learning Aids 排序与持久化： [42-learning-aids-judge-and-storage.md](./42-learning-aids-judge-and-storage.md)
 5. 最后再回到建议层与 UI 工作流
    - [10-ai-suggestion-layer.md](./10-ai-suggestion-layer.md)
 
@@ -54,10 +57,16 @@
   - collection 编辑流程中的带预览对比的词典选择器
 - [30-recall-card-draft.md](./30-recall-card-draft.md)
   - Recall Card 的产品定义、状态机、草稿与保存交互，以及 recall prompt 输入策略
+- [31-recall-card-generation-rules.md](./31-recall-card-generation-rules.md)
+  - Recall Card 的 cue 设计、variant 选择、hint 边界，以及与 Learning Aids 的吸收规则
+- [32-recall-card-selection-with-learning-aids.md](./32-recall-card-selection-with-learning-aids.md)
+  - Recall Card 从 UI 启发式选 mode 升级为基于 accepted learning aids 的 constrained selection，并引入 structured output contract
 - [40-pitfalls-and-usage-notes.md](./40-pitfalls-and-usage-notes.md)
   - Learning Aids 的顶层定义：易错点、记忆提示、搭配与常见用法
 - [41-pitfalls-vs-usage.md](./41-pitfalls-vs-usage.md)
   - `Pitfalls` 与 `Usage` 的产品边界、句式差异与推荐 schema
+- [42-learning-aids-judge-and-storage.md](./42-learning-aids-judge-and-storage.md)
+  - Learning Aids 的 generator / judge / local guardrails 流程，以及 SQLite 承载 JSON 的持久化方案
 
 ## 当前拍板结论
 
@@ -65,10 +74,12 @@
 
 - LLM 的角色是学习副驾驶，不是泛聊天助手
 - 主工作流固定为：查词 -> 生成学习材料 -> 采纳/编辑 -> 预览 -> 导出
-- `Recall Card` 是一期核心能力，但它不是普通文本建议列表，而是用户主动触发的卡片草稿工作台
+- `Recall Card` 是一期核心能力，但它不是普通文本建议列表，而是用户主动触发的单卡草稿编辑器
+- `Recall Card` 的核心定义是 `Chinese cue -> English word` 的反向词汇卡
 - `Recall Card` 一次只生成 1 张草稿，采用 `Draft` 与 `Saved Recall Card` 分层
 - `Basic` 与 `Recall` 导出并存，不做替代
-- `phraseRecall` 一期先做 schema 支持和弱入口，不做重 UI
+- `targeted letter cloze` 是 Recall Card 的一个变体，而不是独立卡型
+- `phraseRecall` 不属于一期范围
 - `Learning Aids` 作为一级工作区承载：
   - Pitfalls
   - Mnemonics
@@ -84,7 +95,7 @@
 - prompt 设计采用“角色层 -> 任务层 -> 输入 contract -> 输出 contract -> post-check”五层结构
 - prompt 效果测试采用“三层金字塔”：contract -> normalization -> E2E baseline
 - `Usage` 必须与 `Pitfalls`、`Examples`、`Collocations` 保持清晰边界
-- `Recall` 一次只生成 1 张草稿，后续 prompt 应围绕单草稿工作台建模，而不是多 mode 批量生成
+- `Recall` 一次只生成 1 张草稿，后续 prompt 应围绕单张反向卡建模，而不是多 mode 批量生成
 
 ## 并行开发建议
 

@@ -27,16 +27,13 @@ public struct LLMSensePromptInput: Sendable, Equatable {
 public struct RecallPromptScaffold: Sendable, Equatable {
     public let learnerCue: String?
     public let hint: String?
-    public let requiredMaskedSurface: String?
 
     public init(
         learnerCue: String?,
-        hint: String?,
-        requiredMaskedSurface: String?
+        hint: String?
     ) {
         self.learnerCue = learnerCue
         self.hint = hint
-        self.requiredMaskedSurface = requiredMaskedSurface
     }
 }
 
@@ -313,8 +310,7 @@ public enum LLMPrompt {
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
             "Generate one recall-oriented flashcard draft as strict JSON.",
-            "Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary.",
-            "When the prompt gives you a required masked surface or packaging cue, preserve it instead of inventing a new one."
+            "Prefer concise learner-facing prompts, keep answers exact, and never add markdown fences or commentary."
         ])
 
         let user = PromptText.join([
@@ -344,8 +340,10 @@ public enum LLMPrompt {
                     "front should be a recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
                     "back must be the exact target word or phrase, with original spacing preserved",
                     "For full_spelling, ask the learner to recall the complete target",
+                    "For targeted_letter_cloze, choose the gap position yourself",
                     "For targeted_letter_cloze, use exactly one continuous underscore gap of 2 or 3 characters, and keep a Chinese meaning cue in front",
-                    "For targeted_letter_cloze, if a required masked surface is provided above, copy that masked surface exactly and do not invent a different gap position or length",
+                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
+                    "For targeted_letter_cloze, do not default to masking the first letter and do not make the card feel like a puzzle",
                     "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
                     "If a learner cue is provided above, use it as the semantic basis of the front instead of drifting to another explanation",
                     "If a short hint is provided above, prefer reusing or lightly polishing it rather than inventing a long hint",
@@ -373,6 +371,92 @@ public enum LLMPrompt {
             requestedMode: modes.first ?? .fullSpelling,
             anchor: anchor
         )
+    }
+
+    public static func recallCardDecision(
+        word: String,
+        senses: [LLMSensePromptInput],
+        context: LLMRecallGenerationContext,
+        allowedModes: [LLMRecallCardMode],
+        modePrior: LLMRecallCardMode?,
+        anchor: LLMAnchorSnapshot? = nil,
+        wordSignals: LLMRecallWordSignals,
+        scaffold: RecallPromptScaffold? = nil
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+        let normalizedModes = allowedModes.isEmpty ? [.fullSpelling] : allowedModes
+
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Generate exactly one recall-oriented flashcard draft as strict structured JSON.",
+            "Choose the most appropriate recall mode from the allowed modes.",
+            "Base the choice on accepted learning aids, sense inventory, and the main learning objective.",
+            "Never add markdown fences, commentary, or extra fields."
+        ])
+
+        let user = PromptText.join([
+            #"Generate exactly 1 recall card draft for the target "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Accepted learning aids", value: recallLearningAidsText(context)),
+            PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
+            PromptText.labeledBlock("Allowed modes", value: recallAllowedModesText(normalizedModes)),
+            PromptText.labeledBlock("Mode prior", value: recallModePriorText(modePrior)),
+            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: nil)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"draft\": {",
+                "    \"mode\": \"full_spelling | targeted_letter_cloze | phrase_recall\",",
+                "    \"front\": \"learner-facing prompt\",",
+                "    \"back\": \"exact answer\",",
+                "    \"hint\": \"optional short hint or null\",",
+                "    \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "  },",
+                "  \"selectionReason\": {",
+                "    \"primaryGoal\": \"whole_word_recall | local_spelling_calibration | phrase_chunk_retrieval\",",
+                "    \"evidence\": [\"short reason 1\", \"short reason 2\"]",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "mode must be one of the allowed modes",
+                    "Choose one main learning objective first, then choose the mode",
+                    "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
+                    "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
+                    "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
+                    "front should be a concise recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
+                    "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
+                    "Do not copy pinyin, romanization, or pronunciation respelling into front or hint",
+                    "back must be the exact target word or phrase, with original spacing preserved",
+                    "Use accepted usage hints to sharpen the Chinese cue, not to write a long explanation",
+                    "Use mnemonics only for a very short hint when useful",
+                    "Do not dump pitfalls, usage hints, and collocations into the front",
+                    "hint is optional and should stay short",
+                    "selectionReason is required and evidence must be short, concrete, and non-empty",
+                    "For full_spelling, ask the learner to recall the complete target",
+                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
+                    "For targeted_letter_cloze, choose the gap position yourself",
+                    "For targeted_letter_cloze, use exactly one continuous underscore gap",
+                    "For targeted_letter_cloze, the gap should usually be 2 or 3 characters long",
+                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
+                    "For targeted_letter_cloze, do not default to masking the first letter",
+                    "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
+                    "If accepted pitfalls point to a local spelling risk, align the gap with that risk when possible",
+                    "anchor is optional display metadata only; do not invent source offsets or remap anchors",
+                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
+                    "Return exactly one draft only"
+                ])
+            )
+        ])
+
+        return (system, user)
     }
 
     public static func learningAids(
@@ -589,7 +673,7 @@ public enum LLMPrompt {
 
     private static func recallScaffoldText(
         _ scaffold: RecallPromptScaffold?,
-        requestedMode: LLMRecallCardMode
+        requestedMode: LLMRecallCardMode?
     ) -> String {
         guard let scaffold else { return "none" }
 
@@ -601,12 +685,43 @@ public enum LLMPrompt {
         if let hint = scaffold.hint, !hint.isEmpty {
             lines.append("- preferred hint: \"\(hint)\"")
         }
-        if requestedMode == .targetedLetterCloze,
-           let requiredMaskedSurface = scaffold.requiredMaskedSurface,
-           !requiredMaskedSurface.isEmpty {
-            lines.append("- required masked surface: \"\(requiredMaskedSurface)\"")
-        }
 
         return lines.isEmpty ? "none" : lines.joined(separator: "\n")
+    }
+
+    private static func recallLearningAidsText(_ context: LLMRecallGenerationContext) -> String {
+        let sections: [(String, [String])] = [
+            ("Pitfalls", context.acceptedPitfalls),
+            ("Usage hints", context.acceptedUsageHints),
+            ("Mnemonics", context.acceptedMnemonics),
+            ("Collocations", context.acceptedCollocations)
+        ]
+
+        let rendered = sections.compactMap { title, values -> String? in
+            let items = values
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !items.isEmpty else { return nil }
+            return "- \(title):\n" + items.map { "  - \($0)" }.joined(separator: "\n")
+        }
+
+        return rendered.isEmpty ? "none" : rendered.joined(separator: "\n")
+    }
+
+    private static func recallWordSignalsText(_ wordSignals: LLMRecallWordSignals) -> String {
+        [
+            "- isPhrase: \(wordSignals.isPhrase)",
+            "- hasRepeatedLetters: \(wordSignals.hasRepeatedLetters)",
+            "- hasConfusableVowelCluster: \(wordSignals.hasConfusableVowelCluster)"
+        ].joined(separator: "\n")
+    }
+
+    private static func recallAllowedModesText(_ modes: [LLMRecallCardMode]) -> String {
+        modes.map { "- \($0.rawValue)" }.joined(separator: "\n")
+    }
+
+    private static func recallModePriorText(_ modePrior: LLMRecallCardMode?) -> String {
+        guard let modePrior else { return "none" }
+        return "- suggested primary mode: \(modePrior.rawValue)"
     }
 }

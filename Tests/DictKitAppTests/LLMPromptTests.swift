@@ -147,8 +147,7 @@ final class LLMPromptTests: XCTestCase {
             anchor: LLMAnchorSnapshot(text: "take ___", note: "UI snapshot only"),
             scaffold: RecallPromptScaffold(
                 learnerCue: "起飞；脱掉",
-                hint: "verb · air travel",
-                requiredMaskedSurface: "ta__ off"
+                hint: "verb · air travel"
             )
         )
 
@@ -167,9 +166,49 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Packaging scaffold:"))
         XCTAssertTrue(prompt.user.contains("\"起飞；脱掉\""))
         XCTAssertTrue(prompt.user.contains("\"verb · air travel\""))
-        XCTAssertTrue(prompt.user.contains("\"ta__ off\""))
-        XCTAssertTrue(prompt.user.contains("copy that masked surface exactly"))
+        XCTAssertTrue(prompt.user.contains("choose the gap position yourself"))
         XCTAssertTrue(prompt.user.contains("Output JSON only"))
+    }
+
+    func testRecallDecisionPromptIncludesLearningAidsAllowedModesAndSelectionReason() {
+        let prompt = LLMPrompt.recallCardDecision(
+            word: "collocation",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "noun",
+                    definition: "固定搭配；常见词语搭配",
+                    semanticHint: "常见词语搭配"
+                )
+            ],
+            context: LLMRecallGenerationContext(
+                acceptedPitfalls: ["容易漏掉双写的 ll"],
+                acceptedUsageHints: ["指自然的词语搭配"],
+                acceptedMnemonics: ["co + location of words"],
+                acceptedCollocations: ["strong collocation"]
+            ),
+            allowedModes: [.fullSpelling, .targetedLetterCloze],
+            modePrior: .targetedLetterCloze,
+            anchor: nil,
+            wordSignals: LLMRecallWordSignals(
+                isPhrase: false,
+                hasRepeatedLetters: true,
+                hasConfusableVowelCluster: true
+            ),
+            scaffold: RecallPromptScaffold(
+                learnerCue: "常见词语搭配",
+                hint: "noun · 常见词语搭配"
+            )
+        )
+
+        XCTAssertTrue(prompt.system.contains("strict structured JSON"))
+        XCTAssertTrue(prompt.user.contains("Accepted learning aids"))
+        XCTAssertTrue(prompt.user.contains("Allowed modes"))
+        XCTAssertTrue(prompt.user.contains("Mode prior"))
+        XCTAssertTrue(prompt.user.contains("selectionReason"))
+        XCTAssertTrue(prompt.user.contains("choose the gap position yourself"))
+        XCTAssertTrue(prompt.user.contains("Do not choose targeted_letter_cloze only because the word is long"))
+        XCTAssertTrue(prompt.user.contains("Do not copy pinyin, romanization, or pronunciation respelling into front or hint"))
+        XCTAssertFalse(prompt.user.contains("required masked surface"))
     }
 
     func testLearningAidsPromptRequestsStructuredPitfallsMnemonicsAndCollocations() {

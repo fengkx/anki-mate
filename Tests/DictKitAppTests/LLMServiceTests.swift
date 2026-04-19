@@ -452,7 +452,7 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertTrue(draft.front.contains("habitual juxtaposition"))
     }
 
-    func testRecallPromptScaffoldPrecomputesStableMaskForTargetedLetterCloze() {
+    func testRecallPromptScaffoldBuildsCueAndHintWithoutPresetMask() {
         let scaffold = LLMService.recallPromptScaffold(
             word: "collocation",
             senses: [
@@ -461,42 +461,28 @@ final class LLMServiceTests: XCTestCase {
                     definition: "habitual word pairing",
                     semanticHint: "word pairing"
                 )
-            ],
-            mode: .targetedLetterCloze
+            ]
         )
 
         XCTAssertEqual(scaffold.learnerCue, "word pairing")
         XCTAssertEqual(scaffold.hint, "noun · word pairing")
-        XCTAssertEqual(scaffold.requiredMaskedSurface, "co__ocation")
     }
 
-    func testEnforceRecallDraftContractRepairsDriftedTargetedLetterClozeMask() {
-        let scaffold = LLMService.recallPromptScaffold(
-            word: "lemmatize",
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: "verb",
-                    definition: "reduce a word to its base form",
-                    semanticHint: "base form"
-                )
-            ],
-            mode: .targetedLetterCloze
-        )
-
-        let repaired = LLMService.enforceRecallDraftContract(
+    func testEnforceRecallDraftContractPreservesGeneratedClozeAndBackfillsAnchor() {
+        let normalized = LLMService.enforceRecallDraftContract(
             LLMRecallCardDraft(
                 mode: .targetedLetterCloze,
-                front: "base form · lemma__ze",
+                front: "base form · le__atize",
                 back: "lemmatize",
                 hint: "verb · base form"
             ),
-            scaffold: scaffold,
-            fallbackAnchor: nil
+            fallbackAnchor: LLMAnchorSnapshot(text: "lemmatize", note: "snapshot")
         )
 
-        XCTAssertEqual(repaired.front, "base form · le__atize")
-        XCTAssertEqual(repaired.back, "lemmatize")
-        XCTAssertEqual(repaired.hint, "verb · base form")
+        XCTAssertEqual(normalized.front, "base form · le__atize")
+        XCTAssertEqual(normalized.back, "lemmatize")
+        XCTAssertEqual(normalized.hint, "verb · base form")
+        XCTAssertEqual(normalized.anchor?.text, "lemmatize")
     }
 
     func testRuleBasedRecallDraftFallsBackToPhrasePromptForPhraseRecall() throws {

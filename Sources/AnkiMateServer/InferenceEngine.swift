@@ -9,6 +9,7 @@ enum InferenceError: Error, LocalizedError {
     case loadFailed(String)
     case generationFailed(String)
     case contextAllocationFailed
+    case unsupportedResponseFormat(String)
 
     var errorDescription: String? {
         switch self {
@@ -16,11 +17,12 @@ enum InferenceError: Error, LocalizedError {
         case .loadFailed(let msg): return "Failed to load model: \(msg)"
         case .generationFailed(let msg): return "Generation failed: \(msg)"
         case .contextAllocationFailed: return "Failed to allocate context"
+        case .unsupportedResponseFormat(let msg): return "Unsupported response format: \(msg)"
         }
     }
 }
 
-final class InferenceEngine {
+final class InferenceEngine: InferenceServing {
     private var model: OpaquePointer? // llama_model *
     private var context: OpaquePointer? // llama_context *
     private var sampler: UnsafeMutablePointer<llama_sampler>?
@@ -96,6 +98,7 @@ final class InferenceEngine {
     func generate(
         prompt: String,
         systemPrompt: String?,
+        responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float
     ) throws -> GenerateResult {
@@ -129,25 +132,14 @@ final class InferenceEngine {
         // Clear KV cache
         llama_memory_clear(llama_get_memory(context), true)
 
-        // Create a fresh sampler chain for this generation
-        if let s = sampler {
-            llama_sampler_free(s)
-        }
-        let samplerChainParams = llama_sampler_chain_default_params()
-        guard let chain = llama_sampler_chain_init(samplerChainParams) else {
+        sampler = try makeSampler(
+            model: model,
+            responseFormat: responseFormat,
+            temperature: temperature
+        )
+        guard let chain = sampler else {
             throw InferenceError.generationFailed("Failed to create sampler chain")
         }
-
-        // Add samplers: temperature -> top-k -> top-p -> dist/greedy
-        if temperature > 0 {
-            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95, 1))
-            llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
-        } else {
-            llama_sampler_chain_add(chain, llama_sampler_init_greedy())
-        }
-        sampler = chain
 
         // Process prompt tokens in a batch
         var batch = llama_batch_get_one(&tokens, Int32(tokens.count))
@@ -214,6 +206,7 @@ final class InferenceEngine {
     func generateStreaming(
         prompt: String,
         systemPrompt: String?,
+        responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float,
         onToken: (String) -> Void
@@ -242,22 +235,14 @@ final class InferenceEngine {
 
         llama_memory_clear(llama_get_memory(context), true)
 
-        if let s = sampler {
-            llama_sampler_free(s)
-        }
-        let samplerChainParams = llama_sampler_chain_default_params()
-        guard let chain = llama_sampler_chain_init(samplerChainParams) else {
+        sampler = try makeSampler(
+            model: model,
+            responseFormat: responseFormat,
+            temperature: temperature
+        )
+        guard let chain = sampler else {
             throw InferenceError.generationFailed("Failed to create sampler chain")
         }
-        if temperature > 0 {
-            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95, 1))
-            llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
-        } else {
-            llama_sampler_chain_add(chain, llama_sampler_init_greedy())
-        }
-        sampler = chain
 
         var batch = llama_batch_get_one(&tokens, Int32(tokens.count))
         var decodeResult = llama_decode(context, batch)
@@ -312,4 +297,100 @@ final class InferenceEngine {
             finishReason: finishReason
         )
     }
+
+    private func makeSampler(
+        model: OpaquePointer,
+        responseFormat: LLMResponseFormat?,
+        temperature: Float
+    ) throws -> UnsafeMutablePointer<llama_sampler>? {
+        if let s = sampler {
+            llama_sampler_free(s)
+        }
+        let samplerChainParams = llama_sampler_chain_default_params()
+        guard let chain = llama_sampler_chain_init(samplerChainParams) else {
+            throw InferenceError.generationFailed("Failed to create sampler chain")
+        }
+
+        if temperature > 0 {
+            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95, 1))
+        }
+
+        if let grammar = try grammarSampler(for: responseFormat, model: model) {
+            llama_sampler_chain_add(chain, grammar)
+        }
+
+        if temperature > 0 {
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
+        } else {
+            llama_sampler_chain_add(chain, llama_sampler_init_greedy())
+        }
+        return chain
+    }
+
+    private func grammarSampler(
+        for responseFormat: LLMResponseFormat?,
+        model: OpaquePointer
+    ) throws -> UnsafeMutablePointer<llama_sampler>? {
+        guard let responseFormat else {
+            return nil
+        }
+        let grammar = try resolvedGrammarString(for: responseFormat)
+        guard let grammar, grammar.isEmpty == false else {
+            return nil
+        }
+        let vocab = llama_model_get_vocab(model)
+        guard let sampler = grammar.withCString({ grammarCString in
+            llama_sampler_init_grammar(vocab, grammarCString, "root")
+        }) else {
+            throw InferenceError.generationFailed("Failed to initialize grammar sampler")
+        }
+        return sampler
+    }
+
+    func resolvedGrammarString(for responseFormat: LLMResponseFormat) throws -> String? {
+        switch responseFormat.kind {
+        case .text:
+            return nil
+        case .json:
+            return Self.genericJSONGrammar
+        case .jsonSchema:
+            guard let schema = responseFormat.schema else {
+                if responseFormat.strict == true {
+                    throw InferenceError.unsupportedResponseFormat("json_schema requires schema when strict=true")
+                }
+                fputs("Warning: json_schema requested without schema; falling back to generic JSON grammar\n", stderr)
+                return Self.genericJSONGrammar
+            }
+            do {
+                return try JSONSchemaGrammarCompiler().compileRootGrammar(from: schema)
+            } catch let error as JSONSchemaGrammarCompilerError {
+                if responseFormat.strict == true {
+                    throw InferenceError.unsupportedResponseFormat(error.localizedDescription)
+                }
+                fputs("Warning: \(error.localizedDescription). Falling back to generic JSON grammar\n", stderr)
+                return Self.genericJSONGrammar
+            } catch {
+                throw error
+            }
+        }
+    }
+
+    static let genericJSONGrammar = """
+    root ::= ws value ws
+    value ::= object | array | string | number | boolean | null
+    object ::= "{" ws "}" | "{" ws members ws "}"
+    members ::= pair | pair ws "," ws members
+    pair ::= string ws ":" ws value
+    array ::= "[" ws "]" | "[" ws elements ws "]"
+    elements ::= value | value ws "," ws elements
+    string ::= "\"" char* "\""
+    char ::= [^"\\\\\\x00-\\x1F] | "\\" (["\\\\/bfnrt] | "u" hex hex hex hex)
+    hex ::= [0-9a-fA-F]
+    number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+    boolean ::= "true" | "false"
+    null ::= "null"
+    ws ::= [ \\t\\n\\r]*
+    """
 }

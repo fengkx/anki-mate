@@ -3,10 +3,33 @@
 import Foundation
 import AnkiMateRPC
 
-final class RPCDispatcher {
-    private let engine: InferenceEngine
+protocol InferenceServing: AnyObject {
+    var isModelLoaded: Bool { get }
+    var loadedModelPath: String? { get }
 
-    init(engine: InferenceEngine) {
+    func loadModel(path: String, contextSize: Int, gpuLayers: Int) throws
+    func unloadModel()
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        responseFormat: LLMResponseFormat?,
+        maxTokens: Int,
+        temperature: Float
+    ) throws -> GenerateResult
+    func generateStreaming(
+        prompt: String,
+        systemPrompt: String?,
+        responseFormat: LLMResponseFormat?,
+        maxTokens: Int,
+        temperature: Float,
+        onToken: (String) -> Void
+    ) throws -> GenerateResult
+}
+
+final class RPCDispatcher {
+    private let engine: InferenceServing
+
+    init(engine: InferenceServing) {
         self.engine = engine
     }
 
@@ -24,6 +47,7 @@ final class RPCDispatcher {
         return try engine.generateStreaming(
             prompt: params.prompt,
             systemPrompt: params.systemPrompt,
+            responseFormat: params.responseFormat,
             maxTokens: params.maxTokens,
             temperature: params.temperature,
             onToken: onToken
@@ -130,6 +154,7 @@ final class RPCDispatcher {
             let result = try engine.generate(
                 prompt: genParams.prompt,
                 systemPrompt: genParams.systemPrompt,
+                responseFormat: genParams.responseFormat,
                 maxTokens: genParams.maxTokens,
                 temperature: genParams.temperature
             )
