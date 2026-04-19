@@ -222,6 +222,11 @@ if [[ -n "${APPLE_DEVELOPER_IDENTITY:-}" ]]; then
 else
     APP_SIGNED=false
 fi
+export APP_NAME
+export APP_BUNDLE_ID
+export APP_VERSION
+export APP_BUILD_NUMBER
+export APP_MINIMUM_SYSTEM_VERSION
 export APP_SIGNED
 export FINAL_ZIP_PATH
 write_release_manifest

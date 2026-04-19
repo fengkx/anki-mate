@@ -18,6 +18,14 @@ DYLIB_PATTERNS=(
 
 echo "==> Copying and fixing dylibs..."
 
+filter_dylib_refs() {
+    if command -v rg >/dev/null 2>&1; then
+        rg 'lib[^/]+\.dylib$'
+    else
+        grep -E 'lib[^/]+\.dylib$'
+    fi
+}
+
 for pattern in "${DYLIB_PATTERNS[@]}"; do
     for src in "$LIB_DIR"/$pattern; do
         [ -e "$src" ] || continue
@@ -41,7 +49,7 @@ while IFS= read -r current; do
     if [ "$current" != "@rpath/$dep" ]; then
         install_name_tool -change "$current" "@rpath/$dep" "$SERVER_BIN"
     fi
-done < <(otool -L "$SERVER_BIN" | awk 'NR>1 {print $1}' | rg 'lib[^/]+\.dylib$' || true)
+done < <(otool -L "$SERVER_BIN" | awk 'NR>1 {print $1}' | filter_dylib_refs || true)
 
 # Normalize inter-dylib references for every bundled real dylib.
 for target in "$FRAMEWORKS_DIR"/*.dylib; do
@@ -54,7 +62,7 @@ for target in "$FRAMEWORKS_DIR"/*.dylib; do
         if [ "$current" != "@rpath/$dep" ]; then
             install_name_tool -change "$current" "@rpath/$dep" "$target"
         fi
-    done < <(otool -L "$target" | awk 'NR>1 {print $1}' | rg 'lib[^/]+\.dylib$' || true)
+    done < <(otool -L "$target" | awk 'NR>1 {print $1}' | filter_dylib_refs || true)
 done
 
 # Add @rpath to server binary pointing to Frameworks dir
