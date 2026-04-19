@@ -224,12 +224,12 @@ struct AIContentView: View {
     @State private var suggestedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
     @State private var acceptedRecallState = AIDraftListState<RecallCardDraft, RecallCardDraft>()
     @State private var pendingAcceptedRecallPersistedEcho: RecallCardDraft?
-    @State private var suggestedPitfallState = AIDraftListState<String, String>()
-    @State private var acceptedPitfallState = AIDraftListState<String, String>()
-    @State private var suggestedMnemonicState = AIDraftListState<String, String>()
-    @State private var acceptedMnemonicState = AIDraftListState<String, String>()
-    @State private var suggestedCollocationState = AIDraftListState<String, String>()
-    @State private var acceptedCollocationState = AIDraftListState<String, String>()
+    @State private var suggestedPitfallState = AIDraftListState<PitfallArtifact, String>()
+    @State private var acceptedPitfallState = AIDraftListState<PitfallArtifact, String>()
+    @State private var suggestedMnemonicState = AIDraftListState<MnemonicArtifact, String>()
+    @State private var acceptedMnemonicState = AIDraftListState<MnemonicArtifact, String>()
+    @State private var suggestedCollocationState = AIDraftListState<CollocationArtifact, String>()
+    @State private var acceptedCollocationState = AIDraftListState<CollocationArtifact, String>()
     @State private var examplesTask: Task<Void, Never>?
     @State private var learningAidsTask: Task<Void, Never>?
     @State private var usageTask: Task<Void, Never>?
@@ -253,14 +253,20 @@ struct AIContentView: View {
     private var isGeneratingRecall: Bool { recallTask != nil }
     private var suggestedExampleArtifacts: [ExampleSentenceArtifact] { item.aiSuggestedExampleArtifacts }
     private var acceptedExampleArtifacts: [ExampleSentenceArtifact] { item.aiAcceptedExampleArtifacts }
+    private var suggestedPitfallArtifacts: [PitfallArtifact] { item.aiSuggestedPitfallArtifacts }
+    private var acceptedPitfallArtifacts: [PitfallArtifact] { item.aiAcceptedPitfallArtifacts }
+    private var suggestedMnemonicArtifacts: [MnemonicArtifact] { item.aiSuggestedMnemonicArtifacts }
+    private var acceptedMnemonicArtifacts: [MnemonicArtifact] { item.aiAcceptedMnemonicArtifacts }
+    private var suggestedCollocationArtifacts: [CollocationArtifact] { item.aiSuggestedCollocationArtifacts }
+    private var acceptedCollocationArtifacts: [CollocationArtifact] { item.aiAcceptedCollocationArtifacts }
     private var currentExampleSenseContexts: [ExampleSenseContext] {
         guard let result = item.lookupResult else { return [] }
         return exampleSenseContexts(from: result)
     }
     private var hasAcceptedLearningAids: Bool {
-        !item.aiAcceptedPitfalls.isEmpty ||
-            !item.aiAcceptedMnemonics.isEmpty ||
-            !item.aiAcceptedCollocations.isEmpty
+        !acceptedPitfallArtifacts.isEmpty ||
+            !acceptedMnemonicArtifacts.isEmpty ||
+            !acceptedCollocationArtifacts.isEmpty
     }
     private var primarySuggestedRecallDraftRowID: UUID? {
         suggestedRecallState.rowOrder.first
@@ -289,9 +295,9 @@ struct AIContentView: View {
             return "generating"
         }
         let savedParts = [
-            countSummary(item.aiAcceptedPitfalls.count, singular: "pitfall"),
-            countSummary(item.aiAcceptedMnemonics.count, singular: "mnemonic"),
-            countSummary(item.aiAcceptedCollocations.count, singular: "collocation")
+            countSummary(acceptedPitfallArtifacts.count, singular: "pitfall"),
+            countSummary(acceptedMnemonicArtifacts.count, singular: "mnemonic"),
+            countSummary(acceptedCollocationArtifacts.count, singular: "collocation")
         ].compactMap { $0 }
 
         if !savedParts.isEmpty {
@@ -390,18 +396,18 @@ struct AIContentView: View {
             syncRecallDrafts()
             if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedPitfalls) { _ in syncPitfallDrafts() }
-        .onChange(of: item.aiAcceptedPitfalls) { _ in
+        .onChange(of: item.aiSuggestedPitfallArtifacts) { _ in syncPitfallDrafts() }
+        .onChange(of: item.aiAcceptedPitfallArtifacts) { _ in
             syncPitfallDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedMnemonics) { _ in syncMnemonicDrafts() }
-        .onChange(of: item.aiAcceptedMnemonics) { _ in
+        .onChange(of: item.aiSuggestedMnemonicArtifacts) { _ in syncMnemonicDrafts() }
+        .onChange(of: item.aiAcceptedMnemonicArtifacts) { _ in
             syncMnemonicDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedCollocations) { _ in syncCollocationDrafts() }
-        .onChange(of: item.aiAcceptedCollocations) { _ in
+        .onChange(of: item.aiSuggestedCollocationArtifacts) { _ in syncCollocationDrafts() }
+        .onChange(of: item.aiAcceptedCollocationArtifacts) { _ in
             syncCollocationDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
         }
@@ -692,10 +698,13 @@ struct AIContentView: View {
                     title: "Pitfalls",
                     suggestedRowIDs: suggestedPitfallState.rowOrder,
                     acceptedRowIDs: acceptedPitfallState.rowOrder,
+                    selection: item.aiArtifacts.learningAidSelections.pitfalls,
                     suggestedEmptyText: "No pitfalls yet.",
                     acceptedEmptyText: "Nothing saved yet.",
                     suggestedBinding: bindingForSuggestedPitfall(rowID:),
                     acceptedBinding: bindingForAcceptedPitfall(rowID:),
+                    suggestedTagText: { learningAidSuggestedTagText(rowID: $0, state: suggestedPitfallState, selection: item.aiArtifacts.learningAidSelections.pitfalls, artifactID: \.id) },
+                    suggestedHelpText: { learningAidSuggestedHelpText(rowID: $0, state: suggestedPitfallState, selection: item.aiArtifacts.learningAidSelections.pitfalls, artifactID: \.id) },
                     accept: acceptSuggestedPitfall(rowID:),
                     reject: rejectSuggestedPitfall(rowID:),
                     delete: deleteAcceptedPitfall(rowID:),
@@ -706,10 +715,13 @@ struct AIContentView: View {
                     title: "Mnemonics",
                     suggestedRowIDs: suggestedMnemonicState.rowOrder,
                     acceptedRowIDs: acceptedMnemonicState.rowOrder,
+                    selection: item.aiArtifacts.learningAidSelections.mnemonics,
                     suggestedEmptyText: "No mnemonics yet.",
                     acceptedEmptyText: "Nothing saved yet.",
                     suggestedBinding: bindingForSuggestedMnemonic(rowID:),
                     acceptedBinding: bindingForAcceptedMnemonic(rowID:),
+                    suggestedTagText: { learningAidSuggestedTagText(rowID: $0, state: suggestedMnemonicState, selection: item.aiArtifacts.learningAidSelections.mnemonics, artifactID: \.id) },
+                    suggestedHelpText: { learningAidSuggestedHelpText(rowID: $0, state: suggestedMnemonicState, selection: item.aiArtifacts.learningAidSelections.mnemonics, artifactID: \.id) },
                     accept: acceptSuggestedMnemonic(rowID:),
                     reject: rejectSuggestedMnemonic(rowID:),
                     delete: deleteAcceptedMnemonic(rowID:),
@@ -720,10 +732,13 @@ struct AIContentView: View {
                     title: "Collocations",
                     suggestedRowIDs: suggestedCollocationState.rowOrder,
                     acceptedRowIDs: acceptedCollocationState.rowOrder,
+                    selection: item.aiArtifacts.learningAidSelections.collocations,
                     suggestedEmptyText: "No collocations yet.",
                     acceptedEmptyText: "Nothing saved yet.",
                     suggestedBinding: bindingForSuggestedCollocation(rowID:),
                     acceptedBinding: bindingForAcceptedCollocation(rowID:),
+                    suggestedTagText: { learningAidSuggestedTagText(rowID: $0, state: suggestedCollocationState, selection: item.aiArtifacts.learningAidSelections.collocations, artifactID: \.id) },
+                    suggestedHelpText: { learningAidSuggestedHelpText(rowID: $0, state: suggestedCollocationState, selection: item.aiArtifacts.learningAidSelections.collocations, artifactID: \.id) },
                     accept: acceptSuggestedCollocation(rowID:),
                     reject: rejectSuggestedCollocation(rowID:),
                     delete: deleteAcceptedCollocation(rowID:),
@@ -838,21 +853,42 @@ struct AIContentView: View {
             }
 
             do {
-                let aids = try await llmService.generateLearningAids(
+                let ranked = try await llmService.generateRankedLearningAids(
                     word: item.word,
-                    senses: senses
+                    senses: senses,
+                    acceptedContext: LLMLearningAidAcceptedContext(
+                        acceptedPitfalls: acceptedPitfallArtifacts.map(\.text),
+                        acceptedUsageHints: item.aiAcceptedDefinitionNote.map { [$0] } ?? [],
+                        acceptedMnemonics: acceptedMnemonicArtifacts.map(\.text),
+                        acceptedCollocations: acceptedCollocationArtifacts.map(\.phrase)
+                    )
                 )
-                viewModel.saveAISuggestedPitfalls(
-                    aids.pitfalls.compactMap { pitfallText(from: $0) },
+                viewModel.saveAISuggestedPitfallArtifacts(
+                    ranked.aids.pitfalls.map(pitfallArtifact(from:)),
                     for: item
                 )
-                viewModel.saveAISuggestedMnemonics(
-                    aids.mnemonics.map(\.clue),
+                viewModel.saveAISuggestedMnemonicArtifacts(
+                    ranked.aids.mnemonics.map(mnemonicArtifact(from:)),
                     for: item
                 )
-                viewModel.saveAISuggestedCollocations(
-                    aids.collocations.map { collocationText(from: $0) },
+                viewModel.saveAISuggestedCollocationArtifacts(
+                    ranked.aids.collocations.map(collocationArtifact(from:)),
                     for: item
+                )
+                viewModel.saveLearningAidSelection(
+                    pitfallSelection(from: ranked.selections.pitfalls),
+                    for: .pitfalls,
+                    item: item
+                )
+                viewModel.saveLearningAidSelection(
+                    pitfallSelection(from: ranked.selections.mnemonics),
+                    for: .mnemonics,
+                    item: item
+                )
+                viewModel.saveLearningAidSelection(
+                    pitfallSelection(from: ranked.selections.collocations),
+                    for: .collocations,
+                    item: item
                 )
                 isLearningAidsSectionExpanded = true
                 logger.info("Generate Learning Aids finished")
@@ -1026,82 +1062,117 @@ struct AIContentView: View {
 
     private func acceptSuggestedPitfall(rowID: UUID) {
         guard let index = suggestedPitfallState.rowOrder.firstIndex(of: rowID),
-              let value = item.aiSuggestedPitfalls[safe: index]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else { return }
-        var accepted = item.aiAcceptedPitfalls
-        accepted.append(value)
-        viewModel.saveAIAcceptedPitfalls(accepted, for: item)
+              let suggested = suggestedPitfallArtifacts[safe: index] else { return }
+        let trimmed = (suggestedPitfallState.drafts[rowID] ?? suggested.text).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var accepted = acceptedPitfallArtifacts
+        accepted.append(PitfallArtifact(
+            id: suggested.id,
+            text: trimmed,
+            translation: suggested.translation,
+            category: suggested.category,
+            focus: suggested.focus,
+            recallRelevant: suggested.recallRelevant,
+            senseRef: suggested.senseRef,
+            anchor: suggested.anchor
+        ))
+        viewModel.saveAIAcceptedPitfallArtifacts(accepted, for: item)
 
-        var remaining = item.aiSuggestedPitfalls
+        var remaining = suggestedPitfallArtifacts
         remaining.remove(at: index)
-        viewModel.saveAISuggestedPitfalls(remaining, for: item)
+        viewModel.saveAISuggestedPitfallArtifacts(remaining, for: item)
     }
 
     private func rejectSuggestedPitfall(rowID: UUID) {
         guard let index = suggestedPitfallState.rowOrder.firstIndex(of: rowID),
-              item.aiSuggestedPitfalls.indices.contains(index) else { return }
-        var remaining = item.aiSuggestedPitfalls
+              suggestedPitfallArtifacts.indices.contains(index) else { return }
+        var remaining = suggestedPitfallArtifacts
         remaining.remove(at: index)
-        viewModel.saveAISuggestedPitfalls(remaining, for: item)
+        viewModel.saveAISuggestedPitfallArtifacts(remaining, for: item)
     }
 
     private func deleteAcceptedPitfall(rowID: UUID) {
         guard let index = acceptedPitfallState.rowOrder.firstIndex(of: rowID) else { return }
         acceptedPitfallAutosaveTasks[rowID]?.cancel()
         acceptedPitfallAutosaveTasks.removeValue(forKey: rowID)
-        var values = item.aiAcceptedPitfalls
+        var values = acceptedPitfallArtifacts
         values.remove(at: index)
-        viewModel.saveAIAcceptedPitfalls(values, for: item)
+        viewModel.saveAIAcceptedPitfallArtifacts(values, for: item)
     }
 
     private func acceptSuggestedMnemonic(rowID: UUID) {
-        guard let index = suggestedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
-        moveSuggestedString(
-            at: index,
-            suggestedValues: item.aiSuggestedMnemonics,
-            acceptedValues: item.aiAcceptedMnemonics,
-            saveSuggested: viewModel.saveAISuggestedMnemonics,
-            saveAccepted: viewModel.saveAIAcceptedMnemonics
-        )
+        guard let index = suggestedMnemonicState.rowOrder.firstIndex(of: rowID),
+              let suggested = suggestedMnemonicArtifacts[safe: index] else { return }
+        let trimmed = (suggestedMnemonicState.drafts[rowID] ?? suggested.text).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var accepted = acceptedMnemonicArtifacts
+        accepted.append(MnemonicArtifact(
+            id: suggested.id,
+            text: trimmed,
+            translation: suggested.translation,
+            kind: suggested.kind,
+            focus: suggested.focus,
+            recallRelevant: suggested.recallRelevant,
+            senseRef: suggested.senseRef,
+            anchor: suggested.anchor
+        ))
+        viewModel.saveAIAcceptedMnemonicArtifacts(accepted, for: item)
+        var remaining = suggestedMnemonicArtifacts
+        remaining.remove(at: index)
+        viewModel.saveAISuggestedMnemonicArtifacts(remaining, for: item)
     }
 
     private func rejectSuggestedMnemonic(rowID: UUID) {
         guard let index = suggestedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
-        removeSuggestedString(at: index, values: item.aiSuggestedMnemonics, saveSuggested: viewModel.saveAISuggestedMnemonics)
+        var remaining = suggestedMnemonicArtifacts
+        remaining.remove(at: index)
+        viewModel.saveAISuggestedMnemonicArtifacts(remaining, for: item)
     }
 
     private func deleteAcceptedMnemonic(rowID: UUID) {
         guard let index = acceptedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
         acceptedMnemonicAutosaveTasks[rowID]?.cancel()
         acceptedMnemonicAutosaveTasks.removeValue(forKey: rowID)
-        var values = item.aiAcceptedMnemonics
+        var values = acceptedMnemonicArtifacts
         values.remove(at: index)
-        viewModel.saveAIAcceptedMnemonics(values, for: item)
+        viewModel.saveAIAcceptedMnemonicArtifacts(values, for: item)
     }
 
     private func acceptSuggestedCollocation(rowID: UUID) {
-        guard let index = suggestedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
-        moveSuggestedString(
-            at: index,
-            suggestedValues: item.aiSuggestedCollocations,
-            acceptedValues: item.aiAcceptedCollocations,
-            saveSuggested: viewModel.saveAISuggestedCollocations,
-            saveAccepted: viewModel.saveAIAcceptedCollocations
-        )
+        guard let index = suggestedCollocationState.rowOrder.firstIndex(of: rowID),
+              let suggested = suggestedCollocationArtifacts[safe: index] else { return }
+        let trimmed = (suggestedCollocationState.drafts[rowID] ?? suggested.phrase).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var accepted = acceptedCollocationArtifacts
+        accepted.append(CollocationArtifact(
+            id: suggested.id,
+            phrase: trimmed,
+            note: suggested.note,
+            focus: suggested.focus,
+            recallRelevant: suggested.recallRelevant,
+            senseRef: suggested.senseRef,
+            anchor: suggested.anchor
+        ))
+        viewModel.saveAIAcceptedCollocationArtifacts(accepted, for: item)
+        var remaining = suggestedCollocationArtifacts
+        remaining.remove(at: index)
+        viewModel.saveAISuggestedCollocationArtifacts(remaining, for: item)
     }
 
     private func rejectSuggestedCollocation(rowID: UUID) {
         guard let index = suggestedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
-        removeSuggestedString(at: index, values: item.aiSuggestedCollocations, saveSuggested: viewModel.saveAISuggestedCollocations)
+        var remaining = suggestedCollocationArtifacts
+        remaining.remove(at: index)
+        viewModel.saveAISuggestedCollocationArtifacts(remaining, for: item)
     }
 
     private func deleteAcceptedCollocation(rowID: UUID) {
         guard let index = acceptedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
         acceptedCollocationAutosaveTasks[rowID]?.cancel()
         acceptedCollocationAutosaveTasks.removeValue(forKey: rowID)
-        var values = item.aiAcceptedCollocations
+        var values = acceptedCollocationArtifacts
         values.remove(at: index)
-        viewModel.saveAIAcceptedCollocations(values, for: item)
+        viewModel.saveAIAcceptedCollocationArtifacts(values, for: item)
     }
 
     private func syncExampleDrafts() {
@@ -1152,15 +1223,15 @@ struct AIContentView: View {
 
     private func syncPitfallDrafts() {
         suggestedPitfallState = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiSuggestedPitfalls,
+            persistedValues: suggestedPitfallArtifacts,
             currentState: suggestedPitfallState,
-            draftValue: { $0 }
+            draftValue: \.text
         ).state
 
         let acceptedResult = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiAcceptedPitfalls,
+            persistedValues: acceptedPitfallArtifacts,
             currentState: acceptedPitfallState,
-            draftValue: { $0 }
+            draftValue: \.text
         )
         cancelAutosaveTasks(&acceptedPitfallAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
         acceptedPitfallState = acceptedResult.state
@@ -1168,15 +1239,15 @@ struct AIContentView: View {
 
     private func syncMnemonicDrafts() {
         suggestedMnemonicState = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiSuggestedMnemonics,
+            persistedValues: suggestedMnemonicArtifacts,
             currentState: suggestedMnemonicState,
-            draftValue: { $0 }
+            draftValue: \.text
         ).state
 
         let acceptedResult = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiAcceptedMnemonics,
+            persistedValues: acceptedMnemonicArtifacts,
             currentState: acceptedMnemonicState,
-            draftValue: { $0 }
+            draftValue: \.text
         )
         cancelAutosaveTasks(&acceptedMnemonicAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
         acceptedMnemonicState = acceptedResult.state
@@ -1184,15 +1255,15 @@ struct AIContentView: View {
 
     private func syncCollocationDrafts() {
         suggestedCollocationState = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiSuggestedCollocations,
+            persistedValues: suggestedCollocationArtifacts,
             currentState: suggestedCollocationState,
-            draftValue: { $0 }
+            draftValue: \.phrase
         ).state
 
         let acceptedResult = AIDraftListSynchronizer.sync(
-            persistedValues: item.aiAcceptedCollocations,
+            persistedValues: acceptedCollocationArtifacts,
             currentState: acceptedCollocationState,
-            draftValue: { $0 }
+            draftValue: \.phrase
         )
         cancelAutosaveTasks(&acceptedCollocationAutosaveTasks, removedRowIDs: acceptedResult.removedRowIDs)
         acceptedCollocationState = acceptedResult.state
@@ -1250,42 +1321,42 @@ struct AIContentView: View {
 
     private func bindingForSuggestedPitfall(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { suggestedPitfallState.drafts[rowID] ?? suggestedPitfallState.persistedByRowID[rowID] ?? "" },
+            get: { suggestedPitfallState.drafts[rowID] ?? suggestedPitfallState.persistedByRowID[rowID]?.text ?? "" },
             set: { suggestedPitfallState.drafts[rowID] = $0 }
         )
     }
 
     private func bindingForAcceptedPitfall(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { acceptedPitfallState.drafts[rowID] ?? acceptedPitfallState.persistedByRowID[rowID] ?? "" },
+            get: { acceptedPitfallState.drafts[rowID] ?? acceptedPitfallState.persistedByRowID[rowID]?.text ?? "" },
             set: { acceptedPitfallState.drafts[rowID] = $0 }
         )
     }
 
     private func bindingForSuggestedMnemonic(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { suggestedMnemonicState.drafts[rowID] ?? suggestedMnemonicState.persistedByRowID[rowID] ?? "" },
+            get: { suggestedMnemonicState.drafts[rowID] ?? suggestedMnemonicState.persistedByRowID[rowID]?.text ?? "" },
             set: { suggestedMnemonicState.drafts[rowID] = $0 }
         )
     }
 
     private func bindingForAcceptedMnemonic(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { acceptedMnemonicState.drafts[rowID] ?? acceptedMnemonicState.persistedByRowID[rowID] ?? "" },
+            get: { acceptedMnemonicState.drafts[rowID] ?? acceptedMnemonicState.persistedByRowID[rowID]?.text ?? "" },
             set: { acceptedMnemonicState.drafts[rowID] = $0 }
         )
     }
 
     private func bindingForSuggestedCollocation(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { suggestedCollocationState.drafts[rowID] ?? suggestedCollocationState.persistedByRowID[rowID] ?? "" },
+            get: { suggestedCollocationState.drafts[rowID] ?? suggestedCollocationState.persistedByRowID[rowID]?.phrase ?? "" },
             set: { suggestedCollocationState.drafts[rowID] = $0 }
         )
     }
 
     private func bindingForAcceptedCollocation(rowID: UUID) -> Binding<String> {
         Binding(
-            get: { acceptedCollocationState.drafts[rowID] ?? acceptedCollocationState.persistedByRowID[rowID] ?? "" },
+            get: { acceptedCollocationState.drafts[rowID] ?? acceptedCollocationState.persistedByRowID[rowID]?.phrase ?? "" },
             set: { acceptedCollocationState.drafts[rowID] = $0 }
         )
     }
@@ -1342,10 +1413,19 @@ struct AIContentView: View {
             guard !Task.isCancelled else { return }
             guard let index = acceptedPitfallState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != item.aiAcceptedPitfalls[safe: index] else { return }
-            var values = item.aiAcceptedPitfalls
-            values[index] = trimmed
-            viewModel.saveAIAcceptedPitfalls(values, for: item)
+            guard let current = acceptedPitfallArtifacts[safe: index], !trimmed.isEmpty, trimmed != current.text else { return }
+            var values = acceptedPitfallArtifacts
+            values[index] = PitfallArtifact(
+                id: current.id,
+                text: trimmed,
+                translation: current.translation,
+                category: current.category,
+                focus: current.focus,
+                recallRelevant: current.recallRelevant,
+                senseRef: current.senseRef,
+                anchor: current.anchor
+            )
+            viewModel.saveAIAcceptedPitfallArtifacts(values, for: item)
         }
     }
 
@@ -1356,10 +1436,19 @@ struct AIContentView: View {
             guard !Task.isCancelled else { return }
             guard let index = acceptedMnemonicState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != item.aiAcceptedMnemonics[safe: index] else { return }
-            var values = item.aiAcceptedMnemonics
-            values[index] = trimmed
-            viewModel.saveAIAcceptedMnemonics(values, for: item)
+            guard let current = acceptedMnemonicArtifacts[safe: index], !trimmed.isEmpty, trimmed != current.text else { return }
+            var values = acceptedMnemonicArtifacts
+            values[index] = MnemonicArtifact(
+                id: current.id,
+                text: trimmed,
+                translation: current.translation,
+                kind: current.kind,
+                focus: current.focus,
+                recallRelevant: current.recallRelevant,
+                senseRef: current.senseRef,
+                anchor: current.anchor
+            )
+            viewModel.saveAIAcceptedMnemonicArtifacts(values, for: item)
         }
     }
 
@@ -1370,10 +1459,18 @@ struct AIContentView: View {
             guard !Task.isCancelled else { return }
             guard let index = acceptedCollocationState.rowOrder.firstIndex(of: rowID) else { return }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != item.aiAcceptedCollocations[safe: index] else { return }
-            var values = item.aiAcceptedCollocations
-            values[index] = trimmed
-            viewModel.saveAIAcceptedCollocations(values, for: item)
+            guard let current = acceptedCollocationArtifacts[safe: index], !trimmed.isEmpty, trimmed != current.phrase else { return }
+            var values = acceptedCollocationArtifacts
+            values[index] = CollocationArtifact(
+                id: current.id,
+                phrase: trimmed,
+                note: current.note,
+                focus: current.focus,
+                recallRelevant: current.recallRelevant,
+                senseRef: current.senseRef,
+                anchor: current.anchor
+            )
+            viewModel.saveAIAcceptedCollocationArtifacts(values, for: item)
         }
     }
 
@@ -1483,10 +1580,13 @@ struct AIContentView: View {
         title: String,
         suggestedRowIDs: [UUID],
         acceptedRowIDs: [UUID],
+        selection: LearningAidSectionSelection?,
         suggestedEmptyText: String,
         acceptedEmptyText: String,
         suggestedBinding: @escaping (UUID) -> Binding<String>,
         acceptedBinding: @escaping (UUID) -> Binding<String>,
+        suggestedTagText: @escaping (UUID) -> String?,
+        suggestedHelpText: @escaping (UUID) -> String?,
         accept: @escaping (UUID) -> Void,
         reject: @escaping (UUID) -> Void,
         delete: @escaping (UUID) -> Void,
@@ -1496,11 +1596,18 @@ struct AIContentView: View {
             subsectionHeader(title)
             if !suggestedRowIDs.isEmpty {
                 sectionSubheader("Suggestions")
+                if let whyRecommended = selection?.whyRecommended {
+                    Text(whyRecommended)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(suggestedRowIDs, id: \.self) { rowID in
                     EditableAITextCard(
                         text: suggestedBinding(rowID),
                         primaryButtonTitle: "Save",
                         secondaryButtonTitle: "Dismiss",
+                        tagText: suggestedTagText(rowID),
+                        supportingText: suggestedHelpText(rowID),
                         onPrimary: { accept(rowID) },
                         onSecondary: { reject(rowID) }
                     )
@@ -1697,11 +1804,115 @@ struct AIContentView: View {
             .joined(separator: " ")
     }
 
+    private func pitfallArtifact(from pitfall: LLMPitfall) -> PitfallArtifact {
+        PitfallArtifact(
+            id: pitfall.id,
+            text: pitfall.summary,
+            translation: pitfall.translation,
+            category: pitfall.category,
+            focus: pitfall.focus,
+            recallRelevant: pitfall.recallRelevant,
+            senseRef: AISenseReferenceSnapshot(
+                senseIndex: pitfall.senseIndex,
+                partOfSpeech: nil,
+                definitionSnapshot: nil
+            ),
+            anchor: nil
+        )
+    }
+
+    private func mnemonicArtifact(from mnemonic: LLMMnemonic) -> MnemonicArtifact {
+        MnemonicArtifact(
+            id: mnemonic.id,
+            text: mnemonic.clue,
+            translation: mnemonic.translation,
+            kind: mnemonic.kind,
+            focus: mnemonic.focus,
+            recallRelevant: mnemonic.recallRelevant,
+            senseRef: AISenseReferenceSnapshot(
+                senseIndex: mnemonic.senseIndex,
+                partOfSpeech: nil,
+                definitionSnapshot: nil
+            ),
+            anchor: nil
+        )
+    }
+
     private func collocationText(from collocation: LLMCollocation) -> String {
         let phrase = collocation.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         let gloss = collocation.gloss?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let gloss, !gloss.isEmpty else { return phrase }
         return "\(phrase) — \(gloss)"
+    }
+
+    private func collocationArtifact(from collocation: LLMCollocation) -> CollocationArtifact {
+        CollocationArtifact(
+            id: collocation.id,
+            phrase: collocation.phrase,
+            note: collocation.gloss,
+            focus: collocation.focus,
+            recallRelevant: collocation.recallRelevant,
+            senseRef: AISenseReferenceSnapshot(
+                senseIndex: collocation.senseIndex,
+                partOfSpeech: nil,
+                definitionSnapshot: nil
+            ),
+            anchor: nil
+        )
+    }
+
+    private func pitfallSelection(from selection: LLMLearningAidSectionSelection?) -> LearningAidSectionSelection? {
+        guard let selection else { return nil }
+        return LearningAidSectionSelection(
+            recommendedID: selection.recommendedID,
+            alternativeIDs: selection.alternativeIDs,
+            overlapHints: selection.overlapHints.map {
+                LearningAidSelectionOverlapHint(
+                    candidateID: $0.candidateID,
+                    overlapType: $0.overlapType,
+                    withItemID: $0.withItemID,
+                    reason: $0.reason
+                )
+            },
+            whyRecommended: selection.whyRecommended,
+            selectionSource: selection.selectionSource
+        )
+    }
+
+    private func learningAidSuggestedTagText<Artifact>(
+        rowID: UUID,
+        state: AIDraftListState<Artifact, String>,
+        selection: LearningAidSectionSelection?,
+        artifactID: KeyPath<Artifact, String?>
+    ) -> String? {
+        guard let selection,
+              let artifact = state.persistedByRowID[rowID],
+              let id = artifact[keyPath: artifactID] else {
+            return nil
+        }
+
+        if selection.recommendedID == id {
+            return "Recommended"
+        }
+        if selection.alternativeIDs.contains(id) {
+            return "Alternative"
+        }
+        return nil
+    }
+
+    private func learningAidSuggestedHelpText<Artifact>(
+        rowID: UUID,
+        state: AIDraftListState<Artifact, String>,
+        selection: LearningAidSectionSelection?,
+        artifactID: KeyPath<Artifact, String?>
+    ) -> String? {
+        guard let selection,
+              let artifact = state.persistedByRowID[rowID],
+              let id = artifact[keyPath: artifactID] else {
+            return nil
+        }
+
+        return selection.overlapHints.first(where: { $0.candidateID == id })?.reason
     }
 
     private var learningAidsHeaderActionTitle: String {
@@ -1842,6 +2053,7 @@ private struct EditableAITextCard: View {
     let primaryRole: ButtonRole?
     let secondaryRole: ButtonRole?
     let tagText: String?
+    let supportingText: String?
     let editorHeight: CGFloat
     let onTextChange: ((String) -> Void)?
     let onPrimary: () -> Void
@@ -1854,6 +2066,7 @@ private struct EditableAITextCard: View {
         primaryRole: ButtonRole? = nil,
         secondaryRole: ButtonRole? = .destructive,
         tagText: String? = nil,
+        supportingText: String? = nil,
         editorHeight: CGFloat = 72,
         onTextChange: ((String) -> Void)? = nil,
         onPrimary: @escaping () -> Void = {},
@@ -1865,6 +2078,8 @@ private struct EditableAITextCard: View {
         self.primaryRole = primaryRole
         self.secondaryRole = secondaryRole
         self.tagText = tagText
+        let trimmedSupportingText = supportingText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.supportingText = (trimmedSupportingText?.isEmpty == false) ? trimmedSupportingText : nil
         self.editorHeight = editorHeight
         self.onTextChange = onTextChange
         self.onPrimary = onPrimary
@@ -1906,6 +2121,13 @@ private struct EditableAITextCard: View {
                 Button(role: secondaryRole, action: onSecondary) { Text(secondaryButtonTitle) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+            }
+
+            if let supportingText {
+                Text(supportingText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(8)

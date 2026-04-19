@@ -205,10 +205,87 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Allowed modes"))
         XCTAssertTrue(prompt.user.contains("Mode prior"))
         XCTAssertTrue(prompt.user.contains("selectionReason"))
+        XCTAssertTrue(prompt.user.contains("cuePlan"))
         XCTAssertTrue(prompt.user.contains("choose the gap position yourself"))
         XCTAssertTrue(prompt.user.contains("Do not choose targeted_letter_cloze only because the word is long"))
         XCTAssertTrue(prompt.user.contains("Do not copy pinyin, romanization, or pronunciation respelling into front or hint"))
+        XCTAssertTrue(prompt.user.contains("Before writing front, choose one semantic source and rewrite it into a learner-facing cue"))
+        XCTAssertTrue(prompt.user.contains("Write cuePlan first, then write draft.front as the final rendered version of cuePlan.normalizedCue"))
+        XCTAssertTrue(prompt.user.contains("draft.front must be derived from cuePlan.normalizedCue, not independently rewritten from raw sources"))
+        XCTAssertTrue(prompt.user.contains("normalizedCue must be a short learner-facing cue"))
+        XCTAssertTrue(prompt.user.contains("do not introduce new dictionary jargon, romanization, or technical wording that is absent from normalizedCue"))
+        XCTAssertTrue(prompt.user.contains("prefer the accepted usage hints as the semantic source for front and hint"))
+        XCTAssertTrue(prompt.user.contains("rewrite the meaning into natural learner-facing Chinese instead of quoting it"))
+        XCTAssertTrue(prompt.user.contains("strip those parts and keep only the learner-facing Chinese meaning"))
         XCTAssertFalse(prompt.user.contains("required masked surface"))
+    }
+
+    func testRecallPlanPromptIncludesSourceEvidenceButNoDraftShape() {
+        let prompt = LLMPrompt.recallCardPlan(
+            word: "lemmatize",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "transitive verb",
+                    definition: "把…按屈折变化形式归类 bǎ… àn qūzhé biànhuà xíngshì guīlèi"
+                )
+            ],
+            context: LLMRecallGenerationContext(
+                acceptedUsageHints: [
+                    "Lemmatize words to find the basic form of a word — 词语的词根或基本形式",
+                    "Find the base form of a word — 找到一个词的原始形态"
+                ]
+            ),
+            allowedModes: [.fullSpelling, .targetedLetterCloze],
+            modePrior: .fullSpelling,
+            anchor: nil,
+            wordSignals: LLMRecallWordSignals(
+                isPhrase: false,
+                hasRepeatedLetters: false,
+                hasConfusableVowelCluster: false
+            ),
+            scaffold: RecallPromptScaffold(
+                learnerCue: "找到一个词的原始形态",
+                hint: "transitive verb · 找到一个词的原始形态"
+            )
+        )
+
+        XCTAssertTrue(prompt.user.contains("Sense inventory"))
+        XCTAssertTrue(prompt.user.contains("Accepted learning aids"))
+        XCTAssertTrue(prompt.user.contains("\"selectedMode\""))
+        XCTAssertTrue(prompt.user.contains("\"cuePlan\""))
+        XCTAssertFalse(prompt.user.contains("\"draft\": {"))
+        XCTAssertTrue(prompt.user.contains("normalizedCue must not contain the exact target word or phrase"))
+    }
+
+    func testRecallDraftFromPlanPromptUsesCuePlanAsSoleSemanticSource() {
+        let prompt = LLMPrompt.recallCardDraftFromPlan(
+            word: "lemmatize",
+            selectedMode: .fullSpelling,
+            primaryGoal: "whole_word_recall",
+            cuePlan: LLMRecallCuePlan(
+                semanticSource: "accepted_usage_hint",
+                normalizedCue: "找到一个词的原始形态"
+            ),
+            anchor: nil,
+            wordSignals: LLMRecallWordSignals(
+                isPhrase: false,
+                hasRepeatedLetters: false,
+                hasConfusableVowelCluster: false
+            ),
+            scaffold: RecallPromptScaffold(
+                learnerCue: "找到一个词的原始形态",
+                hint: "transitive verb · 找到一个词的原始形态"
+            )
+        )
+
+        XCTAssertTrue(prompt.user.contains("Chosen mode"))
+        XCTAssertTrue(prompt.user.contains("Primary goal"))
+        XCTAssertTrue(prompt.user.contains("Cue plan"))
+        XCTAssertTrue(prompt.user.contains("normalizedCue: 找到一个词的原始形态"))
+        XCTAssertTrue(prompt.user.contains("Use cuePlan.normalizedCue as the semantic source of truth for draft.front"))
+        XCTAssertTrue(prompt.user.contains("draft.front must be derived from normalizedCue, not independently rewritten from raw sources"))
+        XCTAssertFalse(prompt.user.contains("Sense inventory"))
+        XCTAssertFalse(prompt.user.contains("Accepted learning aids"))
     }
 
     func testLearningAidsPromptRequestsStructuredPitfallsMnemonicsAndCollocations() {
@@ -226,10 +303,46 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"mnemonics\""))
         XCTAssertTrue(prompt.user.contains("\"collocations\""))
         XCTAssertTrue(prompt.user.contains("\"summary\""))
+        XCTAssertTrue(prompt.user.contains("\"translation\""))
+        XCTAssertTrue(prompt.user.contains("\"category\""))
+        XCTAssertTrue(prompt.user.contains("\"focus\""))
+        XCTAssertTrue(prompt.user.contains("\"recallRelevant\""))
+        XCTAssertTrue(prompt.user.contains("\"senseIndex\""))
         XCTAssertTrue(prompt.user.contains("\"clue\""))
         XCTAssertTrue(prompt.user.contains("\"phrase\""))
+        XCTAssertTrue(prompt.user.contains("\"gloss\""))
+        XCTAssertTrue(prompt.user.contains("recallRelevant should be true only when the item directly helps active recall"))
         XCTAssertTrue(prompt.user.contains("\"charge\" [note: keep raw]"))
         XCTAssertTrue(prompt.user.contains("do not invent source offsets or remap anchors"))
+    }
+
+    func testLearningAidJudgePromptRequestsRecommendationAndOverlapJSON() {
+        let candidatesJSON = """
+        [{"id":"cand_1","text":"Do not confuse charge with accuse.","type":"confusable_word"}]
+        """
+        let acceptedJSON = """
+        [{"id":"pitfalls-accepted-0","section":"pitfalls","text":"Do not confuse charge with accuse."}]
+        """
+
+        let prompt = LLMPrompt.learningAidJudge(
+            section: .pitfalls,
+            word: "charge",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation")
+            ],
+            candidatesJSON: candidatesJSON,
+            acceptedJSON: acceptedJSON
+        )
+
+        XCTAssertTrue(prompt.system.contains("Choose exactly one recommended item when possible"))
+        XCTAssertTrue(prompt.system.contains("Do not rewrite candidates"))
+        XCTAssertTrue(prompt.user.contains("Candidates JSON"))
+        XCTAssertTrue(prompt.user.contains("Accepted learning material JSON"))
+        XCTAssertTrue(prompt.user.contains("\"recommendedId\""))
+        XCTAssertTrue(prompt.user.contains("\"alternativeIds\""))
+        XCTAssertTrue(prompt.user.contains("\"overlapHints\""))
+        XCTAssertTrue(prompt.user.contains("\"whyRecommended\""))
+        XCTAssertTrue(prompt.user.contains("Overlap means teaching the same learning point even if the wording differs"))
     }
 
     func testPhoneticIPAPromptRequestsPureIPAJSON() {

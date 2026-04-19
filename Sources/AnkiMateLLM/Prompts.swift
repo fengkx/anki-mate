@@ -61,6 +61,16 @@ private enum PromptText {
     static func jsonBlock(_ lines: [String]) -> String {
         lines.joined(separator: "\n")
     }
+
+    static func compactJSONString<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
+    }
 }
 
 public enum LLMPrompt {
@@ -324,7 +334,7 @@ public enum LLMPrompt {
                 "{",
                 "  \"draft\": {",
                 "    \"mode\": \"full_spelling | targeted_letter_cloze | phrase_recall\",",
-                "    \"front\": \"learner-facing prompt\",",
+                "    \"front\": \"final rendered prompt derived from cuePlan.normalizedCue\",",
                 "    \"back\": \"exact answer\",",
                 "    \"hint\": \"optional short hint or null\",",
                 "    \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
@@ -394,6 +404,7 @@ public enum LLMPrompt {
             "Generate exactly one recall-oriented flashcard draft as strict structured JSON.",
             "Choose the most appropriate recall mode from the allowed modes.",
             "Base the choice on accepted learning aids, sense inventory, and the main learning objective.",
+            "When raw dictionary wording is technical, formal, or mixed with romanization, rewrite it into plain learner-facing Chinese before drafting the card.",
             "Never add markdown fences, commentary, or extra fields."
         ])
 
@@ -419,6 +430,10 @@ public enum LLMPrompt {
                 "  \"selectionReason\": {",
                 "    \"primaryGoal\": \"whole_word_recall | local_spelling_calibration | phrase_chunk_retrieval\",",
                 "    \"evidence\": [\"short reason 1\", \"short reason 2\"]",
+                "  },",
+                "  \"cuePlan\": {",
+                "    \"semanticSource\": \"accepted_usage_hint | sense_semantic_hint | sense_definition_paraphrase | pitfall | collocation\",",
+                "    \"normalizedCue\": \"short learner-facing cue before final packaging\"",
                 "  }",
                 "}"
             ]),
@@ -426,20 +441,30 @@ public enum LLMPrompt {
                 "Rules",
                 value: PromptText.bulletList([
                     "Output JSON only",
+                    "Before writing front, choose one semantic source and rewrite it into a learner-facing cue",
+                    "Write cuePlan first, then write draft.front as the final rendered version of cuePlan.normalizedCue",
+                    "draft.front must be derived from cuePlan.normalizedCue, not independently rewritten from raw sources",
                     "mode must be one of the allowed modes",
                     "Choose one main learning objective first, then choose the mode",
                     "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
+                    "When accepted usage hints provide a cleaner learner-facing meaning than the raw sense inventory, prefer the accepted usage hints as the semantic source for front and hint",
+                    "Treat raw sense inventory mainly as reference or disambiguation when it is more technical, more formal, or noisier than the accepted usage hints",
                     "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
                     "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
                     "front should be a concise recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
                     "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
+                    "If the sense inventory contains dictionary jargon, formal gloss wording, or bilingual fragments, rewrite the meaning into natural learner-facing Chinese instead of quoting it",
                     "Do not copy pinyin, romanization, or pronunciation respelling into front or hint",
+                    "If any source line contains pinyin, romanization, or mixed bilingual gloss text, strip those parts and keep only the learner-facing Chinese meaning",
                     "back must be the exact target word or phrase, with original spacing preserved",
                     "Use accepted usage hints to sharpen the Chinese cue, not to write a long explanation",
                     "Use mnemonics only for a very short hint when useful",
                     "Do not dump pitfalls, usage hints, and collocations into the front",
                     "hint is optional and should stay short",
                     "selectionReason is required and evidence must be short, concrete, and non-empty",
+                    "cuePlan is required and must explain which semantic source you used before writing the final front",
+                    "normalizedCue must be a short learner-facing cue, not copied raw dictionary wording",
+                    "After cuePlan is chosen, do not introduce new dictionary jargon, romanization, or technical wording that is absent from normalizedCue",
                     "For full_spelling, ask the learner to recall the complete target",
                     "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
                     "For targeted_letter_cloze, choose the gap position yourself",
@@ -449,6 +474,151 @@ public enum LLMPrompt {
                     "For targeted_letter_cloze, do not default to masking the first letter",
                     "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
                     "If accepted pitfalls point to a local spelling risk, align the gap with that risk when possible",
+                    "anchor is optional display metadata only; do not invent source offsets or remap anchors",
+                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
+                    "Return exactly one draft only"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
+    public static func recallCardPlan(
+        word: String,
+        senses: [LLMSensePromptInput],
+        context: LLMRecallGenerationContext,
+        allowedModes: [LLMRecallCardMode],
+        modePrior: LLMRecallCardMode?,
+        anchor: LLMAnchorSnapshot? = nil,
+        wordSignals: LLMRecallWordSignals,
+        scaffold: RecallPromptScaffold? = nil
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+        let normalizedModes = allowedModes.isEmpty ? [.fullSpelling] : allowedModes
+
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Plan exactly one recall-oriented flashcard as strict structured JSON.",
+            "Choose the most appropriate recall mode from the allowed modes.",
+            "Extract one clean learner-facing semantic cue before any card packaging.",
+            "When raw dictionary wording is technical, formal, or mixed with romanization, rewrite it into plain learner-facing Chinese before returning the plan.",
+            "Never add markdown fences, commentary, or extra fields."
+        ])
+
+        let user = PromptText.join([
+            #"Plan exactly 1 recall card for the target "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Accepted learning aids", value: recallLearningAidsText(context)),
+            PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
+            PromptText.labeledBlock("Allowed modes", value: recallAllowedModesText(normalizedModes)),
+            PromptText.labeledBlock("Mode prior", value: recallModePriorText(modePrior)),
+            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: nil)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"selectedMode\": \"full_spelling | targeted_letter_cloze | phrase_recall\",",
+                "  \"selectionReason\": {",
+                "    \"primaryGoal\": \"whole_word_recall | local_spelling_calibration | phrase_chunk_retrieval\",",
+                "    \"evidence\": [\"short reason 1\", \"short reason 2\"]",
+                "  },",
+                "  \"cuePlan\": {",
+                "    \"semanticSource\": \"accepted_usage_hint | sense_semantic_hint | sense_definition_paraphrase | pitfall | collocation\",",
+                "    \"normalizedCue\": \"short learner-facing cue before final packaging\"",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "Choose one main learning objective first, then choose the mode",
+                    "selectedMode must be one of the allowed modes",
+                    "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
+                    "When accepted usage hints provide a cleaner learner-facing meaning than the raw sense inventory, prefer the accepted usage hints as the semantic source",
+                    "Treat raw sense inventory mainly as reference or disambiguation when it is more technical, more formal, or noisier than the accepted usage hints",
+                    "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
+                    "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
+                    "cuePlan is required and must explain which semantic source you used",
+                    "normalizedCue must be a short learner-facing cue, not copied raw dictionary wording",
+                    "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
+                    "If the sense inventory contains dictionary jargon, formal gloss wording, or bilingual fragments, rewrite the meaning into natural learner-facing Chinese instead of quoting it",
+                    "Do not copy pinyin, romanization, or pronunciation respelling into normalizedCue",
+                    "If any source line contains pinyin, romanization, or mixed bilingual gloss text, strip those parts and keep only the learner-facing Chinese meaning",
+                    "normalizedCue must not contain the exact target word or phrase",
+                    "selectionReason is required and evidence must be short, concrete, and non-empty",
+                    "Return exactly one plan only"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
+    public static func recallCardDraftFromPlan(
+        word: String,
+        selectedMode: LLMRecallCardMode,
+        primaryGoal: String,
+        cuePlan: LLMRecallCuePlan,
+        anchor: LLMAnchorSnapshot? = nil,
+        wordSignals: LLMRecallWordSignals,
+        scaffold: RecallPromptScaffold? = nil
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Package exactly one recall flashcard draft as strict structured JSON.",
+            "Use the supplied cue plan as the semantic source of truth.",
+            "Do not re-open or infer new meaning from hidden dictionary sources.",
+            "Never add markdown fences, commentary, or extra fields."
+        ])
+
+        let user = PromptText.join([
+            #"Render exactly 1 recall card draft for the target "\#(trimmedWord)" from the supplied cue plan."#,
+            PromptText.labeledBlock("Chosen mode", value: selectedMode.rawValue),
+            PromptText.labeledBlock("Primary goal", value: primaryGoal),
+            PromptText.labeledBlock("Cue plan", value: [
+                "semanticSource: \(cuePlan.semanticSource)",
+                "normalizedCue: \(cuePlan.normalizedCue)"
+            ].joined(separator: "\n")),
+            PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
+            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: selectedMode)),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"draft\": {",
+                "    \"mode\": \"\(selectedMode.rawValue)\",",
+                "    \"front\": \"final learner-facing prompt rendered from normalizedCue\",",
+                "    \"back\": \"exact answer\",",
+                "    \"hint\": \"optional short hint or null\",",
+                "    \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "Use cuePlan.normalizedCue as the semantic source of truth for draft.front",
+                    "draft.front must be derived from normalizedCue, not independently rewritten from raw sources",
+                    "Do not introduce new dictionary jargon, romanization, or technical wording that is absent from normalizedCue",
+                    "Do not copy pinyin, romanization, or pronunciation respelling into front or hint",
+                    "back must be the exact target word or phrase, with original spacing preserved",
+                    "hint is optional and should stay short",
+                    "For full_spelling, ask the learner to recall the complete target",
+                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
+                    "For targeted_letter_cloze, choose the gap position yourself",
+                    "For targeted_letter_cloze, use exactly one continuous underscore gap",
+                    "For targeted_letter_cloze, the gap should usually be 2 or 3 characters long",
+                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
+                    "For targeted_letter_cloze, do not default to masking the first letter",
+                    "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Return exactly one draft only"
@@ -485,6 +655,11 @@ public enum LLMPrompt {
                 "  \"pitfalls\": [",
                 "    {",
                 "      \"summary\": \"short learner warning\",",
+                "      \"translation\": \"简短中文解释\",",
+                "      \"category\": \"spelling_trap | confusable_word | meaning_misdirection | common_misuse\",",
+                "      \"focus\": \"spelling_segment | meaning_contrast | misuse_pattern | usage_context\",",
+                "      \"recallRelevant\": true,",
+                "      \"senseIndex\": 1,",
                 "      \"details\": \"optional extra explanation\",",
                 "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
                 "    }",
@@ -492,6 +667,11 @@ public enum LLMPrompt {
                 "  \"mnemonics\": [",
                 "    {",
                 "      \"clue\": \"very short mnemonic cue\",",
+                "      \"translation\": \"可选中文提示\",",
+                "      \"kind\": \"sound_hook | image_hook | spelling_hook | contrast_hook\",",
+                "      \"focus\": \"memory_hook | spelling_segment | meaning_contrast\",",
+                "      \"recallRelevant\": true,",
+                "      \"senseIndex\": 1,",
                 "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
                 "    }",
                 "  ],",
@@ -499,6 +679,9 @@ public enum LLMPrompt {
                 "    {",
                 "      \"phrase\": \"common collocation or pattern\",",
                 "      \"gloss\": \"optional short usage gloss\",",
+                "      \"focus\": \"phrase_pattern | usage_context\",",
+                "      \"recallRelevant\": false,",
+                "      \"senseIndex\": 1,",
                 "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
                 "    }",
                 "  ]",
@@ -511,9 +694,68 @@ public enum LLMPrompt {
                     "pitfalls: 2-4 items, focus on spelling traps, confusable meanings, or common misuse rather than general usage summaries",
                     "mnemonics: 1-3 items, make them short and memorable rather than explanatory or definition-like",
                     "collocations: 2-5 items, prefer high-frequency phrases or short patterns, not full example sentences",
+                    "recallRelevant should be true only when the item directly helps active recall, hint design, or mistake avoidance",
+                    "senseIndex is optional and should refer to the numbered sense inventory above when provided",
                     "Keep every string compact and learner-facing",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
+    public static func learningAidJudge(
+        section: LLMLearningAidSection,
+        word: String,
+        senses: [LLMSensePromptInput],
+        candidatesJSON: String,
+        acceptedJSON: String
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+
+        let system = PromptText.join([
+            "You are selecting the most useful learning aid candidate for a vocabulary learner.",
+            "Choose exactly one recommended item when possible, keep overlap advisory, and return strict JSON only.",
+            "Do not rewrite candidates. Do not invent new content."
+        ])
+
+        let user = PromptText.join([
+            #"Select the default recommendation for the "\#(section.rawValue)" section of "\#(trimmedWord)"."#,
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Candidates JSON", value: candidatesJSON),
+            PromptText.labeledBlock("Accepted learning material JSON", value: acceptedJSON),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"recommendedId\": \"candidate id or null\",",
+                "  \"alternativeIds\": [\"candidate ids that remain valid alternatives\"],",
+                "  \"overlapHints\": [",
+                "    {",
+                "      \"candidateId\": \"candidate id\",",
+                "      \"overlapType\": \"accepted_overlap | candidate_overlap\",",
+                "      \"withItemId\": \"accepted or candidate id\",",
+                "      \"reason\": \"short explanation\"",
+                "    }",
+                "  ],",
+                "  \"whyRecommended\": \"one short sentence\"",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Selection principles",
+                value: PromptText.bulletList([
+                    "Pick one candidate that adds the most learning value if the learner accepts only one item in this section",
+                    "Prefer short, specific, actionable items",
+                    "Prefer candidates that help recall or help avoid likely mistakes",
+                    "Avoid recommending candidates that substantially overlap with already accepted material",
+                    "Treat overlap as advisory rather than blocking; overlapping items may still remain as alternatives",
+                    "Overlap means teaching the same learning point even if the wording differs",
+                    "Do not rank by style alone and do not choose generic filler sentences",
+                    "Return JSON only"
                 ])
             )
         ])

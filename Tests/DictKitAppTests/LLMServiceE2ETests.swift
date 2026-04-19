@@ -147,13 +147,16 @@ final class LLMServiceE2ETests: XCTestCase {
         defer { Task { await service.stopServer() } }
 
         for testCase in recallBaselineCorpus {
+            let appContext = appRecallGenerationContext(for: testCase)
+            let appAllowedModes = appRecommendedRecallAllowedModes(for: testCase)
+            let appModePrior = appRecommendedRecallModePrior(for: testCase)
             let decision = try await service.generateRecallCardDraftDecision(
                 word: testCase.word,
                 senses: testCase.senses,
-                context: testCase.context,
-                allowedModes: testCase.allowedModes,
-                modePrior: testCase.modePrior,
-                anchor: testCase.anchor
+                context: appContext,
+                allowedModes: appAllowedModes,
+                modePrior: appModePrior,
+                anchor: testCase.previewAnchor
             )
             let context = failureContext(
                 suite: "baseline",
@@ -166,11 +169,23 @@ final class LLMServiceE2ETests: XCTestCase {
             XCTAssertTrue(isPlainText(decision.draft.front) && isPlainText(decision.draft.back), "\(context) issue=unexpected markdown or labels in recall draft")
             XCTAssertEqual(decision.draft.back, testCase.word, "\(context) issue=back side must preserve the exact target word or phrase")
             XCTAssertEqual(decision.draft.mode, testCase.expectedMode, "\(context) issue=unexpected recall mode")
-            XCTAssertTrue(testCase.allowedModes.contains(decision.draft.mode), "\(context) issue=returned mode must stay within allowed modes")
+            XCTAssertTrue(appAllowedModes.contains(decision.draft.mode), "\(context) issue=returned mode must stay within allowed modes")
+            XCTAssertFalse(
+                decision.draft.front.containsPinyinDiacritics,
+                "\(context) issue=front leaked pinyin or romanization diacritics"
+            )
+            XCTAssertFalse(
+                decision.draft.hint?.containsPinyinDiacritics ?? false,
+                "\(context) issue=hint leaked pinyin or romanization diacritics"
+            )
 
             let selectionReason = try XCTUnwrap(
                 decision.selectionReason,
                 "\(context) issue=selectionReason is required for recall baseline coverage"
+            )
+            let cuePlan = try XCTUnwrap(
+                decision.cuePlan,
+                "\(context) issue=cuePlan is required for recall baseline coverage"
             )
             XCTAssertEqual(
                 selectionReason.primaryGoal,
@@ -178,6 +193,11 @@ final class LLMServiceE2ETests: XCTestCase {
                 "\(context) issue=unexpected primary goal"
             )
             XCTAssertFalse(selectionReason.evidence.isEmpty, "\(context) issue=selectionReason.evidence must not be empty")
+            XCTAssertFalse(cuePlan.normalizedCue.isEmpty, "\(context) issue=cuePlan.normalizedCue must not be empty")
+            XCTAssertFalse(
+                cuePlanContainsTarget(cuePlan.normalizedCue, target: testCase.word),
+                "\(context) issue=cuePlan.normalizedCue must not contain the target word or phrase"
+            )
 
             for needle in testCase.requiredFrontContains {
                 XCTAssertTrue(
@@ -214,11 +234,13 @@ final class LLMServiceE2ETests: XCTestCase {
         defer { Task { await service.stopServer() } }
 
         for testCase in learningAidsBaselineCorpus {
-            let aids = try await service.generateLearningAids(
+            let ranked = try await service.generateRankedLearningAids(
                 word: testCase.word,
                 senses: testCase.senses,
+                acceptedContext: appLearningAidAcceptedContext(for: testCase),
                 anchor: testCase.anchor
             )
+            let aids = ranked.aids
             let context = failureContext(
                 suite: "baseline",
                 promptFamily: "learning_aids",
@@ -248,6 +270,9 @@ final class LLMServiceE2ETests: XCTestCase {
                 },
                 "\(context) issue=collocations should look like phrases, not full sentences or markdown"
             )
+            XCTAssertNotNil(ranked.selections.pitfalls, "\(context) issue=missing pitfall ranking selection")
+            XCTAssertNotNil(ranked.selections.mnemonics, "\(context) issue=missing mnemonic ranking selection")
+            XCTAssertNotNil(ranked.selections.collocations, "\(context) issue=missing collocation ranking selection")
         }
     }
 
@@ -304,10 +329,11 @@ private extension LLMServiceE2ETests {
         let id: String
         let word: String
         let senses: [LLMSensePromptInput]
-        let context: LLMRecallGenerationContext
-        let allowedModes: [LLMRecallCardMode]
-        let modePrior: LLMRecallCardMode?
-        let anchor: LLMAnchorSnapshot?
+        let acceptedPitfalls: [String]
+        let acceptedDefinitionNote: String?
+        let acceptedMnemonics: [String]
+        let acceptedCollocations: [String]
+        let previewAnchor: LLMAnchorSnapshot?
         let expectedMode: LLMRecallCardMode
         let expectedPrimaryGoal: String
         let requiredFrontContains: [String]
@@ -317,6 +343,10 @@ private extension LLMServiceE2ETests {
     struct LearningAidsBaselineCase {
         let word: String
         let senses: [LLMSensePromptInput]
+        let acceptedPitfalls: [String]
+        let acceptedDefinitionNote: String?
+        let acceptedMnemonics: [String]
+        let acceptedCollocations: [String]
         let anchor: LLMAnchorSnapshot?
     }
 
@@ -351,15 +381,11 @@ private extension LLMServiceE2ETests {
                 senses: [
                     LLMSensePromptInput(partOfSpeech: "verb", definition: "起飞；脱下", semanticHint: "起飞")
                 ],
-                context: LLMRecallGenerationContext(
-                    acceptedPitfalls: [],
-                    acceptedUsageHints: ["在飞机语境中表示起飞"],
-                    acceptedMnemonics: [],
-                    acceptedCollocations: []
-                ),
-                allowedModes: [.phraseRecall],
-                modePrior: .phraseRecall,
-                anchor: LLMAnchorSnapshot(text: "take ___", note: "optional snapshot"),
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "在飞机语境中表示起飞",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
                 expectedMode: .phraseRecall,
                 expectedPrimaryGoal: "phrase_chunk_retrieval",
                 requiredFrontContains: [],
@@ -371,15 +397,11 @@ private extension LLMServiceE2ETests {
                 senses: [
                     LLMSensePromptInput(partOfSpeech: "verb", definition: "收到；接收", semanticHint: "收到")
                 ],
-                context: LLMRecallGenerationContext(
-                    acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
-                    acceptedUsageHints: [],
-                    acceptedMnemonics: [],
-                    acceptedCollocations: []
-                ),
-                allowedModes: [.fullSpelling, .targetedLetterCloze],
-                modePrior: .targetedLetterCloze,
-                anchor: nil,
+                acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
+                acceptedDefinitionNote: nil,
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
                 expectedPrimaryGoal: "local_spelling_calibration",
                 requiredFrontContains: [],
@@ -395,15 +417,11 @@ private extension LLMServiceE2ETests {
                         semanticHint: "常见词语搭配"
                     )
                 ],
-                context: LLMRecallGenerationContext(
-                    acceptedPitfalls: ["容易漏掉双写的 ll", "中间元音和后半段顺序容易写错"],
-                    acceptedUsageHints: ["指自然的词语搭配，不是任意两个词放在一起"],
-                    acceptedMnemonics: [],
-                    acceptedCollocations: ["strong collocation"]
-                ),
-                allowedModes: [.fullSpelling, .targetedLetterCloze],
-                modePrior: .targetedLetterCloze,
-                anchor: nil,
+                acceptedPitfalls: ["容易漏掉双写的 ll", "中间元音和后半段顺序容易写错"],
+                acceptedDefinitionNote: "指自然的词语搭配，不是任意两个词放在一起",
+                acceptedMnemonics: [],
+                acceptedCollocations: ["strong collocation"],
+                previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
                 expectedPrimaryGoal: "local_spelling_calibration",
                 requiredFrontContains: ["搭配"],
@@ -419,15 +437,11 @@ private extension LLMServiceE2ETests {
                         semanticHint: "持续不断的"
                     )
                 ],
-                context: LLMRecallGenerationContext(
-                    acceptedPitfalls: [],
-                    acceptedUsageHints: ["常用于表示问题、噪音、争论等持续不止"],
-                    acceptedMnemonics: [],
-                    acceptedCollocations: []
-                ),
-                allowedModes: [.fullSpelling, .targetedLetterCloze],
-                modePrior: .fullSpelling,
-                anchor: nil,
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "常用于表示问题、噪音、争论等持续不止",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
                 expectedMode: .fullSpelling,
                 expectedPrimaryGoal: "whole_word_recall",
                 requiredFrontContains: ["持续"],
@@ -443,19 +457,37 @@ private extension LLMServiceE2ETests {
                         semanticHint: "必要的"
                     )
                 ],
-                context: LLMRecallGenerationContext(
-                    acceptedPitfalls: [],
-                    acceptedUsageHints: ["表示某事是必须的，不可避免的"],
-                    acceptedMnemonics: [],
-                    acceptedCollocations: []
-                ),
-                allowedModes: [.fullSpelling, .targetedLetterCloze],
-                modePrior: .fullSpelling,
-                anchor: nil,
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "表示某事是必须的，不可避免的",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
                 expectedMode: .fullSpelling,
                 expectedPrimaryGoal: "whole_word_recall",
                 requiredFrontContains: ["必要"],
                 requiredFrontExcludes: ["necessary"]
+            ),
+            RecallBaselineCase(
+                id: "recall_lemmatize_reject_dictionary_jargon_and_pinyin",
+                word: "lemmatize",
+                senses: [
+                    LLMSensePromptInput(
+                        partOfSpeech: "transitive verb",
+                        definition: "把…按屈折变化形式归类 bǎ… àn qūzhé biànhuà xíngshì guīlèi"
+                    )
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: """
+                Lemmatize words to find the basic form of a word — 词语的词根或基本形式
+                Find the base form of a word — 找到一个词的原始形态
+                """,
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .fullSpelling,
+                expectedPrimaryGoal: "whole_word_recall",
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["屈折", "qūzhé", "biànhuà", "lemmatize"]
             )
         ]
     }
@@ -468,6 +500,10 @@ private extension LLMServiceE2ETests {
                     LLMSensePromptInput(partOfSpeech: "noun", definition: "formal accusation"),
                     LLMSensePromptInput(partOfSpeech: "verb", definition: "ask someone to pay a price")
                 ],
+                acceptedPitfalls: ["容易和负责、收费几个义项混在一起"],
+                acceptedDefinitionNote: "表示收费时是让别人支付一笔钱",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
                 anchor: LLMAnchorSnapshot(text: "charge", note: "snapshot only")
             ),
             LearningAidsBaselineCase(
@@ -476,6 +512,10 @@ private extension LLMServiceE2ETests {
                     LLMSensePromptInput(partOfSpeech: "noun", definition: "head of a school"),
                     LLMSensePromptInput(partOfSpeech: "adjective", definition: "most important")
                 ],
+                acceptedPitfalls: ["不要和 principle 混淆"],
+                acceptedDefinitionNote: "作名词时可指学校负责人",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
                 anchor: nil
             )
         ]
@@ -537,6 +577,62 @@ private extension LLMServiceE2ETests {
         return longest
     }
 
+    func cuePlanContainsTarget(_ cue: String, target: String) -> Bool {
+        let normalizedCue = cue.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalizedTarget = target.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        guard !normalizedCue.isEmpty, !normalizedTarget.isEmpty else { return false }
+
+        if normalizedTarget.contains(" ") {
+            return normalizedCue.contains(normalizedTarget)
+        }
+
+        let pattern = #"(?<![[:alnum:]])\#(NSRegularExpression.escapedPattern(for: normalizedTarget))(?![[:alnum:]])"#
+        return normalizedCue.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    func appRecallGenerationContext(for testCase: RecallBaselineCase) -> LLMRecallGenerationContext {
+        LLMService.normalizeRecallGenerationContext(
+            LLMRecallGenerationContext(
+                acceptedPitfalls: testCase.acceptedPitfalls,
+                acceptedUsageHints: acceptedUsageHints(from: testCase.acceptedDefinitionNote),
+                acceptedMnemonics: testCase.acceptedMnemonics,
+                acceptedCollocations: testCase.acceptedCollocations
+            )
+        )
+    }
+
+    func appRecommendedRecallAllowedModes(for testCase: RecallBaselineCase) -> [LLMRecallCardMode] {
+        LLMService.recommendedRecallAllowedModes(
+            for: testCase.word,
+            context: appRecallGenerationContext(for: testCase)
+        )
+    }
+
+    func appRecommendedRecallModePrior(for testCase: RecallBaselineCase) -> LLMRecallCardMode? {
+        LLMService.recommendedRecallModePrior(
+            for: testCase.word,
+            context: appRecallGenerationContext(for: testCase),
+            allowedModes: appRecommendedRecallAllowedModes(for: testCase)
+        )
+    }
+
+    func acceptedUsageHints(from note: String?) -> [String] {
+        guard let note else { return [] }
+        return note
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    func appLearningAidAcceptedContext(for testCase: LearningAidsBaselineCase) -> LLMLearningAidAcceptedContext {
+        LLMLearningAidAcceptedContext(
+            acceptedPitfalls: testCase.acceptedPitfalls,
+            acceptedUsageHints: testCase.acceptedDefinitionNote.map { [$0] } ?? [],
+            acceptedMnemonics: testCase.acceptedMnemonics,
+            acceptedCollocations: testCase.acceptedCollocations
+        )
+    }
+
     func failureContext(
         suite: String,
         promptFamily: String,
@@ -562,5 +658,12 @@ private extension String {
                 return false
             }
         }
+    }
+
+    var containsPinyinDiacritics: Bool {
+        range(
+            of: #"[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛ]"#,
+            options: .regularExpression
+        ) != nil
     }
 }

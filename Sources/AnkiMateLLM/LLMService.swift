@@ -12,6 +12,7 @@ public final class LLMService: ObservableObject {
     private static let lastSuccessfulModelIdDefaultsKey = "ankimate.lastSuccessfullyLoadedModelId"
     private static let contextSizeEnvironmentKey = "DICTKIT_LLM_CONTEXT_SIZE"
     private static let gpuLayersEnvironmentKey = "DICTKIT_LLM_GPU_LAYERS"
+    private static let recallDebugEnvironmentKey = "DICTKIT_LLM_RECALL_DEBUG"
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var loadedModelId: String?
@@ -667,33 +668,74 @@ public final class LLMService: ObservableObject {
             senses: normalizedSenses
         )
         let wordSignals = Self.recallWordSignals(for: normalizedWord)
-        let prompt = LLMPrompt.recallCardDecision(
-            word: normalizedWord,
-            senses: normalizedSenses,
-            context: normalizedContext,
-            allowedModes: normalizedAllowedModes,
-            modePrior: normalizedModePrior,
-            anchor: anchor,
-            wordSignals: wordSignals,
-            scaffold: scaffold
-        )
 
         do {
-            let response: RecallCardDecisionPayload = try await generateStructuredOutput(
-                type: RecallCardDecisionPayload.self,
-                prompt: prompt,
-                maxTokens: 360,
-                temperature: adjustedTemperature(0.25),
-                responseFormat: Self.recallDecisionResponseFormat(allowedModes: normalizedAllowedModes)
-            )
-
-            if let decision = Self.normalizeRecallCardDecision(
-                response,
+            let planPrompt = LLMPrompt.recallCardPlan(
+                word: normalizedWord,
+                senses: normalizedSenses,
+                context: normalizedContext,
                 allowedModes: normalizedAllowedModes,
-                target: normalizedWord,
-                fallbackAnchor: anchor
+                modePrior: normalizedModePrior,
+                anchor: anchor,
+                wordSignals: wordSignals,
+                scaffold: scaffold
+            )
+            let planResponse: RecallCardPlanPayload = try await generateStructuredOutput(
+                type: RecallCardPlanPayload.self,
+                prompt: planPrompt,
+                maxTokens: 220,
+                temperature: adjustedTemperature(0.25),
+                responseFormat: Self.recallPlanResponseFormat(allowedModes: normalizedAllowedModes)
+            )
+            if let plan = Self.normalizeRecallCardPlan(
+                planResponse,
+                allowedModes: normalizedAllowedModes,
+                target: normalizedWord
             ) {
-                return decision
+                let draftPrompt = LLMPrompt.recallCardDraftFromPlan(
+                    word: normalizedWord,
+                    selectedMode: plan.selectedMode,
+                    primaryGoal: plan.selectionReason.primaryGoal,
+                    cuePlan: plan.cuePlan,
+                    anchor: anchor,
+                    wordSignals: wordSignals,
+                    scaffold: scaffold
+                )
+                let draftResponse: RecallCardDecisionPayload = try await generateStructuredOutput(
+                    type: RecallCardDecisionPayload.self,
+                    prompt: draftPrompt,
+                    maxTokens: 220,
+                    temperature: adjustedTemperature(0.2),
+                    responseFormat: Self.recallDraftResponseFormat(mode: plan.selectedMode)
+                )
+                if let draftPayload = draftResponse.draft,
+                   let draft = Self.normalizeRecallCardDraft(
+                    draftPayload,
+                    allowedModes: [plan.selectedMode],
+                    target: normalizedWord
+                   ) {
+                    let enforcedDraft = Self.enforceRecallDraftContract(
+                        draft,
+                        fallbackAnchor: anchor
+                    )
+                    return RecallCardDraftDecisionEnvelope(
+                        draft: enforcedDraft,
+                        selectionReason: plan.selectionReason,
+                        cuePlan: plan.cuePlan
+                    )
+                }
+                if let fallback = Self.ruleBasedRecallCardDraft(
+                    word: normalizedWord,
+                    senses: normalizedSenses,
+                    mode: plan.selectedMode,
+                    anchor: anchor
+                ) {
+                    return RecallCardDraftDecisionEnvelope(
+                        draft: fallback,
+                        selectionReason: plan.selectionReason,
+                        cuePlan: plan.cuePlan
+                    )
+                }
             }
         } catch {
             if let fallback = Self.ruleBasedRecallCardDraft(
@@ -704,7 +746,8 @@ public final class LLMService: ObservableObject {
             ) {
                 return RecallCardDraftDecisionEnvelope(
                     draft: fallback,
-                    selectionReason: Self.fallbackSelectionReason(for: fallback.mode)
+                    selectionReason: Self.fallbackSelectionReason(for: fallback.mode),
+                    cuePlan: Self.fallbackCuePlan(for: fallback, senses: normalizedSenses)
                 )
             }
             throw error
@@ -718,7 +761,8 @@ public final class LLMService: ObservableObject {
         ) {
             return RecallCardDraftDecisionEnvelope(
                 draft: fallback,
-                selectionReason: Self.fallbackSelectionReason(for: fallback.mode)
+                selectionReason: Self.fallbackSelectionReason(for: fallback.mode),
+                cuePlan: Self.fallbackCuePlan(for: fallback, senses: normalizedSenses)
             )
         }
 
@@ -782,6 +826,54 @@ public final class LLMService: ObservableObject {
         )
 
         return Self.normalizeLearningAids(response)
+    }
+
+    public func generateRankedLearningAids(
+        word: String,
+        senses: [LLMSensePromptInput],
+        acceptedContext: LLMLearningAidAcceptedContext,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMLearningAidsRankedResult {
+        let aids = try await generateLearningAids(
+            word: word,
+            senses: senses,
+            anchor: anchor
+        )
+
+        let normalizedContext = Self.normalizeLearningAidAcceptedContext(acceptedContext)
+
+        async let pitfallSelection = rankLearningAidSection(
+            .pitfalls,
+            word: word,
+            senses: senses,
+            aids: aids,
+            acceptedContext: normalizedContext
+        )
+        async let mnemonicSelection = rankLearningAidSection(
+            .mnemonics,
+            word: word,
+            senses: senses,
+            aids: aids,
+            acceptedContext: normalizedContext
+        )
+        async let collocationSelection = rankLearningAidSection(
+            .collocations,
+            word: word,
+            senses: senses,
+            aids: aids,
+            acceptedContext: normalizedContext
+        )
+
+        let selections = await LLMLearningAidSelections(
+            pitfalls: pitfallSelection,
+            mnemonics: mnemonicSelection,
+            collocations: collocationSelection
+        )
+
+        return LLMLearningAidsRankedResult(
+            aids: Self.reorderLearningAids(aids, selections: selections),
+            selections: selections
+        )
     }
 
     public func generatePitfalls(
@@ -1319,13 +1411,34 @@ struct RecallCardDraftEnvelope: Decodable {
     }
 }
 
+struct RecallCardPlanPayload: Decodable {
+    let selectedMode: String
+    let selectionReason: RecallSelectionReasonPayload?
+    let cuePlan: RecallCuePlanPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case selectedMode
+        case mode
+        case selectionReason
+        case cuePlan
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.selectedMode =
+            try container.decodeIfPresent(String.self, forKey: .selectedMode)
+            ?? container.decodeIfPresent(String.self, forKey: .mode)
+            ?? ""
+        self.selectionReason = try container.decodeIfPresent(RecallSelectionReasonPayload.self, forKey: .selectionReason)
+        self.cuePlan = try container.decodeIfPresent(RecallCuePlanPayload.self, forKey: .cuePlan)
+    }
+}
+
 struct RecallCardDecisionPayload: Decodable {
     let draft: RecallCardDraftPayload?
-    let selectionReason: RecallSelectionReasonPayload?
 
     private enum CodingKeys: String, CodingKey {
         case draft
-        case selectionReason
     }
 }
 
@@ -1409,6 +1522,16 @@ struct RecallSelectionReasonPayload: Decodable {
     private enum CodingKeys: String, CodingKey {
         case primaryGoal
         case evidence
+    }
+}
+
+struct RecallCuePlanPayload: Decodable {
+    let semanticSource: String
+    let normalizedCue: String
+
+    private enum CodingKeys: String, CodingKey {
+        case semanticSource
+        case normalizedCue
     }
 }
 
@@ -1501,19 +1624,46 @@ struct LearningAidsEnvelope: Decodable {
 
 struct PitfallPayload: Decodable {
     let summary: String
+    let translation: String?
+    let category: String?
+    let focus: String?
+    let recallRelevant: Bool?
+    let senseIndex: Int?
     let details: String?
     let anchor: LLMAnchorSnapshot?
 }
 
 struct MnemonicPayload: Decodable {
     let clue: String
+    let translation: String?
+    let kind: String?
+    let focus: String?
+    let recallRelevant: Bool?
+    let senseIndex: Int?
     let anchor: LLMAnchorSnapshot?
 }
 
 struct CollocationPayload: Decodable {
     let phrase: String
     let gloss: String?
+    let focus: String?
+    let recallRelevant: Bool?
+    let senseIndex: Int?
     let anchor: LLMAnchorSnapshot?
+}
+
+struct LearningAidJudgeEnvelope: Decodable {
+    let recommendedId: String?
+    let alternativeIds: [String]
+    let overlapHints: [LearningAidJudgeOverlapHintPayload]
+    let whyRecommended: String?
+}
+
+struct LearningAidJudgeOverlapHintPayload: Decodable {
+    let candidateId: String
+    let overlapType: String?
+    let withItemId: String?
+    let reason: String
 }
 
 extension LLMService {
@@ -1564,33 +1714,24 @@ extension LLMService {
         return requestedModes.compactMap { draftsByMode[$0] }
     }
 
-    static func normalizeRecallCardDecision(
-        _ payload: RecallCardDecisionPayload,
+    static func normalizeRecallCardPlan(
+        _ payload: RecallCardPlanPayload,
         allowedModes: [LLMRecallCardMode],
-        target: String,
-        fallbackAnchor: LLMAnchorSnapshot?
-    ) -> RecallCardDraftDecisionEnvelope? {
-        guard let draftPayload = payload.draft,
-              let draft = normalizeRecallCardDraft(
-                  draftPayload,
-                  allowedModes: allowedModes,
-                  target: target
-              ),
+        target: String
+    ) -> (selectedMode: LLMRecallCardMode, selectionReason: LLMRecallSelectionReason, cuePlan: LLMRecallCuePlan)? {
+        guard let selectedMode = normalizedRecallCardMode(from: payload.selectedMode),
+              allowedModes.contains(selectedMode),
               let selectionReason = normalizeRecallSelectionReason(
                   payload.selectionReason,
-                  selectedMode: draft.mode
+                  selectedMode: selectedMode
+              ),
+              let cuePlan = normalizeRecallCuePlan(
+                  payload.cuePlan,
+                  target: target
               ) else {
             return nil
         }
-
-        let enforcedDraft = enforceRecallDraftContract(
-            draft,
-            fallbackAnchor: fallbackAnchor
-        )
-        return RecallCardDraftDecisionEnvelope(
-            draft: enforcedDraft,
-            selectionReason: selectionReason
-        )
+        return (selectedMode, selectionReason, cuePlan)
     }
 
     static func normalizeLearningAids(_ payload: LearningAidsEnvelope) -> LLMLearningAids {
@@ -1719,23 +1860,94 @@ extension LLMService {
         return keywords.contains { normalized.contains($0) }
     }
 
-    private static func recallDecisionResponseFormat(
+    private static func recallPlanResponseFormat(
         allowedModes: [LLMRecallCardMode]
     ) -> LLMResponseFormat {
         LLMResponseFormat(
             kind: .jsonSchema,
-            schema: recallDecisionSchema(allowedModes: allowedModes),
+            schema: recallPlanSchema(allowedModes: allowedModes),
             strict: true
         )
     }
 
-    private static func recallDecisionSchema(
+    private static func recallDraftResponseFormat(
+        mode: LLMRecallCardMode
+    ) -> LLMResponseFormat {
+        LLMResponseFormat(
+            kind: .jsonSchema,
+            schema: recallDraftSchema(mode: mode),
+            strict: true
+        )
+    }
+
+    private static func recallPlanSchema(
         allowedModes: [LLMRecallCardMode]
     ) -> JSONValue {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
-            "required": .array([.string("draft"), .string("selectionReason")]),
+            "required": .array([.string("selectedMode"), .string("selectionReason"), .string("cuePlan")]),
+            "properties": .object([
+                "selectedMode": .object([
+                    "type": .string("string"),
+                    "enum": .array(allowedModes.map { .string($0.rawValue) })
+                ]),
+                "selectionReason": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([.string("primaryGoal"), .string("evidence")]),
+                    "properties": .object([
+                        "primaryGoal": .object([
+                            "type": .string("string"),
+                            "enum": .array([
+                                .string("whole_word_recall"),
+                                .string("local_spelling_calibration"),
+                                .string("phrase_chunk_retrieval")
+                            ])
+                        ]),
+                        "evidence": .object([
+                            "type": .string("array"),
+                            "items": .object([
+                                "type": .string("string"),
+                                "maxLength": .number(120)
+                            ]),
+                            "minItems": .number(1),
+                            "maxItems": .number(3)
+                        ])
+                    ])
+                ]),
+                "cuePlan": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([.string("semanticSource"), .string("normalizedCue")]),
+                    "properties": .object([
+                        "semanticSource": .object([
+                            "type": .string("string"),
+                            "enum": .array([
+                                .string("accepted_usage_hint"),
+                                .string("sense_semantic_hint"),
+                                .string("sense_definition_paraphrase"),
+                                .string("pitfall"),
+                                .string("collocation")
+                            ])
+                        ]),
+                        "normalizedCue": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(120)
+                        ])
+                    ])
+                ])
+            ])
+        ])
+    }
+
+    private static func recallDraftSchema(
+        mode: LLMRecallCardMode
+    ) -> JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "required": .array([.string("draft")]),
             "properties": .object([
                 "draft": .object([
                     "type": .string("object"),
@@ -1748,7 +1960,7 @@ extension LLMService {
                     "properties": .object([
                         "mode": .object([
                             "type": .string("string"),
-                            "enum": .array(allowedModes.map { .string($0.rawValue) })
+                            "enum": .array([.string(mode.rawValue)])
                         ]),
                         "front": .object([
                             "type": .string("string"),
@@ -1776,30 +1988,6 @@ extension LLMService {
                                     "maxLength": .number(160)
                                 ])
                             ])
-                        ])
-                    ])
-                ]),
-                "selectionReason": .object([
-                    "type": .string("object"),
-                    "additionalProperties": .bool(false),
-                    "required": .array([.string("primaryGoal"), .string("evidence")]),
-                    "properties": .object([
-                        "primaryGoal": .object([
-                            "type": .string("string"),
-                            "enum": .array([
-                                .string("whole_word_recall"),
-                                .string("local_spelling_calibration"),
-                                .string("phrase_chunk_retrieval")
-                            ])
-                        ]),
-                        "evidence": .object([
-                            "type": .string("array"),
-                            "items": .object([
-                                "type": .string("string"),
-                                "maxLength": .number(120)
-                            ]),
-                            "minItems": .number(1),
-                            "maxItems": .number(3)
                         ])
                     ])
                 ])
@@ -1966,6 +2154,50 @@ extension LLMService {
         )
     }
 
+    private static func normalizeRecallCuePlan(
+        _ payload: RecallCuePlanPayload?,
+        target: String
+    ) -> LLMRecallCuePlan? {
+        guard let payload else { return nil }
+        let semanticSource = normalizeGeneratedLine(payload.semanticSource, stripFieldLabels: true)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        let allowedSources: Set<String> = [
+            "accepted_usage_hint",
+            "sense_semantic_hint",
+            "sense_definition_paraphrase",
+            "pitfall",
+            "collocation"
+        ]
+        guard allowedSources.contains(semanticSource) else { return nil }
+
+        let normalizedCue = normalizeGeneratedLine(payload.normalizedCue, stripFieldLabels: true)
+        guard !normalizedCue.isEmpty, normalizedCue != target else { return nil }
+        guard !recallCueContainsTarget(normalizedCue, target: target) else { return nil }
+
+        return LLMRecallCuePlan(
+            semanticSource: semanticSource,
+            normalizedCue: normalizedCue
+        )
+    }
+
+    private static func recallCueContainsTarget(_ cue: String, target: String) -> Bool {
+        let trimmedCue = cue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCue.isEmpty, !trimmedTarget.isEmpty else { return false }
+
+        let normalizedCue = trimmedCue.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalizedTarget = trimmedTarget.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+
+        if normalizedTarget.contains(" ") {
+            return normalizedCue.contains(normalizedTarget)
+        }
+
+        let pattern = #"(?<![[:alnum:]])\#(NSRegularExpression.escapedPattern(for: normalizedTarget))(?![[:alnum:]])"#
+        return normalizedCue.range(of: pattern, options: .regularExpression) != nil
+    }
+
     private static func fallbackSelectionReason(for mode: LLMRecallCardMode) -> LLMRecallSelectionReason {
         switch mode {
         case .fullSpelling:
@@ -1984,6 +2216,21 @@ extension LLMService {
                 evidence: ["fallback selected a phrase-level recall card"]
             )
         }
+    }
+
+    private static func fallbackCuePlan(
+        for draft: LLMRecallCardDraft,
+        senses: [LLMSensePromptInput]
+    ) -> LLMRecallCuePlan {
+        let semanticSource = senses.first?.semanticHint?.nilIfEmpty != nil
+            ? "sense_semantic_hint"
+            : "sense_definition_paraphrase"
+        let normalizedCue = recallPromptScaffold(word: draft.back, senses: senses).learnerCue
+            ?? draft.front
+        return LLMRecallCuePlan(
+            semanticSource: semanticSource,
+            normalizedCue: normalizedCue
+        )
     }
 
     private static func isExpectedPrimaryGoal(
@@ -2238,6 +2485,16 @@ extension LLMService {
         guard !summary.isEmpty else { return nil }
         return LLMPitfall(
             summary: summary,
+            translation: payload.translation.map {
+                normalizeGeneratedLine(
+                    $0,
+                    stripFieldLabels: true
+                )
+            }?.nilIfEmpty,
+            category: payload.category?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            focus: payload.focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            recallRelevant: payload.recallRelevant,
+            senseIndex: payload.senseIndex,
             details: payload.details.map {
                 normalizeGeneratedLine(
                     $0,
@@ -2256,6 +2513,16 @@ extension LLMService {
         guard !clue.isEmpty else { return nil }
         return LLMMnemonic(
             clue: clue,
+            translation: payload.translation.map {
+                normalizeGeneratedLine(
+                    $0,
+                    stripFieldLabels: true
+                )
+            }?.nilIfEmpty,
+            kind: payload.kind?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            focus: payload.focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            recallRelevant: payload.recallRelevant,
+            senseIndex: payload.senseIndex,
             anchor: normalizeAnchor(payload.anchor)
         )
     }
@@ -2274,8 +2541,363 @@ extension LLMService {
                     stripFieldLabels: true
                 )
             }?.nilIfEmpty,
+            focus: payload.focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            recallRelevant: payload.recallRelevant,
+            senseIndex: payload.senseIndex,
             anchor: normalizeAnchor(payload.anchor)
         )
+    }
+
+    private struct LearningAidJudgeCandidate: Codable {
+        let id: String
+        let text: String
+        let translation: String?
+        let type: String?
+        let focus: String?
+        let recallRelevant: Bool?
+        let senseIndex: Int?
+    }
+
+    private struct LearningAidJudgeAcceptedItem: Codable {
+        let id: String
+        let section: String
+        let text: String
+        let focus: String?
+        let recallRelevant: Bool?
+    }
+
+    private func rankLearningAidSection(
+        _ section: LLMLearningAidSection,
+        word: String,
+        senses: [LLMSensePromptInput],
+        aids: LLMLearningAids,
+        acceptedContext: LLMLearningAidAcceptedContext
+    ) async -> LLMLearningAidSectionSelection? {
+        let candidates = learningAidCandidates(for: section, aids: aids)
+        guard !candidates.isEmpty else { return nil }
+
+        do {
+            let prompt = LLMPrompt.learningAidJudge(
+                section: section,
+                word: word,
+                senses: senses,
+                candidatesJSON: compactJSONString(candidates),
+                acceptedJSON: compactJSONString(
+                    judgeAcceptedItems(for: acceptedContext)
+                )
+            )
+            let judge: LearningAidJudgeEnvelope = try await generateStructuredOutput(
+                type: LearningAidJudgeEnvelope.self,
+                prompt: prompt,
+                maxTokens: 260,
+                temperature: adjustedTemperature(0.2),
+                responseFormat: LLMResponseFormat(kind: .json)
+            )
+            return Self.applyLearningAidGuardrails(
+                section: section,
+                judge: judge,
+                candidates: candidates,
+                acceptedItems: judgeAcceptedItems(for: acceptedContext)
+            )
+        } catch {
+            return Self.deterministicLearningAidFallback(
+                section: section,
+                candidates: candidates
+            )
+        }
+    }
+
+    private func learningAidCandidates(
+        for section: LLMLearningAidSection,
+        aids: LLMLearningAids
+    ) -> [LearningAidJudgeCandidate] {
+        switch section {
+        case .pitfalls:
+            return aids.pitfalls.map {
+                LearningAidJudgeCandidate(
+                    id: $0.id,
+                    text: $0.summary,
+                    translation: $0.translation ?? $0.details,
+                    type: $0.category,
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senseIndex: $0.senseIndex
+                )
+            }
+        case .mnemonics:
+            return aids.mnemonics.map {
+                LearningAidJudgeCandidate(
+                    id: $0.id,
+                    text: $0.clue,
+                    translation: $0.translation,
+                    type: $0.kind,
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senseIndex: $0.senseIndex
+                )
+            }
+        case .collocations:
+            return aids.collocations.map {
+                LearningAidJudgeCandidate(
+                    id: $0.id,
+                    text: $0.phrase,
+                    translation: $0.gloss,
+                    type: "collocation",
+                    focus: $0.focus,
+                    recallRelevant: $0.recallRelevant,
+                    senseIndex: $0.senseIndex
+                )
+            }
+        }
+    }
+
+    private func judgeAcceptedItems(
+        for acceptedContext: LLMLearningAidAcceptedContext
+    ) -> [LearningAidJudgeAcceptedItem] {
+        var items: [LearningAidJudgeAcceptedItem] = []
+
+        func append(sectionName: String, texts: [String], recallRelevant: Bool? = nil) {
+            for (index, text) in texts.enumerated() {
+                let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalized.isEmpty else { continue }
+                items.append(
+                    LearningAidJudgeAcceptedItem(
+                        id: "\(sectionName)-accepted-\(index)",
+                        section: sectionName,
+                        text: normalized,
+                        focus: nil,
+                        recallRelevant: recallRelevant
+                    )
+                )
+            }
+        }
+
+        append(sectionName: "pitfalls", texts: acceptedContext.acceptedPitfalls, recallRelevant: true)
+        append(sectionName: "usage", texts: acceptedContext.acceptedUsageHints)
+        append(sectionName: "mnemonics", texts: acceptedContext.acceptedMnemonics)
+        append(sectionName: "collocations", texts: acceptedContext.acceptedCollocations)
+        return items
+    }
+
+    static func normalizeLearningAidAcceptedContext(
+        _ context: LLMLearningAidAcceptedContext
+    ) -> LLMLearningAidAcceptedContext {
+        LLMLearningAidAcceptedContext(
+            acceptedPitfalls: normalizeRecallTextItems(context.acceptedPitfalls, limit: 4),
+            acceptedUsageHints: normalizeRecallTextItems(context.acceptedUsageHints, limit: 4),
+            acceptedMnemonics: normalizeRecallTextItems(context.acceptedMnemonics, limit: 3),
+            acceptedCollocations: normalizeRecallTextItems(context.acceptedCollocations, limit: 4)
+        )
+    }
+
+    private static func applyLearningAidGuardrails(
+        section: LLMLearningAidSection,
+        judge: LearningAidJudgeEnvelope,
+        candidates: [LearningAidJudgeCandidate],
+        acceptedItems: [LearningAidJudgeAcceptedItem]
+    ) -> LLMLearningAidSectionSelection {
+        let candidateByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
+        let overlapHints = judge.overlapHints.compactMap { hint -> LLMLearningAidOverlapHint? in
+            guard candidateByID[hint.candidateId] != nil else { return nil }
+            let reason = hint.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reason.isEmpty else { return nil }
+            return LLMLearningAidOverlapHint(
+                candidateID: hint.candidateId,
+                overlapType: hint.overlapType?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                withItemID: hint.withItemId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                reason: reason
+            )
+        }
+
+        var recommendedID = judge.recommendedId.flatMap { candidateByID[$0] != nil ? $0 : nil }
+        if let currentRecommendedID = recommendedID,
+           let candidate = candidateByID[currentRecommendedID],
+           shouldRejectRecommendedCandidate(section: section, candidate: candidate, acceptedItems: acceptedItems, overlapHints: overlapHints) {
+            recommendedID = nil
+        }
+
+        if recommendedID == nil {
+            recommendedID = firstValidCandidateWithoutAcceptedOverlap(
+                section: section,
+                candidates: candidates,
+                acceptedItems: acceptedItems,
+                overlapHints: overlapHints
+            )?.id
+        }
+
+        guard let recommendedID else {
+            return deterministicLearningAidFallback(section: section, candidates: candidates)
+                ?? LLMLearningAidSectionSelection(
+                    recommendedID: nil,
+                    alternativeIDs: candidates.map(\.id),
+                    overlapHints: overlapHints,
+                    whyRecommended: nil,
+                    selectionSource: "deterministic_fallback"
+                )
+        }
+
+        return LLMLearningAidSectionSelection(
+            recommendedID: recommendedID,
+            alternativeIDs: candidates.map(\.id).filter { $0 != recommendedID },
+            overlapHints: overlapHints,
+            whyRecommended: judge.whyRecommended?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            selectionSource: "judge_with_guardrails"
+        )
+    }
+
+    private static func deterministicLearningAidFallback(
+        section: LLMLearningAidSection,
+        candidates: [LearningAidJudgeCandidate]
+    ) -> LLMLearningAidSectionSelection? {
+        let valid = candidates.filter { isValidLearningAidCandidate($0, for: section) }
+        guard !valid.isEmpty else { return nil }
+        let sorted = valid.sorted {
+            fallbackPriority(for: $0, section: section) > fallbackPriority(for: $1, section: section)
+        }
+        guard let recommended = sorted.first else { return nil }
+        return LLMLearningAidSectionSelection(
+            recommendedID: recommended.id,
+            alternativeIDs: sorted.dropFirst().map(\.id),
+            overlapHints: [],
+            whyRecommended: nil,
+            selectionSource: "deterministic_fallback"
+        )
+    }
+
+    private static func reorderLearningAids(
+        _ aids: LLMLearningAids,
+        selections: LLMLearningAidSelections
+    ) -> LLMLearningAids {
+        LLMLearningAids(
+            pitfalls: reorder(aids.pitfalls, selection: selections.pitfalls),
+            mnemonics: reorder(aids.mnemonics, selection: selections.mnemonics),
+            collocations: reorder(aids.collocations, selection: selections.collocations)
+        )
+    }
+
+    private static func reorder(_ items: [LLMPitfall], selection: LLMLearningAidSectionSelection?) -> [LLMPitfall] {
+        guard let selection else { return items }
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
+    }
+
+    private static func reorder(_ items: [LLMMnemonic], selection: LLMLearningAidSectionSelection?) -> [LLMMnemonic] {
+        guard let selection else { return items }
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
+    }
+
+    private static func reorder(_ items: [LLMCollocation], selection: LLMLearningAidSectionSelection?) -> [LLMCollocation] {
+        guard let selection else { return items }
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
+    }
+
+    private static func orderedIDs(selection: LLMLearningAidSectionSelection, allIDs: [String]) -> [String] {
+        var ordered: [String] = []
+        if let recommendedID = selection.recommendedID {
+            ordered.append(recommendedID)
+        }
+        ordered.append(contentsOf: selection.alternativeIDs.filter { !ordered.contains($0) })
+        ordered.append(contentsOf: allIDs.filter { !ordered.contains($0) })
+        return ordered
+    }
+
+    private static func shouldRejectRecommendedCandidate(
+        section: LLMLearningAidSection,
+        candidate: LearningAidJudgeCandidate,
+        acceptedItems: [LearningAidJudgeAcceptedItem],
+        overlapHints: [LLMLearningAidOverlapHint]
+    ) -> Bool {
+        !isValidLearningAidCandidate(candidate, for: section) ||
+            overlapHints.contains(where: { $0.candidateID == candidate.id && $0.overlapType == "accepted_overlap" }) ||
+            acceptedItems.contains(where: { normalizedLearningAidText($0.text) == normalizedLearningAidText(candidate.text) })
+    }
+
+    private static func firstValidCandidateWithoutAcceptedOverlap(
+        section: LLMLearningAidSection,
+        candidates: [LearningAidJudgeCandidate],
+        acceptedItems: [LearningAidJudgeAcceptedItem],
+        overlapHints: [LLMLearningAidOverlapHint]
+    ) -> LearningAidJudgeCandidate? {
+        candidates.first { candidate in
+            guard isValidLearningAidCandidate(candidate, for: section) else { return false }
+            let hasAcceptedOverlap = overlapHints.contains {
+                $0.candidateID == candidate.id && $0.overlapType == "accepted_overlap"
+            }
+            let exactDuplicate = acceptedItems.contains {
+                normalizedLearningAidText($0.text) == normalizedLearningAidText(candidate.text)
+            }
+            return !hasAcceptedOverlap && !exactDuplicate
+        }
+    }
+
+    private static func isValidLearningAidCandidate(
+        _ candidate: LearningAidJudgeCandidate,
+        for section: LLMLearningAidSection
+    ) -> Bool {
+        let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
+        guard !isGenericLearningAidText(text) else { return false }
+
+        switch section {
+        case .pitfalls:
+            return text.split(whereSeparator: \.isWhitespace).count <= 20 &&
+                candidate.type != "usage_tendency"
+        case .mnemonics:
+            return text.split(whereSeparator: \.isWhitespace).count <= 18
+        case .collocations:
+            return text.split(whereSeparator: \.isWhitespace).count <= 8
+        }
+    }
+
+    private static func isGenericLearningAidText(_ text: String) -> Bool {
+        let normalized = normalizedLearningAidText(text)
+        let genericPatterns = [
+            "this is a useful word",
+            "be careful with this word",
+            "this word is common",
+            "useful in many contexts"
+        ]
+        return genericPatterns.contains { normalized.contains($0) }
+    }
+
+    private static func normalizedLearningAidText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func fallbackPriority(
+        for candidate: LearningAidJudgeCandidate,
+        section: LLMLearningAidSection
+    ) -> Int {
+        let base: Int
+        switch section {
+        case .pitfalls:
+            switch candidate.type {
+            case "spelling_trap": base = 40
+            case "confusable_word": base = 30
+            case "common_misuse": base = 20
+            case "meaning_misdirection": base = 10
+            default: base = 0
+            }
+        case .mnemonics:
+            base = candidate.recallRelevant == true ? 20 : 10
+        case .collocations:
+            base = candidate.recallRelevant == true ? 15 : 10
+        }
+
+        let brevityBonus = max(0, 20 - candidate.text.split(whereSeparator: \.isWhitespace).count)
+        return base + brevityBonus
+    }
+
+    private func compactJSONString<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
     }
 
     private static func normalizeAnchor(_ anchor: LLMAnchorSnapshot?) -> LLMAnchorSnapshot? {
@@ -2287,6 +2909,7 @@ extension LLMService {
             note: anchor.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         )
     }
+
 }
 
 private extension String {

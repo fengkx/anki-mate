@@ -114,6 +114,15 @@ let package = Package(
             path: "Sources/CllmLibrary"
         ),
         .target(
+            name: "CLlamaJSONSchemaBridge",
+            path: "Sources/CLlamaJSONSchemaBridge",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("../../vendor/llama-install/include"),
+                .headerSearchPath("../../vendor/llama.cpp/vendor"),
+            ]
+        ),
+        .target(
             name: "AnkiMateRPC",
             path: "Sources/AnkiMateRPC"
         ),
@@ -134,6 +143,7 @@ let package = Package(
             dependencies: [
                 "AnkiMateRPC",
                 "CllmLibrary",
+                "CLlamaJSONSchemaBridge",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

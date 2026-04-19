@@ -116,10 +116,15 @@ struct WordRowView: View {
                         .scaleEffect(0.5)
                         .frame(width: 16, height: 16)
                 } else if item.audioData != nil {
-                    Image(systemName: "waveform")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                        .help("Audio ready")
+                    Button(action: {
+                        Task { await viewModel.refreshPronunciationAudio(for: item) }
+                    }) {
+                        Image(systemName: "waveform")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh audio")
                 }
             }
         }

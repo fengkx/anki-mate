@@ -48,12 +48,74 @@ final class RPCDispatcherTests: XCTestCase {
 
         XCTAssertEqual(engine.lastResponseFormat, params.responseFormat)
     }
+
+    func testGenerateReturnsModelNotLoadedErrorWhenEngineIsUnavailable() throws {
+        let engine = MockInferenceEngine()
+        engine.isModelLoaded = false
+        let dispatcher = RPCDispatcher(engine: engine)
+        let request = JSONRPCRawRequest(
+            from: GenerateParams(prompt: "hello", maxTokens: 8, temperature: 0),
+            id: 9
+        )
+
+        let response = dispatcher.dispatch(request, uptimeSeconds: 1)
+
+        XCTAssertEqual(response.error?.code, -32001)
+        XCTAssertEqual(response.error?.message, "No model loaded")
+    }
+
+    func testGenerateWrapsInferenceErrorsWithDiagnosticDetail() throws {
+        let engine = MockInferenceEngine()
+        engine.generateError = InferenceError.unsupportedResponseFormat("schema mismatch")
+        let dispatcher = RPCDispatcher(engine: engine)
+        let request = JSONRPCRawRequest(
+            from: GenerateParams(prompt: "hello", maxTokens: 8, temperature: 0),
+            id: 10
+        )
+
+        let response = dispatcher.dispatch(request, uptimeSeconds: 1)
+
+        XCTAssertEqual(response.error?.code, -32003)
+        XCTAssertEqual(response.error?.message, "Inference error")
+        XCTAssertTrue(response.error?.data?.contains("unsupportedResponseFormat") ?? false)
+        XCTAssertTrue(response.error?.data?.contains("schema mismatch") ?? false)
+        XCTAssertTrue(response.error?.data?.contains("stack:") ?? false)
+    }
+
+    func testGenerateStreamingThrowsWhenModelIsNotLoaded() {
+        let engine = MockInferenceEngine()
+        engine.isModelLoaded = false
+        let dispatcher = RPCDispatcher(engine: engine)
+        let params = GenerateParams(prompt: "hello", maxTokens: 8, temperature: 0)
+
+        XCTAssertThrowsError(try dispatcher.generateStreaming(params: params) { _ in }) { error in
+            guard case InferenceError.modelNotLoaded = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testGenerateStreamingPropagatesEngineErrors() {
+        let engine = MockInferenceEngine()
+        engine.streamingError = InferenceError.generationFailed("sampler rejected token")
+        let dispatcher = RPCDispatcher(engine: engine)
+        let params = GenerateParams(prompt: "hello", maxTokens: 8, temperature: 0.2)
+
+        XCTAssertThrowsError(try dispatcher.generateStreaming(params: params) { _ in }) { error in
+            guard case InferenceError.generationFailed(let message) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(message, "sampler rejected token")
+        }
+    }
 }
 
 private final class MockInferenceEngine: InferenceServing {
     var isModelLoaded: Bool = true
     var loadedModelPath: String?
     var lastResponseFormat: LLMResponseFormat?
+    var generateError: Error?
+    var streamingError: Error?
 
     func loadModel(path: String, contextSize: Int, gpuLayers: Int) throws {}
     func unloadModel() {}
@@ -65,6 +127,9 @@ private final class MockInferenceEngine: InferenceServing {
         maxTokens: Int,
         temperature: Float
     ) throws -> GenerateResult {
+        if let generateError {
+            throw generateError
+        }
         lastResponseFormat = responseFormat
         return GenerateResult(text: "{}", tokensUsed: 2, durationMs: 1, finishReason: "stop")
     }
@@ -77,6 +142,9 @@ private final class MockInferenceEngine: InferenceServing {
         temperature: Float,
         onToken: (String) -> Void
     ) throws -> GenerateResult {
+        if let streamingError {
+            throw streamingError
+        }
         lastResponseFormat = responseFormat
         onToken("{")
         onToken("}")

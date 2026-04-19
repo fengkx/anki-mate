@@ -2,6 +2,7 @@
 
 import Foundation
 import CllmLibrary
+import CLlamaJSONSchemaBridge
 import AnkiMateRPC
 
 enum InferenceError: Error, LocalizedError {
@@ -23,9 +24,38 @@ enum InferenceError: Error, LocalizedError {
 }
 
 final class InferenceEngine: InferenceServing {
+    struct SamplerPlan: Equatable {
+        let seed: UInt32
+        let stageNames: [String]
+    }
+
+    private enum SamplingDefaults {
+        static let seed = UInt32(LLAMA_DEFAULT_SEED)
+        static let topK: Int32 = 40
+        static let topP: Float = 0.95
+        static let minKeep: Int = 1
+        static let minP: Float = 0.05
+        static let typicalP: Float = 1.0
+        static let topNSigma: Float = -1.0
+        static let xtcProbability: Float = 0.0
+        static let xtcThreshold: Float = 0.1
+        static let dynamicTemperatureRange: Float = 0.0
+        static let dynamicTemperatureExponent: Float = 1.0
+        static let penaltyLastN: Int32 = 64
+        static let penaltyRepeat: Float = 1.0
+        static let penaltyFrequency: Float = 0.0
+        static let penaltyPresence: Float = 0.0
+        static let dryMultiplier: Float = 0.0
+        static let dryBase: Float = 1.75
+        static let dryAllowedLength: Int32 = 2
+        static let dryPenaltyLastN: Int32 = -1
+        static let drySequenceBreakers = ["\n", ":", "\"", "*"]
+    }
+
     private var model: OpaquePointer? // llama_model *
     private var context: OpaquePointer? // llama_context *
     private var sampler: UnsafeMutablePointer<llama_sampler>?
+    private var grammarSampler: UnsafeMutablePointer<llama_sampler>?
     private(set) var loadedModelPath: String?
 
     var isModelLoaded: Bool {
@@ -72,6 +102,7 @@ final class InferenceEngine: InferenceServing {
         model = newModel
         context = newCtx
         sampler = nil
+        grammarSampler = nil
         loadedModelPath = path
 
         fputs("Model loaded successfully (ctx=\(contextSize), gpu_layers=\(gpuLayers))\n", stderr)
@@ -81,6 +112,10 @@ final class InferenceEngine: InferenceServing {
         if let s = sampler {
             llama_sampler_free(s)
             sampler = nil
+        }
+        if let grammarSampler {
+            llama_sampler_free(grammarSampler)
+            self.grammarSampler = nil
         }
         if context != nil {
             llama_free(context)
@@ -156,7 +191,13 @@ final class InferenceEngine: InferenceServing {
         let eotToken = llama_vocab_eot(vocab)
 
         for _ in 0..<maxTokens {
-            let newToken = llama_sampler_sample(chain, context, -1)
+            let newToken = try sampleNextToken(
+                using: chain,
+                grammarSampler: grammarSampler,
+                context: context,
+                model: model
+            )
+            acceptSampledToken(newToken, chain: chain, grammarSampler: grammarSampler)
 
             // Check for end of generation
             if newToken == eosToken || newToken == eotToken {
@@ -257,7 +298,13 @@ final class InferenceEngine: InferenceServing {
         let eotToken = llama_vocab_eot(vocab)
 
         for _ in 0..<maxTokens {
-            let newToken = llama_sampler_sample(chain, context, -1)
+            let newToken = try sampleNextToken(
+                using: chain,
+                grammarSampler: grammarSampler,
+                context: context,
+                model: model
+            )
+            acceptSampledToken(newToken, chain: chain, grammarSampler: grammarSampler)
             if newToken == eosToken || newToken == eotToken || llama_vocab_is_eog(vocab, newToken) {
                 finishReason = "stop"
                 break
@@ -306,27 +353,168 @@ final class InferenceEngine: InferenceServing {
         if let s = sampler {
             llama_sampler_free(s)
         }
+        if let grammarSampler {
+            llama_sampler_free(grammarSampler)
+            self.grammarSampler = nil
+        }
         let samplerChainParams = llama_sampler_chain_default_params()
         guard let chain = llama_sampler_chain_init(samplerChainParams) else {
             throw InferenceError.generationFailed("Failed to create sampler chain")
         }
 
         if temperature > 0 {
-            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
-            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95, 1))
+            llama_sampler_chain_add(
+                chain,
+                llama_sampler_init_penalties(
+                    SamplingDefaults.penaltyLastN,
+                    SamplingDefaults.penaltyRepeat,
+                    SamplingDefaults.penaltyFrequency,
+                    SamplingDefaults.penaltyPresence
+                )
+            )
+            llama_sampler_chain_add(chain, try makeDrySampler(model: model))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_n_sigma(SamplingDefaults.topNSigma))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(SamplingDefaults.topK))
+            llama_sampler_chain_add(chain, llama_sampler_init_typical(SamplingDefaults.typicalP, SamplingDefaults.minKeep))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(SamplingDefaults.topP, SamplingDefaults.minKeep))
+            llama_sampler_chain_add(chain, llama_sampler_init_min_p(SamplingDefaults.minP, SamplingDefaults.minKeep))
+            llama_sampler_chain_add(
+                chain,
+                llama_sampler_init_xtc(
+                    SamplingDefaults.xtcProbability,
+                    SamplingDefaults.xtcThreshold,
+                    SamplingDefaults.minKeep,
+                    Self.defaultSamplingSeed
+                )
+            )
+            llama_sampler_chain_add(
+                chain,
+                llama_sampler_init_temp_ext(
+                    temperature,
+                    SamplingDefaults.dynamicTemperatureRange,
+                    SamplingDefaults.dynamicTemperatureExponent
+                )
+            )
         }
 
-        if let grammar = try grammarSampler(for: responseFormat, model: model) {
-            llama_sampler_chain_add(chain, grammar)
-        }
+        grammarSampler = try grammarSampler(for: responseFormat, model: model)
 
         if temperature > 0 {
-            llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(Self.defaultSamplingSeed))
         } else {
             llama_sampler_chain_add(chain, llama_sampler_init_greedy())
         }
         return chain
+    }
+
+    private func makeDrySampler(model: OpaquePointer) throws -> UnsafeMutablePointer<llama_sampler> {
+        let allocatedBreakers = SamplingDefaults.drySequenceBreakers.map { strdup($0) }
+        defer {
+            for pointer in allocatedBreakers {
+                free(pointer)
+            }
+        }
+
+        var breakerPointers = allocatedBreakers.map { pointer in
+            pointer.map { UnsafePointer<CChar>($0) }
+        }
+
+        return try breakerPointers.withUnsafeMutableBufferPointer { buffer in
+            guard let sampler = llama_sampler_init_dry(
+                llama_model_get_vocab(model),
+                llama_model_n_ctx_train(model),
+                SamplingDefaults.dryMultiplier,
+                SamplingDefaults.dryBase,
+                SamplingDefaults.dryAllowedLength,
+                SamplingDefaults.dryPenaltyLastN,
+                buffer.baseAddress,
+                buffer.count
+            ) else {
+                throw InferenceError.generationFailed("Failed to initialize dry sampler")
+            }
+            return sampler
+        }
+    }
+
+    private func acceptSampledToken(
+        _ token: llama_token,
+        chain: UnsafeMutablePointer<llama_sampler>,
+        grammarSampler: UnsafeMutablePointer<llama_sampler>?
+    ) {
+        if let grammarSampler {
+            llama_sampler_accept(grammarSampler, token)
+        }
+        llama_sampler_accept(chain, token)
+    }
+
+    private func sampleNextToken(
+        using chain: UnsafeMutablePointer<llama_sampler>,
+        grammarSampler: UnsafeMutablePointer<llama_sampler>?,
+        context: OpaquePointer,
+        model: OpaquePointer
+    ) throws -> llama_token {
+        llama_synchronize(context)
+        guard let logits = llama_get_logits_ith(context, -1) else {
+            throw InferenceError.generationFailed("Missing logits for sampling")
+        }
+        let vocabulary = llama_model_get_vocab(model)
+        let vocabularySize = Int(llama_vocab_n_tokens(vocabulary))
+
+        func sampleCandidate(applyGrammarFirst: Bool) throws -> llama_token {
+            var candidates: [llama_token_data] = []
+            candidates.reserveCapacity(vocabularySize)
+            for tokenIndex in 0..<vocabularySize {
+                candidates.append(
+                    llama_token_data(
+                        id: llama_token(tokenIndex),
+                        logit: logits[tokenIndex],
+                        p: 0
+                    )
+                )
+            }
+
+            return try candidates.withUnsafeMutableBufferPointer { buffer in
+                guard let baseAddress = buffer.baseAddress else {
+                    throw InferenceError.generationFailed("Failed to build candidate buffer")
+                }
+                var candidateArray = llama_token_data_array(
+                    data: baseAddress,
+                    size: buffer.count,
+                    selected: -1,
+                    sorted: false
+                )
+                if applyGrammarFirst, let grammarSampler {
+                    llama_sampler_apply(grammarSampler, &candidateArray)
+                }
+                llama_sampler_apply(chain, &candidateArray)
+                guard candidateArray.selected >= 0 else {
+                    throw InferenceError.generationFailed("No token selected during sampling")
+                }
+                return candidateArray.data[Int(candidateArray.selected)].id
+            }
+        }
+
+        let sampledToken = try sampleCandidate(applyGrammarFirst: false)
+        guard let grammarSampler else {
+            return sampledToken
+        }
+
+        var singleTokenData = llama_token_data(id: sampledToken, logit: 1, p: 0)
+        let isGrammarValid = withUnsafeMutablePointer(to: &singleTokenData) { tokenPointer in
+            var singleTokenArray = llama_token_data_array(
+                data: tokenPointer,
+                size: 1,
+                selected: -1,
+                sorted: false
+            )
+            llama_sampler_apply(grammarSampler, &singleTokenArray)
+            return singleTokenArray.data[0].logit != -Float.infinity
+        }
+        if isGrammarValid {
+            return sampledToken
+        }
+
+        return try sampleCandidate(applyGrammarFirst: true)
     }
 
     private func grammarSampler(
@@ -354,43 +542,90 @@ final class InferenceEngine: InferenceServing {
         case .text:
             return nil
         case .json:
-            return Self.genericJSONGrammar
+            do {
+                return try Self.compileGrammarWithUpstreamBridge(from: Self.genericJSONObjectSchema)
+            } catch {
+                fputs("Warning: generic json bridge failed (\(error.localizedDescription)); disabling grammar constraint for json mode\n", stderr)
+                return nil
+            }
         case .jsonSchema:
             guard let schema = responseFormat.schema else {
                 if responseFormat.strict == true {
                     throw InferenceError.unsupportedResponseFormat("json_schema requires schema when strict=true")
                 }
-                fputs("Warning: json_schema requested without schema; falling back to generic JSON grammar\n", stderr)
-                return Self.genericJSONGrammar
+                fputs("Warning: json_schema requested without schema; disabling grammar constraint\n", stderr)
+                return nil
             }
             do {
-                return try JSONSchemaGrammarCompiler().compileRootGrammar(from: schema)
-            } catch let error as JSONSchemaGrammarCompilerError {
+                return try Self.compileGrammarWithUpstreamBridge(from: schema)
+            } catch {
                 if responseFormat.strict == true {
                     throw InferenceError.unsupportedResponseFormat(error.localizedDescription)
                 }
-                fputs("Warning: \(error.localizedDescription). Falling back to generic JSON grammar\n", stderr)
-                return Self.genericJSONGrammar
-            } catch {
-                throw error
+                fputs("Warning: upstream json_schema bridge failed (\(error.localizedDescription)); disabling grammar constraint\n", stderr)
+                return nil
             }
         }
     }
 
-    static let genericJSONGrammar = """
-    root ::= ws value ws
-    value ::= object | array | string | number | boolean | null
-    object ::= "{" ws "}" | "{" ws members ws "}"
-    members ::= pair | pair ws "," ws members
-    pair ::= string ws ":" ws value
-    array ::= "[" ws "]" | "[" ws elements ws "]"
-    elements ::= value | value ws "," ws elements
-    string ::= "\"" char* "\""
-    char ::= [^"\\\\\\x00-\\x1F] | "\\" (["\\\\/bfnrt] | "u" hex hex hex hex)
-    hex ::= [0-9a-fA-F]
-    number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
-    boolean ::= "true" | "false"
-    null ::= "null"
-    ws ::= [ \\t\\n\\r]*
-    """
+    static let genericJSONObjectSchema: JSONValue = .object([
+        "type": .string("object")
+    ])
+
+    static let defaultSamplingSeed = SamplingDefaults.seed
+
+    static func defaultSamplerPlan(for temperature: Float) -> SamplerPlan {
+        if temperature > 0 {
+            return SamplerPlan(
+                seed: defaultSamplingSeed,
+                stageNames: [
+                    "penalties",
+                    "dry",
+                    "top_n_sigma",
+                    "top_k",
+                    "typical_p",
+                    "top_p",
+                    "min_p",
+                    "xtc",
+                    "temperature",
+                    "dist",
+                ]
+            )
+        }
+
+        return SamplerPlan(seed: defaultSamplingSeed, stageNames: ["greedy"])
+    }
+
+    private static func compileGrammarWithUpstreamBridge(from schema: JSONValue) throws -> String {
+        let schemaJSON = try String(decoding: JSONEncoder().encode(schema), as: UTF8.self)
+        var grammarPointer: UnsafeMutablePointer<CChar>?
+        var errorPointer: UnsafeMutablePointer<CChar>?
+        defer {
+            if let grammarPointer {
+                ankimateserver_json_schema_bridge_free(grammarPointer)
+            }
+            if let errorPointer {
+                ankimateserver_json_schema_bridge_free(errorPointer)
+            }
+        }
+
+        let didSucceed = schemaJSON.withCString { schemaCString in
+            ankimateserver_json_schema_to_grammar(
+                schemaCString,
+                ankimateserver_json_schema_bridge_force_gbnf_default(),
+                &grammarPointer,
+                &errorPointer
+            )
+        }
+
+        if didSucceed {
+            guard let grammarPointer else {
+                throw InferenceError.unsupportedResponseFormat("upstream json_schema bridge returned no grammar")
+            }
+            return String(cString: grammarPointer)
+        }
+
+        let message = errorPointer.map { String(cString: $0) } ?? "unknown bridge error"
+        throw InferenceError.unsupportedResponseFormat(message)
+    }
 }

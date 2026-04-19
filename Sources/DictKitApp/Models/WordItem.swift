@@ -110,69 +110,99 @@ final class WordItem: ObservableObject, Identifiable {
     }
 
     var aiSuggestedPitfalls: [String] {
-        get { aiArtifacts.suggestedPitfallTexts }
+        get { aiSuggestedPitfallArtifacts.map(\.text) }
         set {
-            aiArtifacts.pitfalls.suggested = newValue.compactMap {
+            aiSuggestedPitfallArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return PitfallArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiAcceptedPitfalls: [String] {
-        get { aiArtifacts.acceptedPitfallTexts }
+        get { aiAcceptedPitfallArtifacts.map(\.text) }
         set {
-            aiArtifacts.pitfalls.accepted = newValue.compactMap {
+            aiAcceptedPitfallArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return PitfallArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiSuggestedMnemonics: [String] {
-        get { aiArtifacts.suggestedMnemonicTexts }
+        get { aiSuggestedMnemonicArtifacts.map(\.text) }
         set {
-            aiArtifacts.mnemonics.suggested = newValue.compactMap {
+            aiSuggestedMnemonicArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return MnemonicArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiAcceptedMnemonics: [String] {
-        get { aiArtifacts.acceptedMnemonicTexts }
+        get { aiAcceptedMnemonicArtifacts.map(\.text) }
         set {
-            aiArtifacts.mnemonics.accepted = newValue.compactMap {
+            aiAcceptedMnemonicArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return MnemonicArtifact(text: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiSuggestedCollocations: [String] {
-        get { aiArtifacts.suggestedCollocationPhrases }
+        get { aiSuggestedCollocationArtifacts.map(\.phrase) }
         set {
-            aiArtifacts.collocations.suggested = newValue.compactMap {
+            aiSuggestedCollocationArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return CollocationArtifact(phrase: trimmed)
-            }.nilIfEmpty
+            }
         }
     }
 
     var aiAcceptedCollocations: [String] {
-        get { aiArtifacts.acceptedCollocationPhrases }
+        get { aiAcceptedCollocationArtifacts.map(\.phrase) }
         set {
-            aiArtifacts.collocations.accepted = newValue.compactMap {
+            aiAcceptedCollocationArtifacts = newValue.compactMap {
                 let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return nil }
                 return CollocationArtifact(phrase: trimmed)
-            }.nilIfEmpty
+            }
         }
+    }
+
+    var aiSuggestedPitfallArtifacts: [PitfallArtifact] {
+        get { aiArtifacts.pitfalls.suggested ?? [] }
+        set { aiArtifacts.pitfalls.suggested = newValue.nilIfEmpty }
+    }
+
+    var aiAcceptedPitfallArtifacts: [PitfallArtifact] {
+        get { aiArtifacts.pitfalls.accepted ?? [] }
+        set { aiArtifacts.pitfalls.accepted = newValue.nilIfEmpty }
+    }
+
+    var aiSuggestedMnemonicArtifacts: [MnemonicArtifact] {
+        get { aiArtifacts.mnemonics.suggested ?? [] }
+        set { aiArtifacts.mnemonics.suggested = newValue.nilIfEmpty }
+    }
+
+    var aiAcceptedMnemonicArtifacts: [MnemonicArtifact] {
+        get { aiArtifacts.mnemonics.accepted ?? [] }
+        set { aiArtifacts.mnemonics.accepted = newValue.nilIfEmpty }
+    }
+
+    var aiSuggestedCollocationArtifacts: [CollocationArtifact] {
+        get { aiArtifacts.collocations.suggested ?? [] }
+        set { aiArtifacts.collocations.suggested = newValue.nilIfEmpty }
+    }
+
+    var aiAcceptedCollocationArtifacts: [CollocationArtifact] {
+        get { aiArtifacts.collocations.accepted ?? [] }
+        set { aiArtifacts.collocations.accepted = newValue.nilIfEmpty }
     }
 
     var normalizedWord: String {

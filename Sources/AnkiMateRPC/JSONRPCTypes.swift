@@ -38,6 +38,12 @@ public struct JSONRPCError: Codable, Sendable, Error, LocalizedError {
     }
 
     public var errorDescription: String? { message }
+    public var detailedDescription: String {
+        if let data, !data.isEmpty {
+            return "\(message)\n\(data)"
+        }
+        return message
+    }
 
     // Standard JSON-RPC error codes
     public static let parseError = JSONRPCError(code: -32700, message: "Parse error")

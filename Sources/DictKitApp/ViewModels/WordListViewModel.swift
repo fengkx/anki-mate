@@ -369,13 +369,40 @@ final class WordListViewModel: ObservableObject {
         )
     }
 
+    private func persistAudio(_ audioData: Data, for item: WordItem) {
+        item.audioData = audioData
+        touch(item)
+        persist(item)
+    }
+
+    private func refreshSavedAudio(for item: WordItem, request: SpeechRequest) async {
+        do {
+            let audioData = try await synthesize(request)
+            persistAudio(audioData, for: item)
+        } catch {
+            // Audio synthesis failure is non-fatal
+        }
+    }
+
     func playPronunciation(for item: WordItem) async {
         guard let request = makeSpeechRequest(for: item) else { return }
+        if item.audioData == nil {
+            item.isSynthesizingAudio = true
+            defer { item.isSynthesizingAudio = false }
+            await refreshSavedAudio(for: item, request: request)
+        }
         do {
             try await speak(request)
         } catch {
             // Silently fail for playback
         }
+    }
+
+    func refreshPronunciationAudio(for item: WordItem) async {
+        guard let request = makeSpeechRequest(for: item) else { return }
+        item.isSynthesizingAudio = true
+        defer { item.isSynthesizingAudio = false }
+        await refreshSavedAudio(for: item, request: request)
     }
 
     func playPronunciation(for item: WordItem, pronunciation: Pronunciation) async {
@@ -384,6 +411,11 @@ final class WordListViewModel: ObservableObject {
             pronunciation: pronunciation,
             sourceLabel: "dictionary"
         )
+        if item.audioData == nil {
+            item.isSynthesizingAudio = true
+            defer { item.isSynthesizingAudio = false }
+            await refreshSavedAudio(for: item, request: request)
+        }
         do {
             try await speak(request)
         } catch {
@@ -397,13 +429,7 @@ final class WordListViewModel: ObservableObject {
         defer { item.isSynthesizingAudio = false }
 
         guard let request = makeSpeechRequest(for: item) else { return }
-        do {
-            item.audioData = try await synthesize(request)
-            touch(item)
-            persist(item)
-        } catch {
-            // Audio synthesis failure is non-fatal
-        }
+        await refreshSavedAudio(for: item, request: request)
     }
 
     func saveAISuggestedExampleSentences(_ sentences: [String], for item: WordItem) {
@@ -460,9 +486,21 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
+    func saveAISuggestedPitfallArtifacts(_ artifacts: [PitfallArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedPitfallArtifacts = artifacts
+        }
+    }
+
     func saveAIAcceptedPitfalls(_ values: [String], for item: WordItem) {
         persistAIArtifactUpdate(for: item) {
             item.aiAcceptedPitfalls = values
+        }
+    }
+
+    func saveAIAcceptedPitfallArtifacts(_ artifacts: [PitfallArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedPitfallArtifacts = artifacts
         }
     }
 
@@ -472,9 +510,21 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
+    func saveAISuggestedMnemonicArtifacts(_ artifacts: [MnemonicArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedMnemonicArtifacts = artifacts
+        }
+    }
+
     func saveAIAcceptedMnemonics(_ values: [String], for item: WordItem) {
         persistAIArtifactUpdate(for: item) {
             item.aiAcceptedMnemonics = values
+        }
+    }
+
+    func saveAIAcceptedMnemonicArtifacts(_ artifacts: [MnemonicArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedMnemonicArtifacts = artifacts
         }
     }
 
@@ -484,9 +534,31 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
+    func saveAISuggestedCollocationArtifacts(_ artifacts: [CollocationArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiSuggestedCollocationArtifacts = artifacts
+        }
+    }
+
     func saveAIAcceptedCollocations(_ values: [String], for item: WordItem) {
         persistAIArtifactUpdate(for: item) {
             item.aiAcceptedCollocations = values
+        }
+    }
+
+    func saveAIAcceptedCollocationArtifacts(_ artifacts: [CollocationArtifact], for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiAcceptedCollocationArtifacts = artifacts
+        }
+    }
+
+    func saveLearningAidSelection(
+        _ selection: LearningAidSectionSelection?,
+        for section: LearningAidSelectionSection,
+        item: WordItem
+    ) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiArtifacts.updateLearningAidSelection(for: section, value: selection)
         }
     }
 

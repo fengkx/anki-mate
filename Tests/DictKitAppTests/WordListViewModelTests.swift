@@ -214,6 +214,98 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.exportableWordCount(for: defaultCollection.id), 1)
     }
 
+    func testPlayPronunciationPersistsAudioWhenMissing() async throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let itemID = UUID()
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: itemID,
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let expectedAudio = Data([0x01, 0x02, 0x03])
+        let speakCount = CallCounter()
+        let synthesizeCount = CallCounter()
+        let viewModel = try WordListViewModel(
+            store: store,
+            lookup: { _, _ in
+                Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])
+            },
+            speak: { _ in
+                await speakCount.increment()
+            },
+            synthesize: { _ in
+                await synthesizeCount.increment()
+                return expectedAudio
+            }
+        )
+
+        let item = try XCTUnwrap(viewModel.words.only)
+        await viewModel.playPronunciation(for: item)
+
+        let recordedSpeakCount = await speakCount.value
+        let recordedSynthesizeCount = await synthesizeCount.value
+        XCTAssertEqual(recordedSpeakCount, 1)
+        XCTAssertEqual(recordedSynthesizeCount, 1)
+        XCTAssertEqual(item.audioData, expectedAudio)
+
+        let persisted = try XCTUnwrap(try store.loadWords(in: defaultCollection.id).first(where: { $0.id == itemID }))
+        XCTAssertEqual(persisted.audioData, expectedAudio)
+    }
+
+    func testRefreshPronunciationAudioReplacesSavedAudio() async throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let itemID = UUID()
+        let initialAudio = Data([0xAA])
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: itemID,
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: initialAudio,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let refreshedAudio = Data([0xBB, 0xCC])
+        let synthesizeCount = CallCounter()
+        let viewModel = try WordListViewModel(
+            store: store,
+            lookup: { _, _ in
+                Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])
+            },
+            speak: { _ in },
+            synthesize: { _ in
+                await synthesizeCount.increment()
+                return refreshedAudio
+            }
+        )
+
+        let item = try XCTUnwrap(viewModel.words.only)
+        await viewModel.refreshPronunciationAudio(for: item)
+
+        let recordedSynthesizeCount = await synthesizeCount.value
+        XCTAssertEqual(recordedSynthesizeCount, 1)
+        XCTAssertEqual(item.audioData, refreshedAudio)
+
+        let persisted = try XCTUnwrap(try store.loadWords(in: defaultCollection.id).first(where: { $0.id == itemID }))
+        XCTAssertEqual(persisted.audioData, refreshedAudio)
+    }
+
     func testAIContentPersistsAcrossReload() throws {
         let store = try makeStore()
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
@@ -341,6 +433,22 @@ final class WordListViewModelTests: XCTestCase {
             ),
             collocations: AIArtifactSlot(
                 accepted: [CollocationArtifact(phrase: "reach a consensus", note: "common academic collocation")]
+            ),
+            learningAidSelections: LearningAidSelections(
+                pitfalls: LearningAidSectionSelection(
+                    recommendedID: "pitfall-1",
+                    alternativeIDs: ["pitfall-2"],
+                    overlapHints: [
+                        LearningAidSelectionOverlapHint(
+                            candidateID: "pitfall-2",
+                            overlapType: "accepted_overlap",
+                            withItemID: "pitfalls-accepted-0",
+                            reason: "Covers the same contrast."
+                        )
+                    ],
+                    whyRecommended: "Most specific warning.",
+                    selectionSource: "judge_with_guardrails"
+                )
             )
         )
         _ = try store.upsertWord(
@@ -366,6 +474,7 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiAcceptedPitfalls, ["Do not confuse it with consent."])
         XCTAssertEqual(reloaded.aiAcceptedMnemonics, ["Consensus sounds like everyone says yes together."])
         XCTAssertEqual(reloaded.aiAcceptedCollocations, ["reach a consensus"])
+        XCTAssertEqual(reloaded.aiArtifacts.learningAidSelections.pitfalls?.recommendedID, "pitfall-1")
     }
 
     func testAIArtifactSaveHelpersPersistUnifiedSlots() throws {
@@ -403,6 +512,37 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.aiAcceptedMnemonics, ["Say it together, then settle on consensus."])
         XCTAssertEqual(reloaded.aiSuggestedCollocations, ["reach a consensus"])
         XCTAssertEqual(reloaded.aiAcceptedCollocations, ["arrive at a consensus"])
+    }
+
+    func testLearningAidSelectionPersistsAcrossReload() throws {
+        let store = try makeStore()
+        let viewModel = try makeViewModel(store: store)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        let item = WordItem(word: "Consensus")
+        _ = try store.upsertWord(PersistedWordRecord(item: item), into: defaultCollection.id)
+        viewModel.reloadFromStore()
+        let reloadedItem = try XCTUnwrap(viewModel.words.only)
+
+        let selection = LearningAidSectionSelection(
+            recommendedID: "pitfall-1",
+            alternativeIDs: ["pitfall-2"],
+            overlapHints: [
+                LearningAidSelectionOverlapHint(
+                    candidateID: "pitfall-2",
+                    overlapType: "accepted_overlap",
+                    withItemID: "pitfalls-accepted-0",
+                    reason: "Covers the same contrast."
+                )
+            ],
+            whyRecommended: "Most specific warning.",
+            selectionSource: "judge_with_guardrails"
+        )
+
+        viewModel.saveLearningAidSelection(selection, for: .pitfalls, item: reloadedItem)
+        viewModel.reloadFromStore()
+
+        let persisted = try XCTUnwrap(viewModel.words.only)
+        XCTAssertEqual(persisted.aiArtifacts.learningAidSelections.pitfalls, selection)
     }
 
     func testStructuredExampleArtifactsPersistMetadataAcrossReload() throws {
@@ -627,7 +767,7 @@ final class WordListViewModelTests: XCTestCase {
             XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
             XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
             let json = String(cString: sqlite3_column_text(stmt, 0))
-            XCTAssertTrue(json.contains("\"schemaVersion\":3"))
+            XCTAssertTrue(json.contains("\"schemaVersion\":4"))
             XCTAssertTrue(json.contains("Accepted example."))
         }
     }
@@ -1030,6 +1170,18 @@ private actor LookupSpy {
 
     func recordedSources() -> [DictionaryLookupSource] {
         sources
+    }
+}
+
+private actor CallCounter {
+    private var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    var value: Int {
+        count
     }
 }
 

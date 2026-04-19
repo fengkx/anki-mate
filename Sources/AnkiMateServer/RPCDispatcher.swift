@@ -160,12 +160,23 @@ final class RPCDispatcher {
             )
             return .success(result, id: id ?? 0)
         } catch {
-            return .failure(.inferenceError(error.localizedDescription), id: id)
+            return .failure(.inferenceError(Self.diagnosticDetail(for: error)), id: id)
         }
     }
 
     private func handleShutdown(id: Int?) -> JSONRPCResponseEnvelope {
         fputs("Shutdown requested via RPC\n", stderr)
         return .success(ShutdownResult(), id: id ?? 0)
+    }
+
+    private static func diagnosticDetail(for error: Error) -> String {
+        let lines = [
+            "type: \(String(reflecting: Swift.type(of: error)))",
+            "message: \(error.localizedDescription)",
+            "debug: \(String(reflecting: error))",
+            "stack:",
+        ] + Thread.callStackSymbols
+
+        return lines.joined(separator: "\n")
     }
 }

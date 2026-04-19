@@ -94,57 +94,121 @@ public struct LLMRecallSelectionReason: Codable, Equatable, Sendable {
     }
 }
 
+public struct LLMRecallCuePlan: Codable, Equatable, Sendable {
+    public let semanticSource: String
+    public let normalizedCue: String
+
+    public init(semanticSource: String, normalizedCue: String) {
+        self.semanticSource = semanticSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.normalizedCue = normalizedCue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 public struct RecallCardDraftDecisionEnvelope: Codable, Equatable, Sendable {
     public let draft: LLMRecallCardDraft
     public let selectionReason: LLMRecallSelectionReason?
+    public let cuePlan: LLMRecallCuePlan?
 
     public init(
         draft: LLMRecallCardDraft,
-        selectionReason: LLMRecallSelectionReason? = nil
+        selectionReason: LLMRecallSelectionReason? = nil,
+        cuePlan: LLMRecallCuePlan? = nil
     ) {
         self.draft = draft
         self.selectionReason = selectionReason
+        self.cuePlan = cuePlan
     }
 }
 
 public struct LLMPitfall: Codable, Equatable, Sendable {
+    public let id: String
     public let summary: String
+    public let translation: String?
+    public let category: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseIndex: Int?
     public let details: String?
     public let anchor: LLMAnchorSnapshot?
 
     public init(
+        id: String = UUID().uuidString,
         summary: String,
+        translation: String? = nil,
+        category: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseIndex: Int? = nil,
         details: String? = nil,
         anchor: LLMAnchorSnapshot? = nil
     ) {
+        self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         self.summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translation = translation?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.category = category?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.recallRelevant = recallRelevant
+        self.senseIndex = senseIndex
         self.details = details?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.anchor = anchor
     }
 }
 
 public struct LLMMnemonic: Codable, Equatable, Sendable {
+    public let id: String
     public let clue: String
+    public let translation: String?
+    public let kind: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseIndex: Int?
     public let anchor: LLMAnchorSnapshot?
 
-    public init(clue: String, anchor: LLMAnchorSnapshot? = nil) {
+    public init(
+        id: String = UUID().uuidString,
+        clue: String,
+        translation: String? = nil,
+        kind: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseIndex: Int? = nil,
+        anchor: LLMAnchorSnapshot? = nil
+    ) {
+        self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         self.clue = clue.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.translation = translation?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.kind = kind?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.recallRelevant = recallRelevant
+        self.senseIndex = senseIndex
         self.anchor = anchor
     }
 }
 
 public struct LLMCollocation: Codable, Equatable, Sendable {
+    public let id: String
     public let phrase: String
     public let gloss: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseIndex: Int?
     public let anchor: LLMAnchorSnapshot?
 
     public init(
+        id: String = UUID().uuidString,
         phrase: String,
         gloss: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseIndex: Int? = nil,
         anchor: LLMAnchorSnapshot? = nil
     ) {
+        self.id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         self.phrase = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         self.gloss = gloss?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.recallRelevant = recallRelevant
+        self.senseIndex = senseIndex
         self.anchor = anchor
     }
 }
@@ -197,5 +261,92 @@ public struct LLMLearningAids: Codable, Equatable, Sendable {
         self.pitfalls = pitfalls
         self.mnemonics = mnemonics
         self.collocations = collocations
+    }
+}
+
+public enum LLMLearningAidSection: String, Codable, CaseIterable, Sendable {
+    case pitfalls
+    case mnemonics
+    case collocations
+}
+
+public struct LLMLearningAidAcceptedContext: Codable, Equatable, Sendable {
+    public let acceptedPitfalls: [String]
+    public let acceptedUsageHints: [String]
+    public let acceptedMnemonics: [String]
+    public let acceptedCollocations: [String]
+
+    public init(
+        acceptedPitfalls: [String] = [],
+        acceptedUsageHints: [String] = [],
+        acceptedMnemonics: [String] = [],
+        acceptedCollocations: [String] = []
+    ) {
+        self.acceptedPitfalls = acceptedPitfalls
+        self.acceptedUsageHints = acceptedUsageHints
+        self.acceptedMnemonics = acceptedMnemonics
+        self.acceptedCollocations = acceptedCollocations
+    }
+}
+
+public struct LLMLearningAidOverlapHint: Codable, Equatable, Sendable {
+    public let candidateID: String
+    public let overlapType: String?
+    public let withItemID: String?
+    public let reason: String
+
+    public init(candidateID: String, overlapType: String? = nil, withItemID: String? = nil, reason: String) {
+        self.candidateID = candidateID
+        self.overlapType = overlapType
+        self.withItemID = withItemID
+        self.reason = reason
+    }
+}
+
+public struct LLMLearningAidSectionSelection: Codable, Equatable, Sendable {
+    public let recommendedID: String?
+    public let alternativeIDs: [String]
+    public let overlapHints: [LLMLearningAidOverlapHint]
+    public let whyRecommended: String?
+    public let selectionSource: String?
+
+    public init(
+        recommendedID: String? = nil,
+        alternativeIDs: [String] = [],
+        overlapHints: [LLMLearningAidOverlapHint] = [],
+        whyRecommended: String? = nil,
+        selectionSource: String? = nil
+    ) {
+        self.recommendedID = recommendedID
+        self.alternativeIDs = alternativeIDs
+        self.overlapHints = overlapHints
+        self.whyRecommended = whyRecommended
+        self.selectionSource = selectionSource
+    }
+}
+
+public struct LLMLearningAidSelections: Codable, Equatable, Sendable {
+    public let pitfalls: LLMLearningAidSectionSelection?
+    public let mnemonics: LLMLearningAidSectionSelection?
+    public let collocations: LLMLearningAidSectionSelection?
+
+    public init(
+        pitfalls: LLMLearningAidSectionSelection? = nil,
+        mnemonics: LLMLearningAidSectionSelection? = nil,
+        collocations: LLMLearningAidSectionSelection? = nil
+    ) {
+        self.pitfalls = pitfalls
+        self.mnemonics = mnemonics
+        self.collocations = collocations
+    }
+}
+
+public struct LLMLearningAidsRankedResult: Codable, Equatable, Sendable {
+    public let aids: LLMLearningAids
+    public let selections: LLMLearningAidSelections
+
+    public init(aids: LLMLearningAids, selections: LLMLearningAidSelections) {
+        self.aids = aids
+        self.selections = selections
     }
 }

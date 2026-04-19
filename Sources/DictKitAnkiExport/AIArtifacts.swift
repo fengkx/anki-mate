@@ -101,38 +101,170 @@ public struct DefinitionNoteArtifact: Codable, Equatable, Sendable {
     }
 }
 
+public struct AISenseReferenceSnapshot: Codable, Equatable, Sendable {
+    public let senseIndex: Int?
+    public let partOfSpeech: String?
+    public let definitionSnapshot: String?
+
+    public init(
+        senseIndex: Int? = nil,
+        partOfSpeech: String? = nil,
+        definitionSnapshot: String? = nil
+    ) {
+        self.senseIndex = senseIndex
+        self.partOfSpeech = partOfSpeech?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.definitionSnapshot = definitionSnapshot?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+}
+
+public struct LearningAidSelectionOverlapHint: Codable, Equatable, Sendable {
+    public let candidateID: String
+    public let overlapType: String?
+    public let withItemID: String?
+    public let reason: String
+
+    public init(
+        candidateID: String,
+        overlapType: String? = nil,
+        withItemID: String? = nil,
+        reason: String
+    ) {
+        self.candidateID = candidateID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.overlapType = overlapType?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.withItemID = withItemID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+public struct LearningAidSectionSelection: Codable, Equatable, Sendable {
+    public let recommendedID: String?
+    public let alternativeIDs: [String]
+    public let overlapHints: [LearningAidSelectionOverlapHint]
+    public let whyRecommended: String?
+    public let selectionSource: String?
+
+    public init(
+        recommendedID: String? = nil,
+        alternativeIDs: [String] = [],
+        overlapHints: [LearningAidSelectionOverlapHint] = [],
+        whyRecommended: String? = nil,
+        selectionSource: String? = nil
+    ) {
+        self.recommendedID = recommendedID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.alternativeIDs = alternativeIDs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        self.overlapHints = overlapHints.filter {
+            !$0.candidateID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !$0.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        self.whyRecommended = whyRecommended?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.selectionSource = selectionSource?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+}
+
+public struct LearningAidSelections: Codable, Equatable, Sendable {
+    public var pitfalls: LearningAidSectionSelection?
+    public var mnemonics: LearningAidSectionSelection?
+    public var collocations: LearningAidSectionSelection?
+
+    public init(
+        pitfalls: LearningAidSectionSelection? = nil,
+        mnemonics: LearningAidSectionSelection? = nil,
+        collocations: LearningAidSectionSelection? = nil
+    ) {
+        self.pitfalls = pitfalls
+        self.mnemonics = mnemonics
+        self.collocations = collocations
+    }
+}
+
 public struct PitfallArtifact: Codable, Equatable, Sendable {
+    public let id: String?
     public let text: String
+    public let translation: String?
+    public let category: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseRef: AISenseReferenceSnapshot?
     public let anchor: AIArtifactAnchorSnapshot?
 
-    public init(text: String, anchor: AIArtifactAnchorSnapshot? = nil) {
+    public init(
+        id: String? = nil,
+        text: String,
+        translation: String? = nil,
+        category: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseRef: AISenseReferenceSnapshot? = nil,
+        anchor: AIArtifactAnchorSnapshot? = nil
+    ) {
+        self.id = id?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.text = text
+        self.translation = translation?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.category = category?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.recallRelevant = recallRelevant
+        self.senseRef = senseRef
         self.anchor = anchor
     }
 }
 
 public struct MnemonicArtifact: Codable, Equatable, Sendable {
+    public let id: String?
     public let text: String
+    public let translation: String?
+    public let kind: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseRef: AISenseReferenceSnapshot?
     public let anchor: AIArtifactAnchorSnapshot?
 
-    public init(text: String, anchor: AIArtifactAnchorSnapshot? = nil) {
+    public init(
+        id: String? = nil,
+        text: String,
+        translation: String? = nil,
+        kind: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseRef: AISenseReferenceSnapshot? = nil,
+        anchor: AIArtifactAnchorSnapshot? = nil
+    ) {
+        self.id = id?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.text = text
+        self.translation = translation?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.kind = kind?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.recallRelevant = recallRelevant
+        self.senseRef = senseRef
         self.anchor = anchor
     }
 }
 
 public struct CollocationArtifact: Codable, Equatable, Sendable {
+    public let id: String?
     public let phrase: String
     public let note: String?
+    public let focus: String?
+    public let recallRelevant: Bool?
+    public let senseRef: AISenseReferenceSnapshot?
     public let anchor: AIArtifactAnchorSnapshot?
 
     public init(
+        id: String? = nil,
         phrase: String,
         note: String? = nil,
+        focus: String? = nil,
+        recallRelevant: Bool? = nil,
+        senseRef: AISenseReferenceSnapshot? = nil,
         anchor: AIArtifactAnchorSnapshot? = nil
     ) {
+        self.id = id?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.phrase = phrase
-        self.note = note
+        self.note = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.recallRelevant = recallRelevant
+        self.senseRef = senseRef
         self.anchor = anchor
     }
 }
@@ -192,11 +324,12 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         case pitfalls
         case mnemonics
         case collocations
+        case learningAidSelections
         case generatedIPANotationsByDialect
         case generatedStressSyllablesByDialect
     }
 
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
     public static let empty = AIArtifacts()
 
     public var schemaVersion: Int
@@ -206,6 +339,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     public var pitfalls: AIArtifactSlot<[PitfallArtifact]>
     public var mnemonics: AIArtifactSlot<[MnemonicArtifact]>
     public var collocations: AIArtifactSlot<[CollocationArtifact]>
+    public var learningAidSelections: LearningAidSelections
     public var generatedIPANotationsByDialect: [String: String]
     public var generatedStressSyllablesByDialect: [String: String]
 
@@ -217,6 +351,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         pitfalls: AIArtifactSlot<[PitfallArtifact]> = .init(),
         mnemonics: AIArtifactSlot<[MnemonicArtifact]> = .init(),
         collocations: AIArtifactSlot<[CollocationArtifact]> = .init(),
+        learningAidSelections: LearningAidSelections = .init(),
         generatedIPANotationsByDialect: [String: String] = [:],
         generatedStressSyllablesByDialect: [String: String] = [:]
     ) {
@@ -227,6 +362,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         self.pitfalls = pitfalls
         self.mnemonics = mnemonics
         self.collocations = collocations
+        self.learningAidSelections = learningAidSelections
         self.generatedIPANotationsByDialect = generatedIPANotationsByDialect
         self.generatedStressSyllablesByDialect = generatedStressSyllablesByDialect
     }
@@ -241,6 +377,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             pitfalls: try container.decodeIfPresent(AIArtifactSlot<[PitfallArtifact]>.self, forKey: .pitfalls) ?? .init(),
             mnemonics: try container.decodeIfPresent(AIArtifactSlot<[MnemonicArtifact]>.self, forKey: .mnemonics) ?? .init(),
             collocations: try container.decodeIfPresent(AIArtifactSlot<[CollocationArtifact]>.self, forKey: .collocations) ?? .init(),
+            learningAidSelections: try container.decodeIfPresent(LearningAidSelections.self, forKey: .learningAidSelections) ?? .init(),
             generatedIPANotationsByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedIPANotationsByDialect) ?? [:],
             generatedStressSyllablesByDialect: try container.decodeIfPresent([String: String].self, forKey: .generatedStressSyllablesByDialect) ?? [:]
         ).normalized()
@@ -256,6 +393,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         try container.encode(normalized.pitfalls, forKey: .pitfalls)
         try container.encode(normalized.mnemonics, forKey: .mnemonics)
         try container.encode(normalized.collocations, forKey: .collocations)
+        try container.encode(normalized.learningAidSelections, forKey: .learningAidSelections)
         try container.encode(normalized.generatedIPANotationsByDialect, forKey: .generatedIPANotationsByDialect)
         try container.encode(normalized.generatedStressSyllablesByDialect, forKey: .generatedStressSyllablesByDialect)
     }
@@ -273,6 +411,9 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             mnemonics.accepted == nil &&
             collocations.suggested == nil &&
             collocations.accepted == nil &&
+            learningAidSelections.pitfalls == nil &&
+            learningAidSelections.mnemonics == nil &&
+            learningAidSelections.collocations == nil &&
             generatedIPANotationsByDialect.isEmpty &&
             generatedStressSyllablesByDialect.isEmpty
     }
@@ -316,6 +457,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: Self.makeCollocationArtifacts(from: legacySuggestedCollocations),
                 accepted: Self.makeCollocationArtifacts(from: legacyAcceptedCollocations)
             ),
+            learningAidSelections: .init(),
             generatedIPANotationsByDialect: [:],
             generatedStressSyllablesByDialect: [:]
         ).normalized()
@@ -376,6 +518,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
                 suggested: collocations.suggested ?? legacy.collocations.suggested,
                 accepted: collocations.accepted ?? legacy.collocations.accepted
             ),
+            learningAidSelections: learningAidSelections,
             generatedIPANotationsByDialect: generatedIPANotationsByDialect,
             generatedStressSyllablesByDialect: generatedStressSyllablesByDialect
         ).normalized()
@@ -407,6 +550,12 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
             collocations: AIArtifactSlot(
                 suggested: Self.normalizeCollocationArtifacts(collocations.suggested),
                 accepted: Self.normalizeCollocationArtifacts(collocations.accepted)
+            ),
+            learningAidSelections: Self.normalizeLearningAidSelections(
+                learningAidSelections,
+                pitfalls: Self.normalizePitfallArtifacts(pitfalls.suggested),
+                mnemonics: Self.normalizeMnemonicArtifacts(mnemonics.suggested),
+                collocations: Self.normalizeCollocationArtifacts(collocations.suggested)
             ),
             generatedIPANotationsByDialect: Self.normalizeGeneratedStringByDialect(generatedIPANotationsByDialect),
             generatedStressSyllablesByDialect: Self.normalizeGeneratedStringByDialect(generatedStressSyllablesByDialect)
@@ -459,6 +608,20 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
 
     public var acceptedCollocationPhrases: [String] {
         collocations.accepted?.map(\.phrase) ?? []
+    }
+
+    public mutating func updateLearningAidSelection(
+        for section: LearningAidSelectionSection,
+        value: LearningAidSectionSelection?
+    ) {
+        switch section {
+        case .pitfalls:
+            learningAidSelections.pitfalls = value
+        case .mnemonics:
+            learningAidSelections.mnemonics = value
+        case .collocations:
+            learningAidSelections.collocations = value
+        }
     }
 
     private static func makeExampleSentenceArtifacts(from values: [String]) -> [ExampleSentenceArtifact]? {
@@ -577,28 +740,137 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     }
 
     private static func normalizePitfallArtifacts(_ artifacts: [PitfallArtifact]?) -> [PitfallArtifact]? {
-        artifacts?.compactMap { artifact in
+        artifacts?.enumerated().compactMap { index, artifact in
             let trimmed = artifact.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
-            return PitfallArtifact(text: trimmed, anchor: artifact.anchor)
+            return PitfallArtifact(
+                id: normalizedArtifactID(
+                    artifact.id,
+                    prefix: "pitfall",
+                    components: [trimmed, artifact.category, artifact.focus],
+                    index: index
+                ),
+                text: trimmed,
+                translation: artifact.translation,
+                category: artifact.category,
+                focus: artifact.focus,
+                recallRelevant: artifact.recallRelevant,
+                senseRef: artifact.senseRef,
+                anchor: artifact.anchor
+            )
         }.nilIfEmpty
     }
 
     private static func normalizeMnemonicArtifacts(_ artifacts: [MnemonicArtifact]?) -> [MnemonicArtifact]? {
-        artifacts?.compactMap { artifact in
+        artifacts?.enumerated().compactMap { index, artifact in
             let trimmed = artifact.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
-            return MnemonicArtifact(text: trimmed, anchor: artifact.anchor)
+            return MnemonicArtifact(
+                id: normalizedArtifactID(
+                    artifact.id,
+                    prefix: "mnemonic",
+                    components: [trimmed, artifact.kind, artifact.focus],
+                    index: index
+                ),
+                text: trimmed,
+                translation: artifact.translation,
+                kind: artifact.kind,
+                focus: artifact.focus,
+                recallRelevant: artifact.recallRelevant,
+                senseRef: artifact.senseRef,
+                anchor: artifact.anchor
+            )
         }.nilIfEmpty
     }
 
     private static func normalizeCollocationArtifacts(_ artifacts: [CollocationArtifact]?) -> [CollocationArtifact]? {
-        artifacts?.compactMap { artifact in
+        artifacts?.enumerated().compactMap { index, artifact in
             let phrase = artifact.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !phrase.isEmpty else { return nil }
             let note = artifact.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            return CollocationArtifact(phrase: phrase, note: note, anchor: artifact.anchor)
+            return CollocationArtifact(
+                id: normalizedArtifactID(
+                    artifact.id,
+                    prefix: "collocation",
+                    components: [phrase, note, artifact.focus],
+                    index: index
+                ),
+                phrase: phrase,
+                note: note,
+                focus: artifact.focus,
+                recallRelevant: artifact.recallRelevant,
+                senseRef: artifact.senseRef,
+                anchor: artifact.anchor
+            )
         }.nilIfEmpty
+    }
+
+    private static func normalizeLearningAidSelections(
+        _ selections: LearningAidSelections,
+        pitfalls: [PitfallArtifact]?,
+        mnemonics: [MnemonicArtifact]?,
+        collocations: [CollocationArtifact]?
+    ) -> LearningAidSelections {
+        LearningAidSelections(
+            pitfalls: normalizeSectionSelection(
+                selections.pitfalls,
+                validIDs: Set((pitfalls ?? []).compactMap(\.id))
+            ),
+            mnemonics: normalizeSectionSelection(
+                selections.mnemonics,
+                validIDs: Set((mnemonics ?? []).compactMap(\.id))
+            ),
+            collocations: normalizeSectionSelection(
+                selections.collocations,
+                validIDs: Set((collocations ?? []).compactMap(\.id))
+            )
+        )
+    }
+
+    private static func normalizeSectionSelection(
+        _ selection: LearningAidSectionSelection?,
+        validIDs: Set<String>
+    ) -> LearningAidSectionSelection? {
+        guard let selection else { return nil }
+
+        let recommendedID = selection.recommendedID.flatMap { validIDs.contains($0) ? $0 : nil }
+        let alternativeIDs = selection.alternativeIDs.filter { validIDs.contains($0) }
+        let overlapHints = selection.overlapHints.filter { validIDs.contains($0.candidateID) }
+
+        if recommendedID == nil &&
+            alternativeIDs.isEmpty &&
+            overlapHints.isEmpty &&
+            selection.whyRecommended == nil &&
+            selection.selectionSource == nil {
+            return nil
+        }
+
+        return LearningAidSectionSelection(
+            recommendedID: recommendedID,
+            alternativeIDs: alternativeIDs,
+            overlapHints: overlapHints,
+            whyRecommended: selection.whyRecommended,
+            selectionSource: selection.selectionSource
+        )
+    }
+
+    private static func normalizedArtifactID(
+        _ id: String?,
+        prefix: String,
+        components: [String?],
+        index: Int
+    ) -> String {
+        if let normalized = id?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty {
+            return normalized
+        }
+
+        let slug = components
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().nilIfEmpty }
+            .joined(separator: "|")
+            .replacingOccurrences(of: #"[^a-z0-9|]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-|"))
+
+        return slug.isEmpty ? "\(prefix)-\(index)" : "\(prefix)-\(index)-\(slug)"
     }
 
     private static func normalizeGeneratedStringByDialect(_ values: [String: String]) -> [String: String] {
@@ -623,4 +895,10 @@ private extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
+}
+
+public enum LearningAidSelectionSection: String, Codable, Equatable, Sendable {
+    case pitfalls
+    case mnemonics
+    case collocations
 }

@@ -264,7 +264,7 @@ struct LLMSettingsView: View {
         settingsCard(title: "Debug", subtitle: "Advanced logs", tone: .neutral) {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Enable debug logs", isOn: $streamDebugEnabled)
-                Text("Writes extra AI logs to the app log.")
+                Text("Writes detailed AI traces to /tmp/anki-mate-llm-debug.jsonl.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -336,7 +336,7 @@ struct LLMSettingsView: View {
     private var debugControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Enable debug logs", isOn: $streamDebugEnabled)
-            Text("Writes extra AI logs to the app log.")
+            Text("Writes detailed AI traces to /tmp/anki-mate-llm-debug.jsonl.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
