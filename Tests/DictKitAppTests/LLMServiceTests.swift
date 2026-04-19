@@ -293,6 +293,20 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(URL(fileURLWithPath: dyldFallbackRuntimePath).resolvingSymlinksInPath().path, expectedFrameworksPath)
     }
 
+    func testServerLaunchArgumentsIncludeParentProcessIDWhenProvided() {
+        XCTAssertEqual(
+            ServerProcessManager.launchArguments(port: 0, parentProcessID: 4242),
+            ["0", "--parent-pid", "4242"]
+        )
+    }
+
+    func testServerLaunchArgumentsOmitParentProcessIDWhenUnavailable() {
+        XCTAssertEqual(
+            ServerProcessManager.launchArguments(port: 8080, parentProcessID: nil),
+            ["8080"]
+        )
+    }
+
     func testGpuLayersOverrideDefaultsToMetalFriendlyValue() {
         XCTAssertEqual(LLMService.gpuLayersOverride(environment: [:]), 99)
     }

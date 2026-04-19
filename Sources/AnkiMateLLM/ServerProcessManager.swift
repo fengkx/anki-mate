@@ -53,7 +53,10 @@ public final class ServerProcessManager: ObservableObject {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: serverPath)
-        proc.arguments = ["0"] // auto-assign port
+        proc.arguments = Self.launchArguments(
+            port: 0,
+            parentProcessID: ProcessInfo.processInfo.processIdentifier
+        )
         proc.environment = Self.launchEnvironment(
             forServerBinaryAt: URL(fileURLWithPath: serverPath),
             baseEnvironment: ProcessInfo.processInfo.environment
@@ -174,6 +177,16 @@ public final class ServerProcessManager: ObservableObject {
         )
 
         return environment
+    }
+
+    static func launchArguments(port: Int, parentProcessID: Int32?) -> [String] {
+        var arguments = ["\(port)"]
+
+        if let parentProcessID {
+            arguments.append(contentsOf: ["--parent-pid", "\(parentProcessID)"])
+        }
+
+        return arguments
     }
 
     private func locateServerBinary() -> String? {

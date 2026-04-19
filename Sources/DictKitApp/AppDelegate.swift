@@ -3,41 +3,33 @@ import SwiftUI
 import AnkiMateLLM
 
 /// Handles app termination: shows a sync progress window if there are pending changes.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var syncScheduler: SyncScheduler?
     var syncStatus: SyncStatus?
     var llmService: LLMService?
+    var terminationCoordinator = AppTerminationCoordinator()
     private var syncWindow: NSWindow?
+    private var isPreparingForTermination = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let shouldPauseDownloads = llmService?.downloadManager.hasActiveDownloads == true
-        guard let scheduler = syncScheduler,
-              let status = syncStatus,
-              WebDAVCredentials.hasBeenConfigured,
-              status.hasPendingChanges || shouldPauseDownloads
-        else {
-            if shouldPauseDownloads {
-                Task { @MainActor in
-                    await self.llmService?.downloadManager.pauseAllActiveDownloads()
-                    NSApplication.shared.reply(toApplicationShouldTerminate: true)
-                }
-                return .terminateLater
-            }
+        if isPreparingForTermination {
+            return .terminateLater
+        }
+
+        let plan = terminationCoordinator.makePlan(for: terminationSnapshot())
+        guard plan.requiresAsyncPreparation else {
             return .terminateNow
         }
 
-        if status.hasPendingChanges {
+        isPreparingForTermination = true
+
+        if plan.shouldSyncPendingChanges, let status = syncStatus {
             showSyncProgressWindow(status: status)
         }
 
-        // Run sync, then terminate
         Task { @MainActor in
-            if shouldPauseDownloads {
-                await self.llmService?.downloadManager.pauseAllActiveDownloads()
-            }
-            if status.hasPendingChanges {
-                await scheduler.syncNow()
-            }
+            await configuredTerminationCoordinator().prepareForTermination(using: plan)
             self.closeSyncProgressWindow()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
@@ -71,6 +63,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func closeSyncProgressWindow() {
         syncWindow?.close()
         syncWindow = nil
+    }
+
+    private func terminationSnapshot() -> AppTerminationSnapshot {
+        AppTerminationSnapshot(
+            hasActiveDownloads: llmService?.downloadManager.hasActiveDownloads == true,
+            hasPendingSyncChanges: syncStatus?.hasPendingChanges == true,
+            isSyncConfigured: syncScheduler != nil && WebDAVCredentials.hasBeenConfigured,
+            isLLMServerActive: {
+                guard let llmService else { return false }
+                return llmService.serverState != .stopped
+            }()
+        )
+    }
+
+    private func configuredTerminationCoordinator() -> AppTerminationCoordinator {
+        var coordinator = terminationCoordinator
+        coordinator.pauseDownloads = { [weak llmService] in
+            await llmService?.downloadManager.pauseAllActiveDownloads()
+        }
+        coordinator.syncNow = { [weak syncScheduler] in
+            await syncScheduler?.syncNow()
+        }
+        coordinator.stopLLMServer = { [weak llmService] in
+            await llmService?.stopServer()
+        }
+        return coordinator
     }
 }
 
