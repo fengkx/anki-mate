@@ -154,6 +154,45 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertEqual(try store.loadWords(in: otherCollection.id).map(\.word), ["Apple"])
     }
 
+    func testSelectingWordDoesNotAutoRefreshUntilExplicitlyRequested() async throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+
+        let word = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let lookupCount = CallCounter()
+        let viewModel = try WordListViewModel(
+            store: store,
+            lookup: { query, _ in
+                await lookupCount.increment()
+                return Self.makeLookupResult(query: query, definition: "fruit", examples: [])
+            },
+            speak: { _ in },
+            synthesize: { _ in Data() }
+        )
+
+        viewModel.selectWord(id: word.id)
+
+        XCTAssertEqual(await lookupCount.value, 0)
+
+        viewModel.refreshSelectedWordIfNeeded()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(await lookupCount.value, 1)
+    }
+
     func testReloadFromStoreReflectsExternalChangesImmediately() throws {
         let store = try makeStore()
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
@@ -1183,6 +1222,37 @@ private actor CallCounter {
 
     var value: Int {
         count
+    }
+}
+
+final class WordListViewGeometryTests: XCTestCase {
+    func testWordListKeyboardActionMapsArrowAndDeleteKeys() {
+        XCTAssertEqual(wordListKeyboardAction(for: 125), .move(1))
+        XCTAssertEqual(wordListKeyboardAction(for: 126), .move(-1))
+        XCTAssertEqual(wordListKeyboardAction(for: 51), .delete)
+        XCTAssertEqual(wordListKeyboardAction(for: 117), .delete)
+        XCTAssertNil(wordListKeyboardAction(for: 0))
+    }
+
+    func testPreferredScrollAnchorSkipsScrollingWhenRowIsWithinVisibleInsets() {
+        let viewport = CGRect(x: 0, y: 0, width: 300, height: 400)
+        let row = CGRect(x: 0, y: 80, width: 300, height: 40)
+
+        XCTAssertNil(preferredScrollAnchor(for: row, within: viewport, inset: 24))
+    }
+
+    func testPreferredScrollAnchorScrollsToTopWhenRowCrossesTopInset() {
+        let viewport = CGRect(x: 0, y: 100, width: 300, height: 400)
+        let row = CGRect(x: 0, y: 110, width: 300, height: 40)
+
+        XCTAssertEqual(preferredScrollAnchor(for: row, within: viewport, inset: 24), .top)
+    }
+
+    func testPreferredScrollAnchorScrollsToBottomWhenRowCrossesBottomInset() {
+        let viewport = CGRect(x: 0, y: 100, width: 300, height: 400)
+        let row = CGRect(x: 0, y: 470, width: 300, height: 60)
+
+        XCTAssertEqual(preferredScrollAnchor(for: row, within: viewport, inset: 24), .bottom)
     }
 }
 

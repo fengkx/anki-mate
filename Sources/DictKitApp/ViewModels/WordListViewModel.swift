@@ -18,8 +18,7 @@ final class WordListViewModel: ObservableObject {
     @Published var words: [WordItem] = []
     @Published var selectedWordID: UUID? {
         didSet {
-            guard selectedWordID != oldValue, let id = selectedWordID else { return }
-            refreshWordIfNeeded(id: id)
+            guard selectedWordID != oldValue else { return }
         }
     }
     @Published var inputText: String = ""
@@ -144,6 +143,11 @@ final class WordListViewModel: ObservableObject {
 
     func selectWord(id: UUID) {
         selectedWordID = id
+    }
+
+    func refreshSelectedWordIfNeeded() {
+        guard let id = selectedWordID else { return }
+        refreshWordIfNeeded(id: id)
     }
 
     func containsNormalizedWordInCurrentCollection(_ text: String) -> Bool {
