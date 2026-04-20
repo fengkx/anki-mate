@@ -606,6 +606,12 @@ final class WordListViewModel: ObservableObject {
         }
     }
 
+    func saveAIArtifacts(_ artifacts: AIArtifacts, for item: WordItem) {
+        persistAIArtifactUpdate(for: item) {
+            item.aiArtifacts = artifacts
+        }
+    }
+
     func saveGeneratedIPA(_ value: String, dialect: String?, for item: WordItem) {
         persistAIArtifactUpdate(for: item) {
             var saved = item.generatedIPANotationsByDialect

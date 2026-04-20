@@ -206,12 +206,31 @@ private struct SectionHeaderAction {
     let handler: () -> Void
 }
 
+private enum AIPanelMode: String, CaseIterable, Identifiable {
+    case structured
+    case chat
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .structured:
+            return "Structured"
+        case .chat:
+            return "Chat"
+        }
+    }
+}
+
 struct AIContentView: View {
     @ObservedObject var item: WordItem
+    var agentSession: AgentSession?
+    @Binding var agentPreviewOverrideArtifacts: AIArtifacts?
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var viewModel: WordListViewModel
     @Environment(\.openWindow) private var openWindow
 
+    @State private var panelMode: AIPanelMode = .structured
     @State private var examplesErrorMessage: String?
     @State private var learningAidsErrorMessage: String?
     @State private var usageErrorMessage: String?
@@ -351,6 +370,14 @@ struct AIContentView: View {
             HStack {
                 Label("AI Assistant", systemImage: "cpu")
                     .font(.headline)
+                Picker("", selection: $panelMode) {
+                    ForEach(AIPanelMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .frame(width: 190)
                 Spacer()
                 HStack(spacing: 8) {
                     if isGeneratingExamples { generationBadge("Examples") }
@@ -362,16 +389,27 @@ struct AIContentView: View {
 
             if !llmService.hasModel {
                 noModelView
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        sectionCard { sentencesSection }
-                        sectionCard { learningAidsSection }
-                        sectionCard { definitionNoteSection }
-                        sectionCard { recallCardSection }
+            } else if panelMode == .chat {
+                if let agentSession {
+                    AgentChatView(
+                        item: item,
+                        session: agentSession,
+                        previewOverrideArtifacts: $agentPreviewOverrideArtifacts
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Chat is unavailable for the current word.")
+                            .font(.subheadline)
+                        Text("Finish the dictionary lookup and keep local storage enabled to use Agent Chat.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
                 }
-                .frame(maxHeight: .infinity)
+            } else {
+                structuredPanel
             }
         }
         .padding()
@@ -415,6 +453,12 @@ struct AIContentView: View {
         }
         .onChange(of: item.id) { _ in
             reloadPanelStateForCurrentItem(resetTransientFeedback: true)
+            agentPreviewOverrideArtifacts = nil
+        }
+        .onChange(of: panelMode) { newMode in
+            if newMode == .structured {
+                agentPreviewOverrideArtifacts = nil
+            }
         }
         .onDisappear {
             cancelTransientTasks()
@@ -428,6 +472,18 @@ struct AIContentView: View {
         } message: {
             Text(LLMGenerationAvailability.alertMessage)
         }
+    }
+
+    private var structuredPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                sectionCard { sentencesSection }
+                sectionCard { learningAidsSection }
+                sectionCard { definitionNoteSection }
+                sectionCard { recallCardSection }
+            }
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private func reloadPanelStateForCurrentItem(resetTransientFeedback: Bool) {

@@ -229,9 +229,9 @@ enum PersistedLookupState: Codable, Equatable {
 }
 
 struct WordListStore: WordListStoring {
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
     private static let applicationID = 0x414D5632
-    private static let requiredIndexNames = [
+    private static let coreRequiredIndexNames = [
         "collections_name_active_idx",
         "words_collection_normalized_active_idx",
         "collections_created_at_idx",
@@ -243,6 +243,11 @@ struct WordListStore: WordListStoring {
         "words_updated_at_idx",
         "word_payloads_payload_updated_at_idx"
     ]
+    private static let agentRequiredIndexNames = [
+        "idx_agent_messages_session_ord",
+        "idx_agent_messages_pending_proposals"
+    ]
+    private static let requiredIndexNames = coreRequiredIndexNames + agentRequiredIndexNames
 
     let databaseURL: URL
 
@@ -751,6 +756,13 @@ struct WordListStore: WordListStoring {
             return
         }
 
+        if try hasCurrentGenerationCoreArtifacts(db: db) {
+            try migrateCurrentGenerationSchema(db: db)
+            try exec(db: db, sql: "PRAGMA application_id = \(applicationID);")
+            try setSchemaVersion(schemaVersion, db: db)
+            return
+        }
+
         try rebuildSchema(db: db)
         try exec(db: db, sql: "PRAGMA application_id = \(applicationID);")
         try setSchemaVersion(schemaVersion, db: db)
@@ -807,6 +819,32 @@ struct WordListStore: WordListStoring {
               value TEXT NOT NULL
             );
 
+            CREATE TABLE agent_sessions (
+              id TEXT PRIMARY KEY,
+              word_id TEXT NOT NULL UNIQUE,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              schema_version INTEGER NOT NULL,
+              preferences_json TEXT,
+              FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE agent_messages (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              ordinal INTEGER NOT NULL,
+              role TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              content_json TEXT NOT NULL,
+              proposal_decision TEXT,
+              tool_name TEXT,
+              superseded_by TEXT,
+              interrupted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            );
+
             CREATE UNIQUE INDEX collections_name_active_idx
             ON collections(name COLLATE NOCASE)
             WHERE deleted_at IS NULL;
@@ -839,6 +877,13 @@ struct WordListStore: WordListStoring {
             CREATE INDEX word_payloads_payload_updated_at_idx
             ON word_payloads(payload_updated_at);
 
+            CREATE INDEX idx_agent_messages_session_ord
+            ON agent_messages(session_id, ordinal);
+
+            CREATE INDEX idx_agent_messages_pending_proposals
+            ON agent_messages(session_id)
+            WHERE proposal_decision = 'pending';
+
             PRAGMA foreign_keys = ON;
             """
         )
@@ -861,7 +906,7 @@ struct WordListStore: WordListStoring {
             }
         }
 
-        if try hasCurrentGenerationArtifacts(db: db) {
+        if try hasCurrentGenerationCoreArtifacts(db: db) {
             return
         }
 
@@ -1040,20 +1085,79 @@ struct WordListStore: WordListStoring {
 
     private static func hasCurrentGenerationArtifacts(db: OpaquePointer?) throws -> Bool {
         let version = try currentSchemaVersion(db: db)
+        let hasCoreArtifacts = try hasCurrentGenerationCoreArtifacts(db: db)
+        let hasAgentSchema = try hasAgentArtifacts(db: db)
+        return version == schemaVersion && hasCoreArtifacts && hasAgentSchema
+    }
+
+    private static func hasCurrentGenerationCoreArtifacts(db: OpaquePointer?) throws -> Bool {
         let appID = try currentApplicationID(db: db)
         let hasCollections = try tableExists("collections", db: db)
         let hasWords = try tableExists("words", db: db)
         let hasPayloads = try tableExists("word_payloads", db: db)
         let hasSyncState = try tableExists("sync_state", db: db)
-        let hasRequiredIndexes = try requiredIndexNames.allSatisfy { try indexExists($0, db: db) }
+        let hasRequiredIndexes = try coreRequiredIndexNames.allSatisfy { try indexExists($0, db: db) }
 
-        return version == schemaVersion &&
+        return
             appID == applicationID &&
             hasCollections &&
             hasWords &&
             hasPayloads &&
             hasSyncState &&
             hasRequiredIndexes
+    }
+
+    private static func hasAgentArtifacts(db: OpaquePointer?) throws -> Bool {
+        let hasSessions = try tableExists("agent_sessions", db: db)
+        let hasMessages = try tableExists("agent_messages", db: db)
+        let hasIndexes = try agentRequiredIndexNames.allSatisfy { try indexExists($0, db: db) }
+        return hasSessions && hasMessages && hasIndexes
+    }
+
+    private static func migrateCurrentGenerationSchema(db: OpaquePointer?) throws {
+        try exec(db: db, sql: "PRAGMA foreign_keys = OFF;")
+        try createAgentSchemaIfNeeded(db: db)
+        try exec(db: db, sql: "PRAGMA foreign_keys = ON;")
+    }
+
+    private static func createAgentSchemaIfNeeded(db: OpaquePointer?) throws {
+        try exec(
+            db: db,
+            sql: """
+            CREATE TABLE IF NOT EXISTS agent_sessions (
+              id TEXT PRIMARY KEY,
+              word_id TEXT NOT NULL UNIQUE,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              schema_version INTEGER NOT NULL,
+              preferences_json TEXT,
+              FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_messages (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              ordinal INTEGER NOT NULL,
+              role TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              content_json TEXT NOT NULL,
+              proposal_decision TEXT,
+              tool_name TEXT,
+              superseded_by TEXT,
+              interrupted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_session_ord
+            ON agent_messages(session_id, ordinal);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_pending_proposals
+            ON agent_messages(session_id)
+            WHERE proposal_decision = 'pending';
+            """
+        )
     }
 
     static func exec(db: OpaquePointer?, sql: String) throws {

@@ -155,6 +155,7 @@ let package = Package(
             dependencies: [
                 "AnkiMateShared",
                 "DictKit",
+                "DictKitAnkiExport",
                 "AnkiMateRPC",
             ],
             path: "Sources/AnkiMateLLM",

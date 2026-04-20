@@ -1,4 +1,5 @@
 import DictKit
+import DictKitAnkiExport
 import Foundation
 import SQLite3
 import XCTest
@@ -32,9 +33,32 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collections.only?.name, "Default")
         XCTAssertEqual(collections.only?.dictionaryName, "")
         XCTAssertTrue(try store.loadAllWords().isEmpty)
-        XCTAssertEqual(try readUserVersion(at: databaseURL), 1)
+        XCTAssertEqual(try readUserVersion(at: databaseURL), 2)
         XCTAssertEqual(try readApplicationID(at: databaseURL), 0x414D5632)
         XCTAssertEqual(try legacyBackupURLs(in: baseURL).count, 1)
+    }
+
+    func testInitMigratesCurrentGenerationSchemaV1ToV2WithoutLosingWords() throws {
+        let baseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        let databaseURL = baseURL.appendingPathComponent("word-list.sqlite3")
+        let fixture = try writeCurrentGenerationV1Fixture(to: databaseURL)
+
+        let store = try WordListStore(databaseURL: databaseURL)
+
+        XCTAssertEqual(try readUserVersion(at: databaseURL), 2)
+        let migrated = try XCTUnwrap(try store.loadWords(in: fixture.collectionID).only)
+        XCTAssertEqual(migrated.id, fixture.wordID)
+        XCTAssertEqual(migrated.displayWord, "Apple")
+        XCTAssertEqual(migrated.lookupState, .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"])))
+
+        try store.withDatabase { db in
+            XCTAssertTrue(try WordListStore.tableExists("agent_sessions", db: db))
+            XCTAssertTrue(try WordListStore.tableExists("agent_messages", db: db))
+            XCTAssertTrue(try WordListStore.indexExists("idx_agent_messages_session_ord", db: db))
+            XCTAssertTrue(try WordListStore.indexExists("idx_agent_messages_pending_proposals", db: db))
+        }
     }
 
     func testInitCreatesPayloadTableForNewGeneration() throws {
@@ -428,6 +452,147 @@ final class WordListStoreTests: XCTestCase {
         )
     }
 
+    private func writeCurrentGenerationV1Fixture(to databaseURL: URL) throws -> (collectionID: UUID, wordID: UUID) {
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &db), SQLITE_OK)
+        guard let db else {
+            XCTFail("Failed to open sqlite database")
+            return (UUID(), UUID())
+        }
+        defer { sqlite3_close(db) }
+
+        let collectionID = UUID()
+        let wordID = UUID()
+        let lookupData = try JSONEncoder().encode(
+            PersistedLookupState.loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"]))
+        )
+
+        let aiArtifactsJSON = #"{"schemaVersion":4}"#
+
+        try exec(
+            db,
+            sql: """
+            PRAGMA application_id = 0x414D5632;
+            PRAGMA user_version = 1;
+            CREATE TABLE collections (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL COLLATE NOCASE,
+              dictionary_name TEXT NOT NULL,
+              anki_deck_name TEXT NOT NULL,
+              deck_description TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              deleted_at REAL
+            );
+            CREATE TABLE words (
+              id TEXT PRIMARY KEY,
+              collection_id TEXT NOT NULL,
+              normalized_word TEXT NOT NULL,
+              display_word TEXT NOT NULL,
+              source_form TEXT,
+              inflection_kind TEXT,
+              expected_part_of_speech TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              deleted_at REAL,
+              FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+            );
+            CREATE TABLE word_payloads (
+              word_id TEXT PRIMARY KEY,
+              lookup_state_json BLOB,
+              lookup_refreshed_at REAL,
+              audio_blob BLOB,
+              audio_sha256 TEXT,
+              ai_artifacts_json TEXT,
+              payload_updated_at REAL NOT NULL,
+              FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+            CREATE TABLE sync_state (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX collections_name_active_idx
+            ON collections(name COLLATE NOCASE)
+            WHERE deleted_at IS NULL;
+            CREATE UNIQUE INDEX words_collection_normalized_active_idx
+            ON words(collection_id, normalized_word)
+            WHERE deleted_at IS NULL;
+            CREATE INDEX collections_created_at_idx ON collections(created_at);
+            CREATE INDEX collections_active_created_idx ON collections(deleted_at, created_at);
+            CREATE INDEX collections_updated_at_idx ON collections(updated_at);
+            CREATE INDEX words_created_at_idx ON words(created_at);
+            CREATE INDEX words_collection_active_created_idx ON words(collection_id, deleted_at, created_at);
+            CREATE INDEX words_active_created_idx ON words(deleted_at, created_at);
+            CREATE INDEX words_updated_at_idx ON words(updated_at);
+            CREATE INDEX word_payloads_payload_updated_at_idx ON word_payloads(payload_updated_at);
+            """
+        )
+
+        var collectionStmt: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                db,
+                "INSERT INTO collections (id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+                -1,
+                &collectionStmt,
+                nil
+            ),
+            SQLITE_OK
+        )
+        defer { sqlite3_finalize(collectionStmt) }
+        sqlite3_bind_text(collectionStmt, 1, collectionID.uuidString, -1, testTransientDestructor)
+        sqlite3_bind_text(collectionStmt, 2, "Reading", -1, testTransientDestructor)
+        sqlite3_bind_text(collectionStmt, 3, "ODE", -1, testTransientDestructor)
+        sqlite3_bind_text(collectionStmt, 4, "Reading", -1, testTransientDestructor)
+        sqlite3_bind_text(collectionStmt, 5, "", -1, testTransientDestructor)
+        sqlite3_bind_double(collectionStmt, 6, 10)
+        sqlite3_bind_double(collectionStmt, 7, 20)
+        XCTAssertEqual(sqlite3_step(collectionStmt), SQLITE_DONE)
+
+        var wordStmt: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                db,
+                "INSERT INTO words (id, collection_id, normalized_word, display_word, source_form, inflection_kind, expected_part_of_speech, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL)",
+                -1,
+                &wordStmt,
+                nil
+            ),
+            SQLITE_OK
+        )
+        defer { sqlite3_finalize(wordStmt) }
+        sqlite3_bind_text(wordStmt, 1, wordID.uuidString, -1, testTransientDestructor)
+        sqlite3_bind_text(wordStmt, 2, collectionID.uuidString, -1, testTransientDestructor)
+        sqlite3_bind_text(wordStmt, 3, "apple", -1, testTransientDestructor)
+        sqlite3_bind_text(wordStmt, 4, "Apple", -1, testTransientDestructor)
+        sqlite3_bind_double(wordStmt, 5, 10)
+        sqlite3_bind_double(wordStmt, 6, 20)
+        XCTAssertEqual(sqlite3_step(wordStmt), SQLITE_DONE)
+
+        var payloadStmt: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                db,
+                "INSERT INTO word_payloads (word_id, lookup_state_json, lookup_refreshed_at, audio_blob, audio_sha256, ai_artifacts_json, payload_updated_at) VALUES (?, ?, ?, NULL, NULL, ?, ?)",
+                -1,
+                &payloadStmt,
+                nil
+            ),
+            SQLITE_OK
+        )
+        defer { sqlite3_finalize(payloadStmt) }
+        sqlite3_bind_text(payloadStmt, 1, wordID.uuidString, -1, testTransientDestructor)
+        _ = lookupData.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(payloadStmt, 2, buffer.baseAddress, Int32(buffer.count), testTransientDestructor)
+        }
+        sqlite3_bind_double(payloadStmt, 3, 20)
+        sqlite3_bind_text(payloadStmt, 4, aiArtifactsJSON, -1, testTransientDestructor)
+        sqlite3_bind_double(payloadStmt, 5, 20)
+        XCTAssertEqual(sqlite3_step(payloadStmt), SQLITE_DONE)
+
+        return (collectionID, wordID)
+    }
+
     private func exec(_ db: OpaquePointer, sql: String) throws {
         var errMsg: UnsafeMutablePointer<CChar>?
         guard sqlite3_exec(db, sql, nil, nil, &errMsg) == SQLITE_OK else {
@@ -517,7 +682,9 @@ final class WordListStoreTests: XCTestCase {
         "words_collection_active_created_idx",
         "words_active_created_idx",
         "words_updated_at_idx",
-        "word_payloads_payload_updated_at_idx"
+        "word_payloads_payload_updated_at_idx",
+        "idx_agent_messages_session_ord",
+        "idx_agent_messages_pending_proposals"
     ]
 }
 

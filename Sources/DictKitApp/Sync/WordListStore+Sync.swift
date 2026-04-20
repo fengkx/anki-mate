@@ -6,6 +6,11 @@ import Foundation
 import SQLite3
 
 extension WordListStore {
+    static let syncWhitelistedTableNames = [
+        "collections",
+        "words",
+        "word_payloads"
+    ]
 
     struct SyncCollectionSnapshot: Equatable {
         let record: PersistedCollectionRecord

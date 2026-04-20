@@ -23,6 +23,8 @@ struct CardPreviewView: View {
     @State private var pronunciationEnhancementErrorMessage: String?
     @State private var attemptedAutomaticPronunciationDialects = Set<String>()
     @State private var showAIUnavailableAlert = false
+    @State private var agentSession: AgentSession?
+    @State private var agentPreviewOverrideArtifacts: AIArtifacts?
 
     private let minAIPanelHeight: CGFloat = 180
     private let maxAIPanelHeight: CGFloat = 520
@@ -98,7 +100,11 @@ struct CardPreviewView: View {
                 if item.isReady {
                     Divider()
                     resizeHandle(availableHeight: geometry.size.height)
-                    AIContentView(item: item)
+                    AIContentView(
+                        item: item,
+                        agentSession: agentSession,
+                        agentPreviewOverrideArtifacts: $agentPreviewOverrideArtifacts
+                    )
                         .id(item.id)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -107,9 +113,17 @@ struct CardPreviewView: View {
             }
             .onAppear {
                 aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * geometry.size.height, availableHeight: geometry.size.height)
+                configureAgentSession()
             }
             .onChange(of: geometry.size.height) { newHeight in
                 aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * newHeight, availableHeight: newHeight)
+            }
+            .onChange(of: item.id) { _ in
+                agentPreviewOverrideArtifacts = nil
+                configureAgentSession()
+            }
+            .onChange(of: previewFamily) { _ in
+                configureAgentSession()
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -331,20 +345,24 @@ struct CardPreviewView: View {
     private var standardPreview: some View {
         Group {
             if let result = item.lookupResult {
+                let previewArtifacts = activePreviewArtifacts
                 let note = AnkiNoteData(
                     word: item.word,
                     phonetic: AnkiFieldFormatter.phoneticDisplay(
                         from: result,
-                        aiArtifacts: item.aiArtifacts
+                        aiArtifacts: previewArtifacts
                     ),
                     definitions: AnkiFieldFormatter.definitionsHTML(
                         from: result,
-                        aiArtifacts: item.aiArtifacts
+                        aiArtifacts: previewArtifacts
                     ),
                     audioFilename: nil,
                     audioData: nil
                 )
-                AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
+                VStack(spacing: 0) {
+                    previewBanner
+                    AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
+                }
             } else if case .loading = item.lookupState {
                 loadingView(text: "Looking up...")
             } else if case .failed(let msg) = item.lookupState {
@@ -357,7 +375,8 @@ struct CardPreviewView: View {
 
     private var recallPreview: some View {
         Group {
-            if let draft = item.aiAcceptedRecallCardDrafts.first, let result = item.lookupResult {
+            if let draft = previewRecallDraft, let result = item.lookupResult {
+                let previewArtifacts = activePreviewArtifacts
                 let note = AnkiNoteData(
                     recallPrompt: escapeHTMLPreservingLineBreaks(draft.front),
                     recallMode: escapeHTML(draft.mode.displayName),
@@ -368,12 +387,12 @@ struct CardPreviewView: View {
                     phonetic: escapeHTMLPreservingLineBreaks(
                         AnkiFieldFormatter.phoneticDisplay(
                             from: result,
-                            aiArtifacts: item.aiArtifacts
+                            aiArtifacts: previewArtifacts
                         )
                     ),
                     definitionsHTML: AnkiFieldFormatter.definitionsHTML(
                         from: result,
-                        aiArtifacts: item.aiArtifacts
+                        aiArtifacts: previewArtifacts
                     ),
                     audioFilename: item.audioData.map { _ in
                         item.word
@@ -385,7 +404,10 @@ struct CardPreviewView: View {
                     sortField: item.word,
                     guidSeed: "\(item.word.lowercased())|preview|recall"
                 )
-                AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
+                VStack(spacing: 0) {
+                    previewBanner
+                    AnkiCardWebView(html: AnkiFieldFormatter.renderCardHTML(note: note, showBack: showBack))
+                }
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "rectangle.and.pencil.and.ellipsis")
@@ -431,6 +453,54 @@ struct CardPreviewView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var activePreviewArtifacts: AIArtifacts {
+        agentPreviewOverrideArtifacts ?? item.aiArtifacts
+    }
+
+    private var previewRecallDraft: RecallCardDraft? {
+        activePreviewArtifacts.acceptedRecallCardDrafts.first ?? item.aiAcceptedRecallCardDrafts.first
+    }
+
+    @ViewBuilder
+    private var previewBanner: some View {
+        if agentPreviewOverrideArtifacts != nil {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles.rectangle.stack")
+                    .foregroundStyle(.orange)
+                Text("Reviewing Agent proposal")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.12))
+        }
+    }
+
+    private func configureAgentSession() {
+        guard item.isReady,
+              let databaseURL = viewModel.wordListStore?.databaseURL else {
+            agentSession = nil
+            return
+        }
+
+        let bridge = WordItemAgentBridge(
+            item: item,
+            viewModel: viewModel,
+            snapshotMode: { [previewFamily] in
+                previewFamily == .recall ? .recall : .standard
+            }
+        )
+        let session = AgentSession(
+            wordID: item.id,
+            persistence: AgentSessionStore(databaseURL: databaseURL),
+            snapshotProvider: bridge,
+            artifactsManager: bridge,
+            generator: LLMAgentGeneratorAdapter(llmService: llmService)
+        )
+        self.agentSession = session
     }
 
     private func failureView(message: String) -> some View {

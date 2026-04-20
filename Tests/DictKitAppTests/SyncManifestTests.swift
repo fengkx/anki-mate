@@ -2,6 +2,12 @@ import XCTest
 @testable import DictKitApp
 
 final class SyncManifestTests: XCTestCase {
+    func testSyncWhitelistExcludesAgentTables() {
+        XCTAssertEqual(WordListStore.syncWhitelistedTableNames, ["collections", "words", "word_payloads"])
+        XCTAssertFalse(WordListStore.syncWhitelistedTableNames.contains("agent_sessions"))
+        XCTAssertFalse(WordListStore.syncWhitelistedTableNames.contains("agent_messages"))
+    }
+
     func testLegacyManifestUpgradeMapsDeletesAndPayloads() {
         let legacy = LegacySyncManifest(
             version: 1,

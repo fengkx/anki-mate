@@ -153,7 +153,7 @@ extension InferenceEngine {
             text: outputText,
             format: applied.format,
             parserBlob: applied.parserBlob,
-            usedResponseFormatGrammar: responseFormatGrammar != nil
+            requestedStructuredResponseFormat: responseFormat != nil
         )
 
         let endTime = DispatchTime.now()
@@ -324,12 +324,14 @@ extension InferenceEngine {
         text: String,
         format: Int32,
         parserBlob: String,
-        usedResponseFormatGrammar: Bool
+        requestedStructuredResponseFormat: Bool
     ) throws -> ParsedChatOutput {
-        // When a structured-output responseFormat injects its own grammar, the
-        // model emits raw JSON content rather than a template-specific assistant
-        // envelope. In that mode the template parser is no longer applicable.
-        if usedResponseFormatGrammar {
+        // Structured-output callers expect the raw generated payload back. Even
+        // if json/json_schema grammar falls back to nil, the model output is
+        // still plain JSON text rather than a template-wrapped assistant turn,
+        // so feeding it back into the chat parser can fail on provider-specific
+        // tokens such as reasoning-channel prefixes.
+        if requestedStructuredResponseFormat {
             return ParsedChatOutput(content: text, toolCalls: [])
         }
 

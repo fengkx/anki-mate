@@ -116,10 +116,24 @@ final class InferenceEngineResponseFormatTests: XCTestCase {
             text: json,
             format: 1,
             parserBlob: "ignored",
-            usedResponseFormatGrammar: true
+            requestedStructuredResponseFormat: true
         )
 
         XCTAssertEqual(parsed.content, json)
+        XCTAssertTrue(parsed.toolCalls.isEmpty)
+    }
+
+    func testFinalizeGeneratedOutputBypassesChatParserWhenStructuredResponseFallsBackWithoutGrammar() throws {
+        let rawText = "<channel>thought\n{\"usageHints\":[{\"text\":\"take apart something physical\",\"translation\":\"拆开实体东西\",\"senseIndex\":1}]}"
+
+        let parsed = try InferenceEngine.finalizeGeneratedOutput(
+            text: rawText,
+            format: 1,
+            parserBlob: "ignored",
+            requestedStructuredResponseFormat: true
+        )
+
+        XCTAssertEqual(parsed.content, rawText)
         XCTAssertTrue(parsed.toolCalls.isEmpty)
     }
 }
