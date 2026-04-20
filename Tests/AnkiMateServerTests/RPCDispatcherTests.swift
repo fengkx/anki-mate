@@ -123,6 +123,10 @@ private final class MockInferenceEngine: InferenceServing {
     func generate(
         prompt: String,
         systemPrompt: String?,
+        messages: [LLMMessage]?,
+        tools: [LLMToolDefinition]?,
+        toolChoice: String?,
+        parallelToolCalls: Bool,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float
@@ -137,6 +141,7 @@ private final class MockInferenceEngine: InferenceServing {
     func generateStreaming(
         prompt: String,
         systemPrompt: String?,
+        tools: [LLMToolDefinition]?,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float,

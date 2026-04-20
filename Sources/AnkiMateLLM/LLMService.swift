@@ -792,6 +792,7 @@ public final class LLMService: ObservableObject {
         word: String,
         definition: String,
         partOfSpeech: String,
+        acceptedContext: LLMLearningAidAcceptedContext = .init(),
         anchor: LLMAnchorSnapshot? = nil
     ) async throws -> LLMLearningAids {
         try await generateLearningAids(
@@ -802,6 +803,7 @@ public final class LLMService: ObservableObject {
                     definition: definition
                 )
             ],
+            acceptedContext: acceptedContext,
             anchor: anchor
         )
     }
@@ -809,11 +811,13 @@ public final class LLMService: ObservableObject {
     public func generateLearningAids(
         word: String,
         senses: [LLMSensePromptInput],
+        acceptedContext: LLMLearningAidAcceptedContext = .init(),
         anchor: LLMAnchorSnapshot? = nil
     ) async throws -> LLMLearningAids {
         let prompt = LLMPrompt.learningAids(
             word: word,
             senses: senses,
+            acceptedContext: Self.normalizeLearningAidAcceptedContext(acceptedContext),
             anchor: anchor
         )
 
@@ -842,9 +846,26 @@ public final class LLMService: ObservableObject {
         let aids = try await generateLearningAids(
             word: word,
             senses: senses,
+            acceptedContext: acceptedContext,
             anchor: anchor
         )
 
+        return await rankLearningAids(
+            aids,
+            word: word,
+            senses: senses,
+            acceptedContext: acceptedContext,
+            judgeStrategy: judgeStrategy
+        )
+    }
+
+    func rankLearningAids(
+        _ aids: LLMLearningAids,
+        word: String,
+        senses: [LLMSensePromptInput],
+        acceptedContext: LLMLearningAidAcceptedContext,
+        judgeStrategy: LLMLearningAidJudgeStrategy = .separateSections
+    ) async -> LLMLearningAidsRankedResult {
         let normalizedContext = Self.normalizeLearningAidAcceptedContext(acceptedContext)
         let selections: LLMLearningAidSelections
 
@@ -1257,6 +1278,51 @@ public final class LLMService: ObservableObject {
         )
 
         return try Self.decodeStructuredOutput(type, from: result.text)
+    }
+
+    /// OpenAI-style chat generation entry point.
+    ///
+    /// Mirrors the shape of OpenAI's `chat/completions`: `tools` is an optional
+    /// parameter to the single `generate` call. When `tools` is non-empty, the
+    /// server routes the request through the chat template bridge and returns
+    /// any model-emitted tool calls in `GenerateResult.toolCalls`; otherwise it
+    /// behaves like a plain chat completion.
+    public func generate(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition]? = nil,
+        toolChoice: String? = nil,
+        parallelToolCalls: Bool = false,
+        responseFormat: LLMResponseFormat? = nil,
+        maxTokens: Int = 512,
+        temperature: Float = 0.2
+    ) async throws -> GenerateResult {
+        try await ensureReady()
+        guard let port = serverState.port else {
+            throw LLMServiceError.serverNotAvailable
+        }
+
+        // Keep the wire-level `prompt` / `systemPrompt` populated so older
+        // server paths (tools == nil) keep working without forcing callers to
+        // think about the legacy fields. When `messages` is the source of
+        // truth the server will prefer it.
+        let systemPrompt = messages.first(where: { $0.role == .system })?.content ?? ""
+        let userPrompt = messages.last(where: { $0.role == .user })?.content ?? ""
+
+        return try await rpcClient.call(
+            method: RPCMethod.generate,
+            params: GenerateParams(
+                prompt: userPrompt,
+                systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+                messages: messages,
+                tools: tools,
+                toolChoice: toolChoice,
+                parallelToolCalls: parallelToolCalls,
+                responseFormat: responseFormat,
+                maxTokens: maxTokens,
+                temperature: temperature
+            ),
+            port: port
+        )
     }
 
     private func adjustedTemperature(_ base: Float) -> Float {
