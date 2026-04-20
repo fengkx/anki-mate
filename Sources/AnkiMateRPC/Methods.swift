@@ -43,6 +43,20 @@ public struct LLMToolDefinition: Codable, Sendable, Equatable {
     }
 }
 
+/// OpenAI-style tool call emitted by the model.
+/// `arguments` holds the decoded JSON payload for the tool call.
+public struct LLMToolCall: Codable, Sendable, Equatable {
+    public let id: String?
+    public let name: String
+    public let arguments: JSONValue
+
+    public init(id: String? = nil, name: String, arguments: JSONValue) {
+        self.id = id
+        self.name = name
+        self.arguments = arguments
+    }
+}
+
 public typealias JSONSchema = JSONValue
 
 public struct LLMResponseFormat: Codable, Sendable, Equatable {
@@ -126,6 +140,10 @@ public struct GenerateParams: Codable, Sendable {
     public let systemPrompt: String?
     public let messages: [LLMMessage]?
     public let tools: [LLMToolDefinition]?
+    /// OpenAI-style: "auto" | "none" | "required". Only consulted when `tools` is non-empty.
+    public let toolChoice: String?
+    /// OpenAI-style: whether the model may emit multiple tool calls per turn.
+    public let parallelToolCalls: Bool
     public let responseFormat: LLMResponseFormat?
     public let maxTokens: Int
     public let temperature: Float
@@ -135,6 +153,8 @@ public struct GenerateParams: Codable, Sendable {
         systemPrompt: String? = nil,
         messages: [LLMMessage]? = nil,
         tools: [LLMToolDefinition]? = nil,
+        toolChoice: String? = nil,
+        parallelToolCalls: Bool = false,
         responseFormat: LLMResponseFormat? = nil,
         maxTokens: Int = 256,
         temperature: Float = 0.7
@@ -143,9 +163,31 @@ public struct GenerateParams: Codable, Sendable {
         self.systemPrompt = systemPrompt
         self.messages = messages
         self.tools = tools
+        self.toolChoice = toolChoice
+        self.parallelToolCalls = parallelToolCalls
         self.responseFormat = responseFormat
         self.maxTokens = maxTokens
         self.temperature = temperature
+    }
+
+    // Custom Decodable to keep `parallelToolCalls` optional on the wire.
+    // Requests from older clients omit the field; default to false.
+    enum CodingKeys: String, CodingKey {
+        case prompt, systemPrompt, messages, tools, toolChoice, parallelToolCalls,
+             responseFormat, maxTokens, temperature
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
+        self.messages = try c.decodeIfPresent([LLMMessage].self, forKey: .messages)
+        self.tools = try c.decodeIfPresent([LLMToolDefinition].self, forKey: .tools)
+        self.toolChoice = try c.decodeIfPresent(String.self, forKey: .toolChoice)
+        self.parallelToolCalls = try c.decodeIfPresent(Bool.self, forKey: .parallelToolCalls) ?? false
+        self.responseFormat = try c.decodeIfPresent(LLMResponseFormat.self, forKey: .responseFormat)
+        self.maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
+        self.temperature = try c.decodeIfPresent(Float.self, forKey: .temperature) ?? 0.7
     }
 }
 
@@ -154,12 +196,20 @@ public struct GenerateResult: Codable, Sendable {
     public let tokensUsed: Int
     public let durationMs: Int
     public let finishReason: String?
+    public let toolCalls: [LLMToolCall]?
 
-    public init(text: String, tokensUsed: Int, durationMs: Int, finishReason: String? = nil) {
+    public init(
+        text: String,
+        tokensUsed: Int,
+        durationMs: Int,
+        finishReason: String? = nil,
+        toolCalls: [LLMToolCall]? = nil
+    ) {
         self.text = text
         self.tokensUsed = tokensUsed
         self.durationMs = durationMs
         self.finishReason = finishReason
+        self.toolCalls = toolCalls
     }
 }
 

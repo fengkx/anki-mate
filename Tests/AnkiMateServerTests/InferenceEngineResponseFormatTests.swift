@@ -98,4 +98,28 @@ final class InferenceEngineResponseFormatTests: XCTestCase {
 
         XCTAssertThrowsError(try engine.resolvedGrammarString(for: format))
     }
+
+    func testFinalizeGeneratedOutputBypassesChatParserForStructuredResponseGrammar() throws {
+        let json = """
+        {
+          \"examples\": [
+            {
+              \"english\": \"They had to dismantle the old scaffolding before the renovation could begin.\",
+              \"translation\": \"他们必须在翻修开始前拆除旧脚手架。\",
+              \"senseIndex\": 1
+            }
+          ]
+        }
+        """
+
+        let parsed = try InferenceEngine.finalizeGeneratedOutput(
+            text: json,
+            format: 1,
+            parserBlob: "ignored",
+            usedResponseFormatGrammar: true
+        )
+
+        XCTAssertEqual(parsed.content, json)
+        XCTAssertTrue(parsed.toolCalls.isEmpty)
+    }
 }

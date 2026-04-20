@@ -3,6 +3,7 @@
 import Foundation
 import CllmLibrary
 import CLlamaJSONSchemaBridge
+import CLlamaChatTemplateBridge
 import AnkiMateRPC
 
 enum InferenceError: Error, LocalizedError {
@@ -62,9 +63,36 @@ final class InferenceEngine: InferenceServing {
     private var sampler: UnsafeMutablePointer<llama_sampler>?
     private var grammarSampler: UnsafeMutablePointer<llama_sampler>?
     private(set) var loadedModelPath: String?
+    /// Opaque handle to the `CLlamaChatTemplateBridge` chat templates. Eagerly created per loaded model.
+    var chatTemplatesHandle: OpaquePointer?
 
     var isModelLoaded: Bool {
         model != nil && context != nil
+    }
+
+    // Exposed for the tool-calls extension (same module, same file is not required).
+    var modelPointer: OpaquePointer? { model }
+    var contextPointer: OpaquePointer? { context }
+    var samplerPointer: UnsafeMutablePointer<llama_sampler>? { sampler }
+    var grammarSamplerPointer: UnsafeMutablePointer<llama_sampler>? { grammarSampler }
+
+    func setSampler(_ newSampler: UnsafeMutablePointer<llama_sampler>?) {
+        self.sampler = newSampler
+    }
+
+    func setGrammarSampler(_ newSampler: UnsafeMutablePointer<llama_sampler>?) {
+        self.grammarSampler = newSampler
+    }
+
+    func freeExistingSamplers() {
+        if let s = sampler {
+            llama_sampler_free(s)
+            sampler = nil
+        }
+        if let grammarSampler {
+            llama_sampler_free(grammarSampler)
+            self.grammarSampler = nil
+        }
     }
 
     init() {
@@ -106,10 +134,20 @@ final class InferenceEngine: InferenceServing {
             throw InferenceError.contextAllocationFailed
         }
 
+        let newChatTemplatesHandle: OpaquePointer
+        do {
+            newChatTemplatesHandle = try Self.makeChatTemplatesHandle(for: newModel)
+        } catch {
+            llama_free(newCtx)
+            llama_model_free(newModel)
+            throw InferenceError.loadFailed("chat templates unavailable: \(error.localizedDescription)")
+        }
+
         model = newModel
         context = newCtx
         sampler = nil
         grammarSampler = nil
+        chatTemplatesHandle = newChatTemplatesHandle
         loadedModelPath = path
 
         llama_set_n_threads(newCtx, Int32(threadSettings.generationThreads), Int32(threadSettings.batchThreads))
@@ -128,6 +166,10 @@ final class InferenceEngine: InferenceServing {
             llama_sampler_free(grammarSampler)
             self.grammarSampler = nil
         }
+        if let chatTemplatesHandle {
+            ankimate_chat_templates_free(chatTemplatesHandle)
+            self.chatTemplatesHandle = nil
+        }
         if context != nil {
             llama_free(context)
             context = nil
@@ -140,219 +182,64 @@ final class InferenceEngine: InferenceServing {
     }
 
     // MARK: - Generation
+    //
+    // Both generate() and generateStreaming() are thin shells that delegate to
+    // runGeneration() in the `+ToolCalls` extension. Prompt construction, grammar
+    // selection, and output parsing are all done by the llama.cpp chat template
+    // bridge — there is no hand-rolled Gemma template string anymore.
 
     func generate(
         prompt: String,
         systemPrompt: String?,
+        messages: [LLMMessage]? = nil,
+        tools: [LLMToolDefinition]? = nil,
+        toolChoice: String? = nil,
+        parallelToolCalls: Bool = false,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float
     ) throws -> GenerateResult {
-        guard let model = model, let context = context else {
-            throw InferenceError.modelNotLoaded
-        }
-
-        let startTime = DispatchTime.now()
-
-        // Build the full prompt with chat template
-        let fullPrompt: String
-        if let sys = systemPrompt, !sys.isEmpty {
-            fullPrompt = "<start_of_turn>user\n\(sys)\n\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
-        } else {
-            fullPrompt = "<start_of_turn>user\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
-        }
-
-        // Tokenize
-        let promptCStr = fullPrompt.cString(using: .utf8)!
-        let vocab = llama_model_get_vocab(model)
-        let maxTokenCount = Int32(fullPrompt.utf8.count + 128)
-        var tokens = [llama_token](repeating: 0, count: Int(maxTokenCount))
-        let nTokens = llama_tokenize(vocab, promptCStr, Int32(promptCStr.count - 1), &tokens, maxTokenCount, true, true)
-
-        guard nTokens >= 0 else {
-            throw InferenceError.generationFailed("Tokenization failed")
-        }
-
-        tokens = Array(tokens.prefix(Int(nTokens)))
-
-        // Clear KV cache
-        llama_memory_clear(llama_get_memory(context), true)
-
-        sampler = try makeSampler(
-            model: model,
+        let effectiveMessages = messages
+            ?? Self.synthesizeMessages(systemPrompt: systemPrompt, prompt: prompt)
+        return try runGeneration(
+            messages: effectiveMessages,
+            tools: tools ?? [],
+            toolChoice: toolChoice,
+            parallelToolCalls: parallelToolCalls,
             responseFormat: responseFormat,
-            temperature: temperature
-        )
-        guard let chain = sampler else {
-            throw InferenceError.generationFailed("Failed to create sampler chain")
-        }
-
-        // Process prompt tokens in a batch
-        var batch = llama_batch_get_one(&tokens, Int32(tokens.count))
-        var decodeResult = llama_decode(context, batch)
-        guard decodeResult == 0 else {
-            throw InferenceError.generationFailed("llama_decode failed on prompt (code: \(decodeResult))")
-        }
-
-        // Generate tokens one by one
-        var outputTokens: [llama_token] = []
-        var streamedText = ""
-        var finishReason: String?
-        let eosToken = llama_vocab_eos(vocab)
-        let eotToken = llama_vocab_eot(vocab)
-
-        for _ in 0..<maxTokens {
-            let newToken = try sampleNextToken(
-                using: chain,
-                grammarSampler: grammarSampler,
-                context: context,
-                model: model
-            )
-            acceptSampledToken(newToken, chain: chain, grammarSampler: grammarSampler)
-
-            // Check for end of generation
-            if newToken == eosToken || newToken == eotToken {
-                finishReason = "stop"
-                break
-            }
-            if llama_vocab_is_eog(vocab, newToken) {
-                finishReason = "stop"
-                break
-            }
-
-            outputTokens.append(newToken)
-
-            var buf = [CChar](repeating: 0, count: 256)
-            let len = llama_token_to_piece(vocab, newToken, &buf, 256, 0, true)
-            if len > 0 {
-                buf[Int(len)] = 0
-                streamedText += String(cString: buf)
-            }
-
-            // Prepare next token for decoding
-            var singleToken = [newToken]
-            batch = llama_batch_get_one(&singleToken, 1)
-            decodeResult = llama_decode(context, batch)
-            if decodeResult != 0 {
-                fputs("Warning: llama_decode returned \(decodeResult) during generation\n", stderr)
-                finishReason = "error"
-                break
-            }
-        }
-
-        if finishReason == nil, outputTokens.count >= maxTokens {
-            finishReason = "length"
-        }
-
-        let endTime = DispatchTime.now()
-        let durationMs = Int((endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000)
-
-        return GenerateResult(
-            text: streamedText.trimmingCharacters(in: .whitespacesAndNewlines),
-            tokensUsed: outputTokens.count,
-            durationMs: durationMs,
-            finishReason: finishReason
+            maxTokens: maxTokens,
+            temperature: temperature,
+            tokenCallback: nil
         )
     }
 
     func generateStreaming(
         prompt: String,
         systemPrompt: String?,
+        tools: [LLMToolDefinition]? = nil,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float,
-        onToken: (String) -> Void
+        onToken: @escaping (String) -> Void
     ) throws -> GenerateResult {
-        guard let model = model, let context = context else {
-            throw InferenceError.modelNotLoaded
-        }
-
-        let startTime = DispatchTime.now()
-        let fullPrompt: String
-        if let sys = systemPrompt, !sys.isEmpty {
-            fullPrompt = "<start_of_turn>user\n\(sys)\n\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
-        } else {
-            fullPrompt = "<start_of_turn>user\n\(prompt)<end_of_turn>\n<start_of_turn>model\n"
-        }
-
-        let promptCStr = fullPrompt.cString(using: .utf8)!
-        let vocab = llama_model_get_vocab(model)
-        let maxTokenCount = Int32(fullPrompt.utf8.count + 128)
-        var tokens = [llama_token](repeating: 0, count: Int(maxTokenCount))
-        let nTokens = llama_tokenize(vocab, promptCStr, Int32(promptCStr.count - 1), &tokens, maxTokenCount, true, true)
-        guard nTokens >= 0 else {
-            throw InferenceError.generationFailed("Tokenization failed")
-        }
-        tokens = Array(tokens.prefix(Int(nTokens)))
-
-        llama_memory_clear(llama_get_memory(context), true)
-
-        sampler = try makeSampler(
-            model: model,
-            responseFormat: responseFormat,
-            temperature: temperature
-        )
-        guard let chain = sampler else {
-            throw InferenceError.generationFailed("Failed to create sampler chain")
-        }
-
-        var batch = llama_batch_get_one(&tokens, Int32(tokens.count))
-        var decodeResult = llama_decode(context, batch)
-        guard decodeResult == 0 else {
-            throw InferenceError.generationFailed("llama_decode failed on prompt (code: \(decodeResult))")
-        }
-
-        var outputTokens: [llama_token] = []
-        var outputText = ""
-        var finishReason: String?
-        let eosToken = llama_vocab_eos(vocab)
-        let eotToken = llama_vocab_eot(vocab)
-
-        for _ in 0..<maxTokens {
-            let newToken = try sampleNextToken(
-                using: chain,
-                grammarSampler: grammarSampler,
-                context: context,
-                model: model
+        if let tools, !tools.isEmpty {
+            // Tool-call parsing needs the full output in one shot; streaming
+            // mode can't emit partial tool_calls reliably. Callers should use
+            // generate() without streaming when they need tools.
+            throw InferenceError.unsupportedResponseFormat(
+                "streaming generation does not support tool_calls; call generate without streaming"
             )
-            acceptSampledToken(newToken, chain: chain, grammarSampler: grammarSampler)
-            if newToken == eosToken || newToken == eotToken || llama_vocab_is_eog(vocab, newToken) {
-                finishReason = "stop"
-                break
-            }
-
-            outputTokens.append(newToken)
-
-            var buf = [CChar](repeating: 0, count: 256)
-            let len = llama_token_to_piece(vocab, newToken, &buf, 256, 0, true)
-            if len > 0 {
-                buf[Int(len)] = 0
-                let piece = String(cString: buf)
-                outputText += piece
-                onToken(piece)
-            }
-
-            var singleToken = [newToken]
-            batch = llama_batch_get_one(&singleToken, 1)
-            decodeResult = llama_decode(context, batch)
-            if decodeResult != 0 {
-                fputs("Warning: llama_decode returned \(decodeResult) during generation\n", stderr)
-                finishReason = "error"
-                break
-            }
         }
-
-        if finishReason == nil, outputTokens.count >= maxTokens {
-            finishReason = "length"
-        }
-
-        let endTime = DispatchTime.now()
-        let durationMs = Int((endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000)
-        return GenerateResult(
-            text: outputText.trimmingCharacters(in: .whitespacesAndNewlines),
-            tokensUsed: outputTokens.count,
-            durationMs: durationMs,
-            finishReason: finishReason
+        let effectiveMessages = Self.synthesizeMessages(systemPrompt: systemPrompt, prompt: prompt)
+        return try runGeneration(
+            messages: effectiveMessages,
+            tools: [],
+            toolChoice: nil,
+            parallelToolCalls: false,
+            responseFormat: responseFormat,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            tokenCallback: onToken
         )
     }
 
@@ -458,6 +345,14 @@ final class InferenceEngine: InferenceServing {
         llama_sampler_accept(chain, token)
     }
 
+    func acceptSampledTokenInternal(
+        _ token: llama_token,
+        chain: UnsafeMutablePointer<llama_sampler>,
+        grammarSampler: UnsafeMutablePointer<llama_sampler>?
+    ) {
+        acceptSampledToken(token, chain: chain, grammarSampler: grammarSampler)
+    }
+
     private func sampleNextToken(
         using chain: UnsafeMutablePointer<llama_sampler>,
         grammarSampler: UnsafeMutablePointer<llama_sampler>?,
@@ -526,6 +421,15 @@ final class InferenceEngine: InferenceServing {
         }
 
         return try sampleCandidate(applyGrammarFirst: true)
+    }
+
+    func sampleNextTokenInternal(
+        using chain: UnsafeMutablePointer<llama_sampler>,
+        grammarSampler: UnsafeMutablePointer<llama_sampler>?,
+        context: OpaquePointer,
+        model: OpaquePointer
+    ) throws -> llama_token {
+        try sampleNextToken(using: chain, grammarSampler: grammarSampler, context: context, model: model)
     }
 
     private func grammarSampler(

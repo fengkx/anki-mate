@@ -132,6 +132,21 @@ let package = Package(
             ]
         ),
         .target(
+            name: "CLlamaChatTemplateBridge",
+            path: "Sources/CLlamaChatTemplateBridge",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("../../vendor/llama-install/include"),
+                .headerSearchPath("../../vendor/llama.cpp"),
+                .headerSearchPath("../../vendor/llama.cpp/common"),
+                .headerSearchPath("../../vendor/llama.cpp/vendor"),
+                .unsafeFlags(["-std=c++17"]),
+            ],
+            linkerSettings: llamaRuntimeLinkerSettings + [
+                .linkedLibrary("llama-common"),
+            ]
+        ),
+        .target(
             name: "AnkiMateRPC",
             path: "Sources/AnkiMateRPC"
         ),
@@ -153,6 +168,7 @@ let package = Package(
                 "AnkiMateRPC",
                 "CllmLibrary",
                 "CLlamaJSONSchemaBridge",
+                "CLlamaChatTemplateBridge",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -164,7 +180,8 @@ let package = Package(
             name: "AnkiMateServerTests",
             dependencies: [
                 "AnkiMateRPC",
-                "AnkiMateServer"
+                "AnkiMateServer",
+                "CLlamaChatTemplateBridge"
             ],
             path: "Tests/AnkiMateServerTests"
         ),

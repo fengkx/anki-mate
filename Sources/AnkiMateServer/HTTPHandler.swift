@@ -145,7 +145,7 @@ final class HTTPHandler: ChannelInboundHandler {
             let result = try dispatcher.generateStreaming(
                 params: params,
                 onToken: { token in
-                    sendStreamChunk(
+                    self.sendStreamChunk(
                         context: context,
                         StreamChunk(delta: token, done: false, tokensUsed: nil, durationMs: nil, error: nil)
                     )

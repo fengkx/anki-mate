@@ -12,6 +12,10 @@ protocol InferenceServing: AnyObject {
     func generate(
         prompt: String,
         systemPrompt: String?,
+        messages: [LLMMessage]?,
+        tools: [LLMToolDefinition]?,
+        toolChoice: String?,
+        parallelToolCalls: Bool,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float
@@ -19,10 +23,11 @@ protocol InferenceServing: AnyObject {
     func generateStreaming(
         prompt: String,
         systemPrompt: String?,
+        tools: [LLMToolDefinition]?,
         responseFormat: LLMResponseFormat?,
         maxTokens: Int,
         temperature: Float,
-        onToken: (String) -> Void
+        onToken: @escaping (String) -> Void
     ) throws -> GenerateResult
 }
 
@@ -39,14 +44,23 @@ final class RPCDispatcher {
 
     func generateStreaming(
         params: GenerateParams,
-        onToken: (String) -> Void
+        onToken: @escaping (String) -> Void
     ) throws -> GenerateResult {
         guard engine.isModelLoaded else {
             throw InferenceError.modelNotLoaded
         }
+        // Streaming + tools is unsupported (tool parsing needs the full output);
+        // reject early with a clear message and let the caller fall back to the
+        // non-streaming path.
+        if let tools = params.tools, !tools.isEmpty {
+            throw InferenceError.unsupportedResponseFormat(
+                "streaming generation does not support tool_calls; call generate without streaming"
+            )
+        }
         return try engine.generateStreaming(
             prompt: params.prompt,
             systemPrompt: params.systemPrompt,
+            tools: nil,
             responseFormat: params.responseFormat,
             maxTokens: params.maxTokens,
             temperature: params.temperature,
@@ -154,6 +168,10 @@ final class RPCDispatcher {
             let result = try engine.generate(
                 prompt: genParams.prompt,
                 systemPrompt: genParams.systemPrompt,
+                messages: genParams.messages,
+                tools: genParams.tools,
+                toolChoice: genParams.toolChoice,
+                parallelToolCalls: genParams.parallelToolCalls,
                 responseFormat: genParams.responseFormat,
                 maxTokens: genParams.maxTokens,
                 temperature: genParams.temperature
