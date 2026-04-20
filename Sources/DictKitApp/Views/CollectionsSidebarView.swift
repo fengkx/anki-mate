@@ -75,7 +75,7 @@ struct CollectionsSidebarView: View {
             VStack(spacing: 0) {
                 utilityBarButton(
                     title: syncStatusLabel,
-                    systemImage: "arrow.trianglehead.2.clockwise",
+                    systemImage: "arrow.triangle.2.circlepath",
                     tint: syncStatusColor,
                     helpText: "Sync settings"
                 ) {

@@ -128,6 +128,7 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("../../vendor/llama-install/include"),
                 .headerSearchPath("../../vendor/llama.cpp/vendor"),
+                .unsafeFlags(["-std=c++17"]),
             ]
         ),
         .target(

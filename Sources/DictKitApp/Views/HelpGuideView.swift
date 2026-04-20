@@ -84,7 +84,7 @@ struct HelpGuideView: View {
                     ToolbarShortcutButton(title: "Local AI", systemImage: "sparkles") {
                         openWindow(id: AppWindowIDs.aiSettings)
                     }
-                    ToolbarShortcutButton(title: "Sync", systemImage: "arrow.trianglehead.2.clockwise") {
+                    ToolbarShortcutButton(title: "Sync", systemImage: "arrow.triangle.2.circlepath") {
                         openWindow(id: AppWindowIDs.syncSettings)
                     }
                 }
@@ -239,7 +239,7 @@ struct HelpGuideView: View {
                     )
                     GuideSection(
                         title: "Do I need sync right away?",
-                        systemImage: "arrow.trianglehead.2.clockwise",
+                        systemImage: "arrow.triangle.2.circlepath",
                         items: [
                             "If you may use more than one device, or if you would like a WebDAV-based backup, setting up sync early is often worth it."
                         ]
@@ -282,7 +282,7 @@ struct HelpGuideView: View {
                 )
                 GuideSection(
                     title: "Do I need sync right away?",
-                    systemImage: "arrow.trianglehead.2.clockwise",
+                    systemImage: "arrow.triangle.2.circlepath",
                     items: [
                         "If you may use more than one device, or if you would like a WebDAV-based backup, setting up sync early is often worth it."
                     ]
@@ -391,7 +391,7 @@ private struct SetupCard: View {
                 CompactShortcutRow(
                     title: "Sync settings",
                     detail: "WebDAV can be set up here if sync or backup would be helpful.",
-                    systemImage: "arrow.trianglehead.2.clockwise",
+                    systemImage: "arrow.triangle.2.circlepath",
                     action: openSyncSettings
                 )
             }

@@ -454,7 +454,7 @@ final class CommandPaletteViewModel: ObservableObject {
             .init(id: "new-collection", title: "New Collection", subtitle: "Create a collection", systemImage: "plus.rectangle.on.folder", keywords: ["new", "create", "collection"]),
             .init(id: "collection-settings", title: "Collection Settings", subtitle: "Open current collection settings", systemImage: "book.closed", keywords: ["rename", "dictionary", "settings"]),
             .init(id: "switch-collection", title: "Switch Collection", subtitle: "Jump to another collection", systemImage: "books.vertical", keywords: ["switch", "collection", "jump"]),
-            .init(id: "sync-now", title: "Sync Now", subtitle: "Start sync immediately", systemImage: "arrow.trianglehead.2.clockwise", keywords: ["sync", "webdav"]),
+            .init(id: "sync-now", title: "Sync Now", subtitle: "Start sync immediately", systemImage: "arrow.triangle.2.circlepath", keywords: ["sync", "webdav"]),
             .init(id: "sync-settings", title: "Sync Settings", subtitle: "Open sync settings", systemImage: "gearshape.2", keywords: ["sync", "settings", "webdav"]),
             .init(id: "ai-settings", title: "AI Settings", subtitle: "Open AI settings", systemImage: "sparkles", keywords: ["ai", "llm", "model"]),
             .init(id: "help", title: "Help", subtitle: "Open help", systemImage: "questionmark.circle", keywords: ["help", "guide"]),
