@@ -16,6 +16,7 @@ public protocol AgentSessionPersisting {
         supersededBy: UUID?,
         interrupted: Bool
     ) throws -> AgentChatMessage
+    func deleteMessages(ids: [UUID]) throws
     func clearMessages(sessionID: UUID) throws
     func resetSession(for wordID: UUID) throws
     func updateProposal(messageID: UUID, proposal: ProposalRecord) throws -> AgentChatMessage
@@ -56,6 +57,25 @@ public protocol AgentGenerating {
         messages: [LLMMessage],
         tools: [LLMToolDefinition]
     ) async throws -> GenerateResult
+
+    /// Streaming variant. Calls `onDelta` for content and `onReasoningDelta` for thinking.
+    func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition],
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> GenerateResult
+}
+
+public extension AgentGenerating {
+    func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition],
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> GenerateResult {
+        try await generate(messages: messages, tools: tools)
+    }
 }
 
 @MainActor
@@ -65,6 +85,10 @@ public final class AgentSession: ObservableObject {
     @Published public private(set) var pendingProposals: [ProposalRecord] = []
     @Published public var previewOverrideArtifacts: AIArtifacts?
     @Published public private(set) var isGenerating = false
+    /// Live streaming text from the current generation. Empty when not streaming.
+    @Published public private(set) var streamingText = ""
+    /// Live streaming reasoning/thinking text. Empty when not streaming or model doesn't reason.
+    @Published public private(set) var streamingReasoning = ""
 
     public let wordID: UUID
 
@@ -90,7 +114,10 @@ public final class AgentSession: ObservableObject {
         toolRegistry: AgentToolRegistry? = nil,
         maxToolIterations: Int = 4
     ) {
-        let resolvedToolRegistry = toolRegistry ?? AgentToolRegistry(snapshotProvider: snapshotProvider)
+        let resolvedToolRegistry = toolRegistry ?? AgentToolRegistry(
+            snapshotProvider: snapshotProvider,
+            artifactsProvider: artifactsManager
+        )
         self.wordID = wordID
         self.persistence = persistence
         self.snapshotProvider = snapshotProvider
@@ -121,6 +148,9 @@ public final class AgentSession: ObservableObject {
             throw AgentSessionError.sessionUnavailable
         }
 
+        // Track message count before this turn so we can roll back on service errors.
+        let messageCountBeforeTurn = messages.count
+
         let userMessage = try persistence.addMessage(
             sessionID: sessionRecord.id,
             role: .user,
@@ -144,102 +174,61 @@ public final class AgentSession: ObservableObject {
         }
 
         isGenerating = true
-        defer { isGenerating = false }
+        defer {
+            isGenerating = false
+            streamingText = ""
+            streamingReasoning = ""
+        }
 
         do {
-            let snapshot = try snapshotProvider.snapshot(for: wordID)
-            let availableTools = mergeTools()
-            var toolIteration = 0
-
-            while toolIteration <= maxToolIterations {
-                let promptMessages = promptBuilder.buildMessages(
-                    context: .init(
-                        cardSnapshot: snapshot,
-                        messages: messages,
-                        tools: availableTools
-                    )
-                )
-                let result = try await generator.generate(messages: promptMessages, tools: availableTools)
-
-                if let toolCalls = result.toolCalls, !toolCalls.isEmpty {
-                    let assistantText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !assistantText.isEmpty {
-                        let assistantMessage = try persistence.addMessage(
-                            sessionID: sessionRecord.id,
-                            role: .assistant,
-                            content: .text(assistantText)
-                        )
-                        messages.append(assistantMessage)
-                    }
-
-                    var shouldContinue = false
-                    for toolCall in toolCalls {
-                        let callMessage = try persistence.addMessage(
-                            sessionID: sessionRecord.id,
-                            role: .assistant,
-                            content: .toolCall(
-                                name: toolCall.name,
-                                argsJSON: try encodeToolArguments(toolCall.arguments)
-                            )
-                        )
-                        messages.append(callMessage)
-
-                        let toolOutput = try toolRegistry.execute(toolCall, for: wordID)
-                        let toolResultMessage = try persistence.addMessage(
-                            sessionID: sessionRecord.id,
-                            role: role(for: toolOutput),
-                            content: toolOutput
-                        )
-                        messages.append(toolResultMessage)
-                        if case .toolResult = toolOutput {
-                            shouldContinue = true
-                        }
-                    }
-                    refreshDerivedState()
-                    if shouldContinue {
-                        toolIteration += 1
-                        continue
-                    }
-                    return
-                }
-
-                let assistantText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !assistantText.isEmpty else {
-                    let emptyMessage = try persistence.addMessage(
-                        sessionID: sessionRecord.id,
-                        role: .assistant,
-                        content: .error(message: "Agent returned an empty response.", recoverable: true)
-                    )
-                    messages.append(emptyMessage)
-                    refreshDerivedState()
-                    return
-                }
-
-                let assistantMessage = try persistence.addMessage(
-                    sessionID: sessionRecord.id,
-                    role: .assistant,
-                    content: .text(assistantText)
-                )
-                messages.append(assistantMessage)
-                refreshDerivedState()
-                return
-            }
-
-            let toolLoopError = try persistence.addMessage(
-                sessionID: sessionRecord.id,
-                role: .assistant,
-                content: .error(message: "Agent exceeded the tool-call limit for this turn.", recoverable: true)
-            )
-            messages.append(toolLoopError)
-            refreshDerivedState()
+            try await runAssistantTurn(sessionID: sessionRecord.id)
         } catch {
-            let errorMessage = try persistence.addMessage(
-                sessionID: sessionRecord.id,
-                role: .assistant,
-                content: .error(message: error.localizedDescription, recoverable: true)
-            )
-            messages.append(errorMessage)
-            refreshDerivedState()
+            // Model service errors should not pollute the conversation context.
+            // Roll back all messages added during this turn (including the user message)
+            // so the user can simply re-send.
+            try rollbackMessages(from: messageCountBeforeTurn)
+            throw error
+        }
+    }
+
+    /// Edit the last user message and regenerate. The previous turn stays intact until the
+    /// replacement request succeeds, so transient failures do not destroy chat history.
+    public func editLastUserMessage(_ newText: String) async throws {
+        guard sessionRecord != nil else {
+            throw AgentSessionError.sessionUnavailable
+        }
+
+        // Find the last user message
+        guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }) else {
+            return
+        }
+
+        let messagesToReplace = Array(messages[lastUserIndex...])
+        let retainedMessages = Array(messages[..<lastUserIndex])
+
+        try await withTemporaryTranscript(retainedMessages, deletingOnSuccess: messagesToReplace) {
+            try await sendUserMessage(newText)
+        }
+    }
+
+    /// Regenerate the last assistant response while keeping the existing reply available until
+    /// the retry succeeds.
+    public func regenerateLastResponse() async throws {
+        guard let sessionRecord else {
+            throw AgentSessionError.sessionUnavailable
+        }
+
+        // Find the last user message
+        guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }),
+              case .text = messages[lastUserIndex].content else {
+            return
+        }
+
+        let assistantMessagesToReplace = Array(messages[(lastUserIndex + 1)...])
+        let retainedMessages = Array(messages[...lastUserIndex])
+
+        try await withTemporaryTranscript(retainedMessages, deletingOnSuccess: assistantMessagesToReplace) {
+            try await regenerateFromCurrentTranscript(sessionID: sessionRecord.id)
         }
     }
 
@@ -287,7 +276,7 @@ public final class AgentSession: ObservableObject {
         let updatedArtifacts = try AgentProposalArtifactsProjector.project(
             proposal: proposal,
             onto: artifacts,
-            mode: .persist
+            mode: .preview
         )
         try artifactsManager.saveArtifacts(updatedArtifacts, for: wordID)
 
@@ -331,6 +320,33 @@ public final class AgentSession: ObservableObject {
         }
     }
 
+    private func generateWithStreaming(
+        promptMessages: [LLMMessage],
+        tools: [LLMToolDefinition]
+    ) async throws -> GenerateResult {
+        streamingText = ""
+        streamingReasoning = ""
+        let accumulator = StreamingDeltaAccumulator { [weak self] text, reasoning in
+            self?.streamingText += text
+            self?.streamingReasoning += reasoning
+        }
+        defer {
+            accumulator.close()
+        }
+        let result = try await generator.generateStreaming(
+            messages: promptMessages,
+            tools: tools,
+            onDelta: { delta in
+                accumulator.append(content: delta)
+            },
+            onReasoningDelta: { delta in
+                accumulator.append(reasoning: delta)
+            }
+        )
+        await accumulator.flushAndClose()
+        return result
+    }
+
     private func mergeTools() -> [LLMToolDefinition] {
         var merged: [LLMToolDefinition] = []
         var seen = Set<String>()
@@ -350,6 +366,161 @@ public final class AgentSession: ObservableObject {
             throw AgentSessionError.invalidToolArguments
         }
         return json
+    }
+
+    private func withTemporaryTranscript<T>(
+        _ temporaryMessages: [AgentChatMessage],
+        deletingOnSuccess replacedMessages: [AgentChatMessage],
+        operation: () async throws -> T
+    ) async throws -> T {
+        let originalMessages = messages
+        messages = temporaryMessages
+        refreshDerivedState()
+
+        do {
+            let result = try await operation()
+            let idsToDelete = replacedMessages.map(\.id)
+            if !idsToDelete.isEmpty {
+                try persistence.deleteMessages(ids: idsToDelete)
+            }
+            refreshDerivedState()
+            return result
+        } catch {
+            messages = originalMessages
+            refreshDerivedState()
+            throw error
+        }
+    }
+
+    private func regenerateFromCurrentTranscript(sessionID: UUID) async throws {
+        isGenerating = true
+        defer {
+            isGenerating = false
+            streamingText = ""
+            streamingReasoning = ""
+        }
+
+        let messageCountBeforeRegen = messages.count
+
+        do {
+            try await runAssistantTurn(sessionID: sessionID)
+        } catch {
+            try rollbackMessages(from: messageCountBeforeRegen)
+            throw error
+        }
+    }
+
+    private func runAssistantTurn(sessionID: UUID) async throws {
+        let snapshot = try snapshotProvider.snapshot(for: wordID)
+        let availableTools = mergeTools()
+        var toolIteration = 0
+
+        while toolIteration <= maxToolIterations {
+            let promptMessages = promptBuilder.buildMessages(
+                context: .init(
+                    cardSnapshot: snapshot,
+                    messages: messages,
+                    tools: availableTools
+                )
+            )
+            let result = try await generateWithStreaming(promptMessages: promptMessages, tools: availableTools)
+
+            if let toolCalls = result.toolCalls, !toolCalls.isEmpty {
+                try persistAssistantTextIfPresent(result, sessionID: sessionID)
+
+                // Once the visible assistant text is persisted, switch the bottom-row
+                // indicator back to a loading state while tool calls are being resolved.
+                streamingText = ""
+                streamingReasoning = ""
+
+                let shouldContinue = try executeToolCalls(toolCalls, sessionID: sessionID)
+                refreshDerivedState()
+                if shouldContinue {
+                    toolIteration += 1
+                    continue
+                }
+                return
+            }
+
+            try persistFinalAssistantResponse(result, sessionID: sessionID)
+            return
+        }
+
+        let toolLoopError = try persistence.addMessage(
+            sessionID: sessionID,
+            role: .assistant,
+            content: .error(message: "Agent exceeded the tool-call limit for this turn.", recoverable: true)
+        )
+        messages.append(toolLoopError)
+        refreshDerivedState()
+    }
+
+    private func persistAssistantTextIfPresent(_ result: GenerateResult, sessionID: UUID) throws {
+        let assistantText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !assistantText.isEmpty else { return }
+        let assistantMessage = try persistence.addMessage(
+            sessionID: sessionID,
+            role: .assistant,
+            content: .text(assistantText, reasoning: result.reasoning)
+        )
+        messages.append(assistantMessage)
+    }
+
+    private func persistFinalAssistantResponse(_ result: GenerateResult, sessionID: UUID) throws {
+        let assistantText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !assistantText.isEmpty else {
+            let emptyMessage = try persistence.addMessage(
+                sessionID: sessionID,
+                role: .assistant,
+                content: .error(message: "Agent returned an empty response.", recoverable: true)
+            )
+            messages.append(emptyMessage)
+            refreshDerivedState()
+            return
+        }
+
+        let assistantMessage = try persistence.addMessage(
+            sessionID: sessionID,
+            role: .assistant,
+            content: .text(assistantText, reasoning: result.reasoning)
+        )
+        messages.append(assistantMessage)
+        refreshDerivedState()
+    }
+
+    private func executeToolCalls(_ toolCalls: [LLMToolCall], sessionID: UUID) throws -> Bool {
+        var shouldContinue = false
+        for toolCall in toolCalls {
+            let callMessage = try persistence.addMessage(
+                sessionID: sessionID,
+                role: .assistant,
+                content: .toolCall(
+                    name: toolCall.name,
+                    argsJSON: try encodeToolArguments(toolCall.arguments)
+                )
+            )
+            messages.append(callMessage)
+
+            let toolOutput = try toolRegistry.execute(toolCall, for: wordID)
+            let toolResultMessage = try persistence.addMessage(
+                sessionID: sessionID,
+                role: role(for: toolOutput),
+                content: toolOutput
+            )
+            messages.append(toolResultMessage)
+            if case .toolResult = toolOutput {
+                shouldContinue = true
+            }
+        }
+        return shouldContinue
+    }
+
+    private func rollbackMessages(from startIndex: Int) throws {
+        guard startIndex < messages.count else { return }
+        let idsToDelete = messages[startIndex...].map(\.id)
+        try persistence.deleteMessages(ids: idsToDelete)
+        messages.removeSubrange(startIndex...)
+        refreshDerivedState()
     }
 
     private func role(for content: MessageContent) -> AgentChatMessage.Role {
@@ -429,5 +600,101 @@ private enum AgentCapabilityBoundaryClassifier {
 
     private static func containsAny(_ text: String, keywords: [String]) -> Bool {
         keywords.contains { text.contains($0) }
+    }
+}
+
+private final class StreamingDeltaAccumulator: @unchecked Sendable {
+    typealias Apply = @MainActor (_ content: String, _ reasoning: String) -> Void
+
+    private let lock = NSLock()
+    private let apply: Apply
+    private var pendingContent = ""
+    private var pendingReasoning = ""
+    private var flushTask: Task<Void, Never>?
+    private var isClosed = false
+
+    init(apply: @escaping Apply) {
+        self.apply = apply
+    }
+
+    func append(content: String = "", reasoning: String = "") {
+        guard !content.isEmpty || !reasoning.isEmpty else { return }
+        lock.lock()
+        guard !isClosed else {
+            lock.unlock()
+            return
+        }
+
+        pendingContent += content
+        pendingReasoning += reasoning
+        if flushTask == nil {
+            flushTask = Task { [weak self] in
+                await self?.flushLoop()
+            }
+        }
+        lock.unlock()
+    }
+
+    func close() {
+        lock.lock()
+        isClosed = true
+        lock.unlock()
+    }
+
+    func flushAndClose() async {
+        close()
+        while true {
+            let task = currentFlushTask()
+            guard let task else { break }
+            await task.value
+        }
+
+        let batch = takePending()
+        if !batch.content.isEmpty || !batch.reasoning.isEmpty {
+            await apply(batch.content, batch.reasoning)
+        }
+    }
+
+    private func flushLoop() async {
+        while true {
+            let batch = takePending()
+            if batch.content.isEmpty && batch.reasoning.isEmpty {
+                let shouldRestart = finishFlushTaskAndCheckForPending()
+                if shouldRestart {
+                    continue
+                }
+                return
+            }
+            await apply(batch.content, batch.reasoning)
+        }
+    }
+
+    private func currentFlushTask() -> Task<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return flushTask
+    }
+
+    private func finishFlushTaskAndCheckForPending() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        flushTask = nil
+        let shouldRestart = !pendingContent.isEmpty || !pendingReasoning.isEmpty
+        if shouldRestart {
+            flushTask = Task { [weak self] in
+                await self?.flushLoop()
+            }
+        }
+        return shouldRestart
+    }
+
+    private func takePending() -> (content: String, reasoning: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let content = pendingContent
+        let reasoning = pendingReasoning
+        pendingContent = ""
+        pendingReasoning = ""
+        return (content, reasoning)
     }
 }

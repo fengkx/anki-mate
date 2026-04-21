@@ -6,15 +6,27 @@ public struct AgentToolRegistry {
     public let definitions: [LLMToolDefinition]
 
     private let snapshotLoader: @Sendable (UUID) throws -> CardRenderSnapshot
+    private let artifactsLoader: ((UUID) throws -> AIArtifacts)?
 
-    public init(snapshotProvider: AgentCardSnapshotProviding) {
+    public init(
+        snapshotProvider: AgentCardSnapshotProviding,
+        artifactsProvider: AgentArtifactsManaging? = nil
+    ) {
         self.init(snapshotLoader: { wordID in
             try snapshotProvider.snapshot(for: wordID)
+        }, artifactsLoader: artifactsProvider.map { provider in
+            { wordID in
+                try provider.loadArtifacts(for: wordID)
+            }
         })
     }
 
-    init(snapshotLoader: @escaping @Sendable (UUID) throws -> CardRenderSnapshot) {
+    init(
+        snapshotLoader: @escaping @Sendable (UUID) throws -> CardRenderSnapshot,
+        artifactsLoader: ((UUID) throws -> AIArtifacts)? = nil
+    ) {
         self.snapshotLoader = snapshotLoader
+        self.artifactsLoader = artifactsLoader
         self.definitions = [
             Self.toolDefinition(
                 name: "read_card_snapshot",
@@ -24,33 +36,44 @@ public struct AgentToolRegistry {
                 name: "list_accepted_artifacts",
                 description: "Return the currently accepted card artifacts grouped by section."
             ),
+            Self.toolDefinition(
+                name: "read_recall_card",
+                description: "Return accepted and suggested Recall Card drafts for the current word."
+            ),
             Self.proposalToolDefinition(
                 name: "propose_usage_cue",
-                description: "Create a pending usage-cue edit proposal."
+                description: "Create a pending usage-cue edit proposal.",
+                payloadSchema: Self.definitionNotePayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_example",
-                description: "Create a pending example edit proposal."
+                description: "Create a pending example edit proposal.",
+                payloadSchema: Self.examplePayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_recall_draft",
-                description: "Create a pending recall-draft proposal."
+                description: "Create a pending recall-draft proposal.",
+                payloadSchema: Self.recallDraftPayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_pitfall",
-                description: "Create a pending pitfall proposal."
+                description: "Create a pending pitfall proposal.",
+                payloadSchema: Self.pitfallPayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_mnemonic",
-                description: "Create a pending mnemonic proposal."
+                description: "Create a pending mnemonic proposal.",
+                payloadSchema: Self.mnemonicPayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_collocation",
-                description: "Create a pending collocation proposal."
+                description: "Create a pending collocation proposal.",
+                payloadSchema: Self.collocationPayloadSchema()
             ),
             Self.proposalToolDefinition(
                 name: "propose_delete_accepted",
-                description: "Create a pending accepted-artifact deletion proposal."
+                description: "Create a pending accepted-artifact deletion proposal.",
+                payloadSchema: Self.deleteAcceptedPayloadSchema()
             )
         ]
     }
@@ -61,6 +84,8 @@ public struct AgentToolRegistry {
             return try executeReadCardSnapshot(for: wordID)
         case "list_accepted_artifacts":
             return try executeListAcceptedArtifacts(for: wordID)
+        case "read_recall_card":
+            return try executeReadRecallCard(for: wordID)
         case "propose_usage_cue",
              "propose_example",
              "propose_recall_draft",
@@ -105,6 +130,24 @@ public struct AgentToolRegistry {
         )
     }
 
+    private func executeReadRecallCard(for wordID: UUID) throws -> MessageContent {
+        let snapshot = try snapshotLoader(wordID)
+        let artifacts = try (artifactsLoader?(wordID) ?? .empty).normalized()
+        let accepted = artifacts.recallCardDrafts.accepted ?? []
+        let suggested = artifacts.recallCardDrafts.suggested ?? []
+        let payload = RecallCardPayload(
+            word: snapshot.word,
+            hasAccepted: !accepted.isEmpty,
+            accepted: accepted,
+            suggested: suggested
+        )
+        return .toolResult(
+            name: "read_recall_card",
+            resultJSON: try encode(payload),
+            truncated: false
+        )
+    }
+
     private static func toolDefinition(name: String, description: String) -> LLMToolDefinition {
         LLMToolDefinition(
             name: name,
@@ -117,7 +160,11 @@ public struct AgentToolRegistry {
         )
     }
 
-    private static func proposalToolDefinition(name: String, description: String) -> LLMToolDefinition {
+    private static func proposalToolDefinition(
+        name: String,
+        description: String,
+        payloadSchema: JSONValue
+    ) -> LLMToolDefinition {
         LLMToolDefinition(
             name: name,
             description: description,
@@ -141,9 +188,7 @@ public struct AgentToolRegistry {
                     "rationale": .object([
                         "type": .string("string")
                     ]),
-                    "payload": .object([
-                        "type": .string("object")
-                    ])
+                    "payload": payloadSchema
                 ]),
                 "required": .array([
                     .string("operation"),
@@ -152,6 +197,156 @@ public struct AgentToolRegistry {
                 ]),
                 "additionalProperties": .bool(false)
             ])
+        )
+    }
+
+    private static func stringSchema() -> JSONValue {
+        .object([
+            "type": .string("string")
+        ])
+    }
+
+    private static func boolSchema() -> JSONValue {
+        .object([
+            "type": .string("boolean")
+        ])
+    }
+
+    private static func numberSchema() -> JSONValue {
+        .object([
+            "type": .string("number")
+        ])
+    }
+
+    private static func enumStringSchema(_ values: [String]) -> JSONValue {
+        .object([
+            "type": .string("string"),
+            "enum": .array(values.map(JSONValue.string))
+        ])
+    }
+
+    private static func objectSchema(
+        properties: [String: JSONValue],
+        required: [String] = []
+    ) -> JSONValue {
+        .object([
+            "type": .string("object"),
+            "properties": .object(properties),
+            "required": .array(required.map(JSONValue.string)),
+            "additionalProperties": .bool(false)
+        ])
+    }
+
+    private static func anchorSchema() -> JSONValue {
+        objectSchema(properties: [
+            "headword": stringSchema(),
+            "lexicalEntryIndex": numberSchema(),
+            "senseIndex": numberSchema(),
+            "exampleIndex": numberSchema(),
+            "excerpt": stringSchema()
+        ])
+    }
+
+    private static func senseReferenceSchema() -> JSONValue {
+        objectSchema(properties: [
+            "senseIndex": numberSchema(),
+            "partOfSpeech": stringSchema(),
+            "definitionSnapshot": stringSchema()
+        ])
+    }
+
+    private static func definitionNotePayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "text": stringSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["text"]
+        )
+    }
+
+    private static func examplePayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "text": stringSchema(),
+                "translation": stringSchema(),
+                "note": stringSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["text"]
+        )
+    }
+
+    private static func recallDraftPayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "mode": enumStringSchema(RecallCardMode.allCases.map(\.rawValue)),
+                "front": stringSchema(),
+                "back": stringSchema(),
+                "hint": stringSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["mode", "front", "back"]
+        )
+    }
+
+    private static func pitfallPayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "text": stringSchema(),
+                "translation": stringSchema(),
+                "category": stringSchema(),
+                "focus": stringSchema(),
+                "recallRelevant": boolSchema(),
+                "senseRef": senseReferenceSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["text"]
+        )
+    }
+
+    private static func mnemonicPayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "text": stringSchema(),
+                "translation": stringSchema(),
+                "kind": stringSchema(),
+                "focus": stringSchema(),
+                "recallRelevant": boolSchema(),
+                "senseRef": senseReferenceSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["text"]
+        )
+    }
+
+    private static func collocationPayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "phrase": stringSchema(),
+                "note": stringSchema(),
+                "focus": stringSchema(),
+                "recallRelevant": boolSchema(),
+                "senseRef": senseReferenceSchema(),
+                "anchor": anchorSchema()
+            ],
+            required: ["phrase"]
+        )
+    }
+
+    private static func deleteAcceptedPayloadSchema() -> JSONValue {
+        objectSchema(
+            properties: [
+                "section": enumStringSchema([
+                    "usage_cue",
+                    "example",
+                    "recall_draft",
+                    "pitfall",
+                    "mnemonic",
+                    "collocation"
+                ])
+            ],
+            required: ["section"]
         )
     }
 
@@ -164,11 +359,19 @@ public struct AgentToolRegistry {
         let diffSummary = try requiredString("diffSummary", in: arguments, toolName: toolCall.name)
         let rationale = optionalString("rationale", in: arguments)
         let payload = try requiredObject("payload", in: arguments, toolName: toolCall.name)
+        let payloadJSON = try encode(payload)
+
+        try validateProposalPayload(
+            kind: proposalKind,
+            operation: operation,
+            payloadJSON: payloadJSON,
+            toolName: toolCall.name
+        )
 
         let proposal = ProposalRecord(
             kind: proposalKind,
             operation: operation,
-            payloadJSON: try encode(payload),
+            payloadJSON: payloadJSON,
             diffSummary: diffSummary,
             rationale: rationale
         )
@@ -272,6 +475,50 @@ public struct AgentToolRegistry {
         }
         return arguments[key] ?? .object([:])
     }
+
+    private func validateProposalPayload(
+        kind: ProposalRecord.ProposalKind,
+        operation: ProposalRecord.Operation,
+        payloadJSON: String,
+        toolName: String
+    ) throws {
+        if case .delete = operation, kind != .deleteAccepted {
+            return
+        }
+
+        switch kind {
+        case .usageCue:
+            try decodePayload(DefinitionNoteArtifact.self, from: payloadJSON, toolName: toolName)
+        case .example:
+            try decodePayload(ExampleSentenceArtifact.self, from: payloadJSON, toolName: toolName)
+        case .recallDraft:
+            try decodePayload(RecallCardDraft.self, from: payloadJSON, toolName: toolName)
+        case .pitfall:
+            try decodePayload(PitfallArtifact.self, from: payloadJSON, toolName: toolName)
+        case .mnemonic:
+            try decodePayload(MnemonicArtifact.self, from: payloadJSON, toolName: toolName)
+        case .collocation:
+            try decodePayload(CollocationArtifact.self, from: payloadJSON, toolName: toolName)
+        case .deleteAccepted:
+            try decodePayload(DeleteAcceptedPayload.self, from: payloadJSON, toolName: toolName)
+        }
+    }
+
+    private func decodePayload<T: Decodable>(
+        _ type: T.Type,
+        from payloadJSON: String,
+        toolName: String
+    ) throws {
+        guard let data = payloadJSON.data(using: .utf8) else {
+            throw AgentToolRegistryError.invalidArguments(toolName)
+        }
+
+        do {
+            _ = try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw AgentToolRegistryError.invalidArguments(toolName)
+        }
+    }
 }
 
 public enum AgentToolRegistryError: LocalizedError {
@@ -302,4 +549,24 @@ private struct ReadCardSnapshotPayload: Encodable {
 private struct AcceptedArtifactsPayload: Encodable {
     let word: String
     let artifacts: JSONValue
+}
+
+private struct RecallCardPayload: Encodable {
+    let word: String
+    let hasAccepted: Bool
+    let accepted: [RecallCardDraft]
+    let suggested: [RecallCardDraft]
+}
+
+private struct DeleteAcceptedPayload: Decodable {
+    let section: Section
+
+    enum Section: String, Decodable {
+        case usageCue = "usage_cue"
+        case example
+        case recallDraft = "recall_draft"
+        case pitfall
+        case mnemonic
+        case collocation
+    }
 }

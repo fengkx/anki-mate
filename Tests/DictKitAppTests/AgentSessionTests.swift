@@ -88,6 +88,47 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(sut.messages.count, 0)
     }
 
+    func testSendUserMessageRethrowsRollbackDeleteFailure() async throws {
+        let persistence = InMemoryAgentPersistence()
+        persistence.deleteError = Failure.deleteFailed
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: RecordingGenerator(error: Failure.stub)
+        )
+
+        try sut.reload()
+
+        do {
+            try await sut.sendUserMessage("帮我缩短 back")
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertEqual(error as? Failure, .deleteFailed)
+        }
+    }
+
+    func testStreamingDeltasDoNotAppendAfterGenerationFinishes() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: BurstStreamingGenerator(deltaCount: 200)
+        )
+
+        try sut.reload()
+        try await sut.sendUserMessage("stream")
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(sut.streamingText, "")
+        XCTAssertEqual(sut.streamingReasoning, "")
+    }
+
     func testSendUserMessageExecutesReadToolCallsBeforePersistingAssistantReply() async throws {
         let persistence = InMemoryAgentPersistence()
         let generator = RecordingGenerator(
@@ -141,6 +182,57 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertTrue(generator.calls[1].contains { $0.content.contains(#""word":"apple""#) })
     }
 
+    func testSendUserMessageExecutesReadRecallCardToolAgainstArtifactsManager() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let generator = RecordingGenerator(
+            results: [
+                GenerateResult(
+                    text: "",
+                    tokensUsed: 12,
+                    durationMs: 4,
+                    toolCalls: [
+                        LLMToolCall(id: "call-recall", name: "read_recall_card", arguments: .object([:]))
+                    ]
+                ),
+                GenerateResult(
+                    text: "已有一张 Recall Card。",
+                    tokensUsed: 18,
+                    durationMs: 6
+                )
+            ]
+        )
+        let wordID = UUID()
+        let accepted = RecallCardDraft(
+            mode: .fullSpelling,
+            front: "根据中文提示回忆完整拼写：苹果",
+            back: "apple",
+            hint: "fruit"
+        )
+        let artifactsManager = InMemoryArtifactsManager(
+            artifactsByWordID: [
+                wordID: AIArtifacts(recallCardDrafts: .init(accepted: [accepted]))
+            ]
+        )
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            artifactsManager: artifactsManager,
+            generator: generator
+        )
+
+        try sut.reload()
+        try await sut.sendUserMessage("看看有没有 Recall Card")
+
+        guard case .toolResult(let resultName, let resultJSON, _) = sut.messages[2].content else {
+            return XCTFail("Expected persisted tool result")
+        }
+        XCTAssertEqual(resultName, "read_recall_card")
+        XCTAssertTrue(resultJSON.contains(#""hasAccepted":true"#))
+        XCTAssertTrue(resultJSON.contains("根据中文提示回忆完整拼写"))
+        XCTAssertTrue(generator.calls[1].contains { $0.role == .tool && $0.content.contains("read_recall_card") })
+    }
+
     func testSendUserMessageShortCircuitsLayoutRequestsIntoDeclinedMessage() async throws {
         let persistence = InMemoryAgentPersistence()
         let generator = RecordingGenerator(
@@ -192,7 +284,14 @@ final class AgentSessionTests: XCTestCase {
             )
         )
         let wordID = UUID()
-        let sut = AgentSession(
+        var sut: AgentSession!
+        persistence.onAddMessage = { message in
+            guard case .toolCall = message.content else { return }
+            XCTAssertTrue(sut.isGenerating)
+            XCTAssertTrue(sut.streamingText.isEmpty)
+            XCTAssertTrue(sut.streamingReasoning.isEmpty)
+        }
+        sut = AgentSession(
             wordID: wordID,
             persistence: persistence,
             snapshotProvider: StaticSnapshotProvider(),
@@ -305,6 +404,36 @@ final class AgentSessionTests: XCTestCase {
         )
     }
 
+    func testPreviewProposalReportsReadableErrorForMalformedPayload() throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let session = try persistence.upsertSession(for: wordID)
+        let proposal = ProposalRecord(
+            kind: .pitfall,
+            operation: .add,
+            payloadJSON: #"{}"#,
+            diffSummary: "Add a pitfall"
+        )
+        _ = try persistence.addMessage(sessionID: session.id, role: .assistant, content: .actionProposal(proposal))
+        let artifactsManager = InMemoryArtifactsManager(artifactsByWordID: [wordID: AIArtifacts()])
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            artifactsManager: artifactsManager,
+            generator: RecordingGenerator(result: .init(text: "unused", tokensUsed: 1, durationMs: 1))
+        )
+
+        try sut.reload()
+
+        XCTAssertThrowsError(try sut.previewProposal(proposal.id)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Invalid proposal payload: missing required field 'text'."
+            )
+        }
+    }
+
     func testApplyProposalPersistsArtifactsAndMarksProposalApplied() throws {
         let persistence = InMemoryAgentPersistence()
         let wordID = UUID()
@@ -342,9 +471,10 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(sut.pendingProposals.count, 0)
         XCTAssertNil(sut.previewOverrideArtifacts)
         XCTAssertEqual(
-            try artifactsManager.loadArtifacts(for: wordID).suggestedExampleSentences,
+            try artifactsManager.loadArtifacts(for: wordID).acceptedExampleSentences,
             ["I ate an apple.", "Apple stock fell sharply after earnings."]
         )
+        XCTAssertTrue(try artifactsManager.loadArtifacts(for: wordID).suggestedExampleSentences.isEmpty)
         guard case .actionProposal(let applied) = sut.messages[0].content else {
             return XCTFail("Expected proposal message")
         }
@@ -389,6 +519,68 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(dismissed.decision, .dismissed)
         XCTAssertNotNil(dismissed.decidedAt)
     }
+
+    func testEditLastUserMessagePreservesOriginalConversationWhenResendFails() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let session = try persistence.upsertSession(for: wordID)
+        _ = try persistence.addMessage(sessionID: session.id, role: .user, content: .text("原始问题"))
+        _ = try persistence.addMessage(sessionID: session.id, role: .assistant, content: .text("原始回答"))
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: RecordingGenerator(error: Failure.stub)
+        )
+
+        try sut.reload()
+
+        do {
+            try await sut.editLastUserMessage("编辑后的问题")
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertTrue(error is Failure)
+        }
+
+        XCTAssertEqual(sut.messages.count, 2)
+        XCTAssertEqual(sut.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(extractText(from: sut.messages[0].content), "原始问题")
+        XCTAssertEqual(extractText(from: sut.messages[1].content), "原始回答")
+    }
+
+    func testRegenerateLastResponsePreservesOriginalAssistantMessageWhenRetryFails() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let session = try persistence.upsertSession(for: wordID)
+        _ = try persistence.addMessage(sessionID: session.id, role: .user, content: .text("原始问题"))
+        _ = try persistence.addMessage(sessionID: session.id, role: .assistant, content: .text("原始回答"))
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: RecordingGenerator(error: Failure.stub)
+        )
+
+        try sut.reload()
+
+        do {
+            try await sut.regenerateLastResponse()
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertTrue(error is Failure)
+        }
+
+        XCTAssertEqual(sut.messages.count, 2)
+        XCTAssertEqual(sut.messages.map(\.role), [.user, .assistant])
+        XCTAssertEqual(extractText(from: sut.messages[1].content), "原始回答")
+    }
+}
+
+private func extractText(from content: MessageContent) -> String? {
+    guard case .text(let text, reasoning: _) = content else {
+        return nil
+    }
+    return text
 }
 
 private struct StaticSnapshotProvider: AgentCardSnapshotProviding {
@@ -437,9 +629,39 @@ private final class RecordingGenerator: AgentGenerating {
     }
 }
 
+private final class BurstStreamingGenerator: AgentGenerating {
+    let deltaCount: Int
+
+    init(deltaCount: Int) {
+        self.deltaCount = deltaCount
+    }
+
+    func generate(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition]
+    ) async throws -> GenerateResult {
+        GenerateResult(text: "done", tokensUsed: 1, durationMs: 1)
+    }
+
+    func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition],
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> GenerateResult {
+        for _ in 0..<deltaCount {
+            onDelta("x")
+            onReasoningDelta("r")
+        }
+        return GenerateResult(text: "done", tokensUsed: 1, durationMs: 1)
+    }
+}
+
 private final class InMemoryAgentPersistence: AgentSessionPersisting {
     private(set) var sessionsByWordID: [UUID: AgentChatSession] = [:]
     private(set) var messagesBySessionID: [UUID: [AgentChatMessage]] = [:]
+    var onAddMessage: ((AgentChatMessage) -> Void)?
+    var deleteError: Error?
 
     func upsertSession(for wordID: UUID, preferences: AgentSessionPreferences) throws -> AgentChatSession {
         if var existing = sessionsByWordID[wordID] {
@@ -483,10 +705,14 @@ private final class InMemoryAgentPersistence: AgentSessionPersisting {
             interrupted: interrupted
         )
         messagesBySessionID[sessionID, default: []].append(message)
+        onAddMessage?(message)
         return message
     }
 
     func deleteMessages(ids: [UUID]) throws {
+        if let deleteError {
+            throw deleteError
+        }
         for (sessionID, messages) in messagesBySessionID {
             messagesBySessionID[sessionID] = messages.filter { !ids.contains($0.id) }
         }
@@ -541,8 +767,14 @@ private final class InMemoryArtifactsManager: AgentArtifactsManaging {
 
 private enum Failure: LocalizedError {
     case stub
+    case deleteFailed
 
     var errorDescription: String? {
-        "stub failure"
+        switch self {
+        case .stub:
+            return "stub failure"
+        case .deleteFailed:
+            return "delete failure"
+        }
     }
 }

@@ -39,6 +39,105 @@ public actor RPCClient {
         self.debugTraceWriter = LLMDebugTraceWriter.shared
     }
 
+    static func mergeStreamToolCalls(
+        _ existing: [ChatToolCall],
+        with deltas: [ChatToolCall]
+    ) -> [ChatToolCall] {
+        var merged = existing
+
+        for (offset, delta) in deltas.enumerated() {
+            let targetIndex = delta.index ?? offset
+            if targetIndex < merged.count {
+                merged[targetIndex] = mergeToolCallFragment(merged[targetIndex], with: delta, fallbackIndex: targetIndex)
+                continue
+            }
+
+            while merged.count < targetIndex {
+                merged.append(
+                    ChatToolCall(
+                        index: merged.count,
+                        id: nil,
+                        type: nil,
+                        function: ChatToolCallFunction(name: "", arguments: "")
+                    )
+                )
+            }
+
+            merged.append(
+                ChatToolCall(
+                    index: targetIndex,
+                    id: delta.id,
+                    type: delta.type,
+                    function: delta.function
+                )
+            )
+        }
+
+        return merged
+    }
+
+    private static func mergeToolCallFragment(
+        _ existing: ChatToolCall,
+        with delta: ChatToolCall,
+        fallbackIndex: Int
+    ) -> ChatToolCall {
+        let mergedName = existing.function.name + delta.function.name
+        let mergedArguments = existing.function.arguments + delta.function.arguments
+
+        return ChatToolCall(
+            index: existing.index ?? delta.index ?? fallbackIndex,
+            id: delta.id ?? existing.id,
+            type: delta.type ?? existing.type,
+            function: ChatToolCallFunction(name: mergedName, arguments: mergedArguments)
+        )
+    }
+
+    static func splitThinkingTaggedContent(_ raw: String) -> (visible: String, reasoning: String) {
+        let startTag = "<think>"
+        let endTag = "</think>"
+        var cursor = raw.startIndex
+        var visible = ""
+        var reasoning = ""
+        var insideThink = false
+
+        while cursor < raw.endIndex {
+            if insideThink {
+                if let endRange = raw.range(of: endTag, range: cursor..<raw.endIndex) {
+                    reasoning += String(raw[cursor..<endRange.lowerBound])
+                    cursor = endRange.upperBound
+                    insideThink = false
+                } else {
+                    let remainder = String(raw[cursor..<raw.endIndex])
+                    reasoning += dropPartialTagSuffix(remainder, tag: endTag)
+                    break
+                }
+            } else {
+                if let startRange = raw.range(of: startTag, range: cursor..<raw.endIndex) {
+                    visible += String(raw[cursor..<startRange.lowerBound])
+                    cursor = startRange.upperBound
+                    insideThink = true
+                } else {
+                    let remainder = String(raw[cursor..<raw.endIndex])
+                    visible += dropPartialTagSuffix(remainder, tag: startTag)
+                    break
+                }
+            }
+        }
+
+        return (visible, reasoning)
+    }
+
+    private static func dropPartialTagSuffix(_ text: String, tag: String) -> String {
+        guard !text.isEmpty else { return text }
+        for length in stride(from: min(text.count, tag.count - 1), through: 1, by: -1) {
+            let suffix = String(text.suffix(length))
+            if tag.hasPrefix(suffix) {
+                return String(text.dropLast(length))
+            }
+        }
+        return text
+    }
+
     // MARK: - JSON-RPC (Control Plane)
 
     /// Call a JSON-RPC method (health, loadModel, unloadModel, shutdown).
@@ -177,6 +276,7 @@ public actor RPCClient {
 
             var accumulatedContent = ""
             var accumulatedReasoning = ""
+            var accumulatedRawContent = ""
             var accumulatedToolCalls: [ChatToolCall] = []
             var finishReason: String?
             var usage: ChatCompletionResponse.Usage?
@@ -213,10 +313,25 @@ public actor RPCClient {
 
                 if let choice = chunk.choices.first {
                     if let content = choice.delta.content, !content.isEmpty {
-                        accumulatedContent += content
-                        onDelta(content)
-                        if let debugSessionID {
-                            try? await debugTraceWriter.appendStreamDelta(content, for: debugSessionID)
+                        accumulatedRawContent += content
+                        let split = Self.splitThinkingTaggedContent(accumulatedRawContent)
+                        let visibleDelta = String(split.visible.dropFirst(accumulatedContent.count))
+                        let reasoningDeltaFromContent = String(split.reasoning.dropFirst(accumulatedReasoning.count))
+
+                        if !visibleDelta.isEmpty {
+                            accumulatedContent += visibleDelta
+                            onDelta(visibleDelta)
+                            if let debugSessionID {
+                                try? await debugTraceWriter.appendStreamDelta(visibleDelta, for: debugSessionID)
+                            }
+                        }
+
+                        if !reasoningDeltaFromContent.isEmpty {
+                            accumulatedReasoning += reasoningDeltaFromContent
+                            onReasoningDelta?(reasoningDeltaFromContent)
+                            if let debugSessionID {
+                                try? await debugTraceWriter.appendStreamDelta("[reasoning] " + reasoningDeltaFromContent, for: debugSessionID)
+                            }
                         }
                     }
 
@@ -230,10 +345,7 @@ public actor RPCClient {
                     }
 
                     if let toolCalls = choice.delta.tool_calls {
-                        // Accumulate tool call fragments
-                        for tc in toolCalls {
-                            accumulatedToolCalls.append(tc)
-                        }
+                        accumulatedToolCalls = Self.mergeStreamToolCalls(accumulatedToolCalls, with: toolCalls)
                     }
 
                     if let fr = choice.finish_reason {

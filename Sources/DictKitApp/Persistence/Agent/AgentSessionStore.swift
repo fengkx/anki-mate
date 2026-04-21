@@ -160,6 +160,29 @@ struct AgentSessionStore: AgentSessionPersisting {
         }
     }
 
+    func deleteMessages(ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try withDatabase { db in
+            for batch in ids.chunked(maxSize: 900) {
+                try autoreleasepool {
+                    let placeholders = batch.map { _ in "?" }.joined(separator: ", ")
+                    let sql = "DELETE FROM agent_messages WHERE id IN (\(placeholders))"
+                    var stmt: OpaquePointer?
+                    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                        throw sqliteError(db: db)
+                    }
+                    defer { sqlite3_finalize(stmt) }
+                    for (index, id) in batch.enumerated() {
+                        sqlite3_bind_text(stmt, Int32(index + 1), id.uuidString, -1, agentTransientDestructor)
+                    }
+                    guard sqlite3_step(stmt) == SQLITE_DONE else {
+                        throw sqliteError(db: db)
+                    }
+                }
+            }
+        }
+    }
+
     func clearMessages(sessionID: UUID) throws {
         try withDatabase { db in
             let sql = "DELETE FROM agent_messages WHERE session_id = ?"
@@ -589,5 +612,15 @@ private protocol IdentifiableArtifact {
 extension PitfallArtifact: IdentifiableArtifact {}
 extension MnemonicArtifact: IdentifiableArtifact {}
 extension CollocationArtifact: IdentifiableArtifact {}
+
+private extension Array {
+    func chunked(maxSize: Int) -> [ArraySlice<Element>] {
+        guard maxSize > 0 else { return [] }
+        return stride(from: startIndex, to: endIndex, by: maxSize).map { start in
+            let end = Swift.min(start + maxSize, endIndex)
+            return self[start..<end]
+        }
+    }
+}
 
 private let agentTransientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

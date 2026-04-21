@@ -65,6 +65,23 @@ final class AgentSessionStoreTests: XCTestCase {
         XCTAssertEqual(messages.only?.interrupted, true)
     }
 
+    func testDeleteMessagesHandlesBatchesLargerThanSQLiteVariableLimit() throws {
+        let (wordListStore, wordID) = try makeStores()
+        let store = AgentSessionStore(databaseURL: wordListStore.databaseURL)
+        let session = try store.upsertSession(for: wordID)
+        let messages = try (0..<1_050).map { index in
+            try store.addMessage(
+                sessionID: session.id,
+                role: .user,
+                content: .text("message \(index)")
+            )
+        }
+
+        try store.deleteMessages(ids: messages.map(\.id))
+
+        XCTAssertTrue(try store.loadMessages(sessionID: session.id).isEmpty)
+    }
+
     func testProposalReconciliationMarksPendingPitfallAsAppliedWhenArtifactAlreadyExists() throws {
         let (wordListStore, wordID) = try makeStores()
         let store = AgentSessionStore(databaseURL: wordListStore.databaseURL)
