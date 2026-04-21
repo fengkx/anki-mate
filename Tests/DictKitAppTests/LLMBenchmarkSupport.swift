@@ -277,6 +277,9 @@ struct LLMBenchmarkReportWriter {
             for task in model.tasks {
                 let sample = task.output.sorted { $0.key < $1.key }.first.map { "\($0.key): \($0.value.markdownText)" } ?? "no output"
                 lines.append("- `\(task.taskType)` / `\(task.word)`: \(sample)")
+                if task.status == .failed, !task.hardFailures.isEmpty {
+                    lines.append("  - failures: \(task.hardFailures.joined(separator: "; "))")
+                }
             }
             lines.append("")
         }
@@ -295,7 +298,11 @@ struct LLMBenchmarkReportWriter {
         }
         lines.append("")
         for model in report.models {
-            lines.append("- \(model.displayName): \(model.summary.passedTasks)/\(model.summary.totalTasks) tasks passed, avg \(model.summary.averageLatencyMilliseconds) ms")
+            lines.append("- \(model.displayName) (`\(model.modelID)`): \(model.summary.passedTasks)/\(model.summary.totalTasks) tasks passed, avg \(model.summary.averageLatencyMilliseconds) ms")
+            for task in model.tasks where task.status == .failed {
+                let failures = task.hardFailures.isEmpty ? "no hard failure details" : task.hardFailures.joined(separator: "; ")
+                lines.append("  - failed `\(task.taskType)` / `\(task.word)`: \(failures)")
+            }
         }
         return lines.joined(separator: "\n")
     }
