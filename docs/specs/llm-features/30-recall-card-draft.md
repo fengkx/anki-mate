@@ -128,13 +128,15 @@ Recall 采用四态模型：
   - 参与 `Recall` 预览
   - 参与导出
 
-编辑已保存 Recall Card 时，不直接改正式卡，而是：
+编辑已保存 Recall Card 时，直接修改正式卡，并自动同步到预览与导出。
 
-1. 从已保存卡复制出一份 Draft
-2. 用户修改 Draft
-3. 用户显式点击 `Replace Recall Card`
+如果当前已经存在 `Saved Recall Card`，同时用户又生成了新的 AI 建议，则该建议以独立的 `Replacement Draft` 形式出现：
 
-这样可以避免正式卡被无意覆盖。
+1. 已保存卡继续作为正式卡，可直接编辑
+2. 新建议保持为独立 Draft
+3. 用户显式点击 `Replace Recall Card` 时，才用新 Draft 替换正式卡
+
+这样把“编辑当前正式卡”和“用新建议替换正式卡”两种操作明确区分开。
 
 ### 4.6 默认策略
 
@@ -229,7 +231,19 @@ Front: perpe__al
 Back: perpetual
 Hint: Focus on the middle "tu" segment.
 
-[Edit Recall Card] [Generate New Draft] [Delete Recall Card]
+[Delete Saved Card]
+```
+
+若已存在已保存卡，且又生成了新的建议：
+
+```text
+Replacement Draft
+Variant: Targeted Letter Cloze
+Front: perpet__l
+Back: perpetual
+Hint: Focus on the ending.
+
+[Replace Recall Card] [Discard Draft]
 ```
 
 ### 4.9 导出作用

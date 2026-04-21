@@ -42,13 +42,11 @@
 
 因此本方案的最终形态是：
 
-- `AnkiMateServer` 变成 **supervisor + proxy**
+- `AnkiMateServer` 变成 **supervisor + control-plane endpoint**
 - `llama-server` 变成 **被监管的内部子进程**
-- `AnkiMateServer` 对外同时提供：
-  - JSON-RPC 控制面
-  - OpenAI-compatible `/v1/chat/completions` 数据面
-- App 调用层逐步改成直接请求 `AnkiMateServer` 的 `/v1/chat/completions`
-- 现有 JSON-RPC `generate` 保留一个兼容层，过渡期内部转发到同一个 OpenAI 请求
+- `AnkiMateServer` 对外提供 JSON-RPC 控制面，并通过 `health` 暴露当前 `inferencePort`
+- App 调用层通过 JSON-RPC 管理生命周期，通过 `http://127.0.0.1:<inferencePort>/v1/chat/completions` 直连数据面
+- 生成主路径不再经过 JSON-RPC 代理，也不再要求 `AnkiMateServer` 自己转发 OpenAI 请求
 
 ## 3. 非目标
 
@@ -66,19 +64,19 @@
 
 ```text
 anki-mate app
-    |
-    |  JSON-RPC: health / loadModel / unloadModel / shutdown
-    |  HTTP:     /v1/chat/completions
-    v
+    | \
+    |  \  HTTP: POST /v1/chat/completions
+    |   \
+    |    v
+    |  llama-server (child process)
+    |      ^
+    |      |  child port via `health.inferencePort`
+    v      |
 AnkiMateServer
     |
-    |  supervise + proxy
+    |  JSON-RPC: health / loadModel / unloadModel / shutdown
     v
-llama-server (child process)
-    |
-    |  upstream OpenAI-compatible API
-    v
-/v1/chat/completions
+supervisor
 ```
 
 ### 4.2 职责边界
@@ -89,8 +87,7 @@ llama-server (child process)
 - JSON-RPC 控制面
 - `llama-server` 子进程的启动 / 停止 / 监控
 - 选模型、切模型、等待 ready
-- 将外部 `/v1/chat/completions` 请求转发给内部 `llama-server`
-- 将上游错误规范化后回传
+- 通过 `health` 向调用方暴露当前 `inferencePort`
 - 统一日志、生命周期、健康检查
 
 `llama-server` 负责：
@@ -106,7 +103,8 @@ llama-server (child process)
 
 - 控制面和数据面分离
 - parser / template / tool-call 行为全部以 upstream 为准
-- 模型切换通过监管层完成，不让 app 直接感知内部子进程
+- 模型切换通过监管层完成，但推理请求直接走 child 的 loopback 端口
+- `health` 是调用方发现当前数据面端点的唯一入口
 - 对调用方尽量保持稳定，内部实现可替换
 
 ## 5. 为什么不做进程内动态链接
@@ -141,19 +139,20 @@ llama-server (child process)
 
 - app 只启动一个 `AnkiMateServer`
 - `AnkiMateServer` 按需启动一个 `llama-server`
-- `llama-server` 绑定到 `127.0.0.1` 的内部随机端口
-- 外部调用方永远只连 `AnkiMateServer`
+- `llama-server` 绑定到 `127.0.0.1` 的内部端口；当前实现使用 `AnkiMateServer` 实际控制面端口 `+ 1`
+- app 通过 `health.inferencePort` 发现数据面端口
+- chat completion 请求直接发往 `llama-server` child port
 
 ### 6.2 端口策略
 
 `AnkiMateServer`：
 
-- 对外公开端口，维持现有发现方式
+- 对外公开控制面端口，维持现有发现方式
 
 `llama-server`：
 
-- 内部端口固定由 supervisor 分配
-- 不对 app 暴露
+- 内部端口由 `AnkiMateServer` 启动时确定，并传给 supervisor
+- 通过 `health.inferencePort` 暴露给 app
 - 只允许 loopback 访问
 
 ### 6.3 模型生命周期
@@ -164,40 +163,42 @@ llama-server (child process)
 
 ```text
 stopped
-  -> starting-supervisor-child
-  -> no-model
-  -> loading-model
-  -> ready(model=A)
-  -> switching(model=B)
-  -> ready(model=B)
-  -> stopping
+  -> starting
+  -> ready(model=A, port=P)
+  -> stopped
+
+ready(model=A)
+  -> starting
+  -> ready(model=B, port=P)
+
+starting / ready
+  -> failed(message)
+
+failed(message)
+  -> starting
+  -> ready(model=A, port=P)
   -> stopped
 ```
 
 语义约束：
 
-- `loadModel(modelA)`：若子进程未启动，先启动 `llama-server`，再 load
+- `loadModel(modelA)`：若子进程未启动，直接以 `-m modelA` 启动 `llama-server`
 - `loadModel(modelA)`：若当前就是 `modelA` 且状态 ready，直接幂等成功
-- `loadModel(modelB)`：若当前为 `modelA`，执行显式切换
-- `unloadModel()`：卸载当前模型，但 supervisor 进程保留
+- `loadModel(modelB)`：若当前为 `modelA`，先停止 child，再以 `-m modelB` 重启 child
+- `unloadModel()`：停止 child，并将 supervisor 状态置为 `stopped`
 - `shutdown()`：停止 `llama-server` 子进程并关闭 `AnkiMateServer`
 
 ### 6.4 切模型策略
 
-这里采用 **router mode 优先，重启兜底**。
+当前采用 **单模型 child + 切换即重启**。
 
-优先策略：
+当前策略：
 
-- 以 router mode 启动 `llama-server`，即启动时不指定单模型
-- 通过 `/models/load` 与 `/models/unload` 控制模型
-- `/v1/chat/completions` 请求体中的 `model` 字段由 `AnkiMateServer` 统一注入
+- 启动 `llama-server` 时传入 `-m <modelPath>`
+- 切换模型时停止旧 child，再启动新 child
+- `/v1/chat/completions` 请求体中的 `model` 字段由调用层显式填写
 
-兜底策略：
-
-- 如果本地 vendored 版本或某些平台行为不稳定，允许降级为“切模型即重启 `llama-server` 单模型实例”
-- 该策略放在 supervisor 内部，不影响外部 API
-
-默认仍以 router mode 为主，因为它最符合“控制面走 JSON-RPC，推理面走 chat completions”的职责划分。
+这比 router mode 少一层动态加载行为，代价是模型切换需要重启 child。
 
 ## 7. API 设计
 
@@ -210,19 +211,9 @@ stopped
 - `unloadModel`
 - `shutdown`
 
-兼容保留：
+### 7.2 对外使用的数据面
 
-- `generate`
-
-其中：
-
-- `generate` 仅作为过渡兼容层
-- 新代码不再把 `generate` 当主调用入口
-- 它内部转发成一次 `/v1/chat/completions` 请求，然后再映射回现有 `GenerateResult`
-
-### 7.2 对外新增的数据面
-
-`AnkiMateServer` 新增原样暴露：
+数据面由 `llama-server` child 直接提供：
 
 - `POST /v1/chat/completions`
 
@@ -231,7 +222,7 @@ stopped
 - `GET /v1/models` 或 `/models`
 - `POST /v1/embeddings`
 
-但本阶段最小闭环只要求 `chat/completions`。
+但本阶段最小闭环只要求 `chat/completions`，且端口通过 `health.inferencePort` 发现。
 
 ### 7.3 `health` 语义
 
@@ -245,7 +236,7 @@ stopped
 
 - `supervisorPid`
 - `childPid`
-- `childPort`
+- `inferencePort`
 - `modelId`
 - `backend = "llama-server"`
 
@@ -253,28 +244,17 @@ stopped
 
 ### 8.1 目标状态
 
-`LLMService` 的生成调用不再走 JSON-RPC `generate`，而是：
+`LLMService` 的生成调用采用两段式：
 
 1. 通过 JSON-RPC `health` / `loadModel` / `unloadModel` / `shutdown` 控制运行时
-2. 通过 HTTP `POST /v1/chat/completions` 发送实际生成请求
+2. 在 `loadModel` 成功后通过 `health.inferencePort` 发现并缓存 child port
+3. 后续通过 HTTP `POST /v1/chat/completions` 发送实际生成请求
 
-### 8.2 过渡期兼容
+### 8.2 当前约束
 
-为了避免一口气改太多层，分两步：
-
-#### Phase A
-
-- `AnkiMateServer` 先实现 supervisor + `/v1/chat/completions` 代理
-- 现有 `LLMService.generate(...)` 仍然可以继续调用 JSON-RPC `generate`
-- `generate` 内部只是 adapter，不再碰 `InferenceEngine`
-
-#### Phase B
-
-- `LLMService.generate(...)` 直接改为调用 `AnkiMateServer` 的 `/v1/chat/completions`
-- RPC `generate` 只保留给旧调用方或测试
-- 业务主路径彻底从 JSON-RPC 生成接口迁移出去
-
-最终推荐状态是 Phase B。
+- `LLMService.generate(...)` 仍然是 app 内部的统一入口
+- 但它底层已拆成“控制面 RPC + 数据面直连 child port”
+- `AnkiMateServer` 不承担 OpenAI 请求代理职责
 
 ### 8.3 请求映射
 
@@ -315,10 +295,10 @@ stopped
 
 如果上游返回 SSE streaming：
 
-- Phase A 可以先不支持由 `AnkiMateServer` 透传 streaming 给旧 RPC `generate`
-- 但 `/v1/chat/completions` 直通路径应该从第一天支持上游 streaming
+- streaming 直接走 child port，不经过 supervisor 中转
+- 调用层需要处理 child 重启或模型切换导致的流中断
 
-## 9. `AnkiMateServer` 内部模块拆分
+## 9. 模块拆分
 
 建议新增以下组件。
 
@@ -330,7 +310,6 @@ stopped
 - 监控退出
 - 解析 ready 信号
 - 维护 child port / pid
-- 发送 `/models/load`、`/models/unload`
 - 做 health probe
 
 核心接口建议：
@@ -339,48 +318,35 @@ stopped
 protocol LlamaServerSupervising: AnyObject {
     var state: LlamaServerState { get }
     var loadedModelPath: String? { get }
+    var childPort: Int? { get }
 
-    func startIfNeeded() async throws
-    func stop() async
     func loadModel(path: String, contextSize: Int, gpuLayers: Int) async throws
-    func unloadModel() async throws
-    func ensureReadyForInference() async throws
-    func makeBaseURL() throws -> URL
+    func unloadModel() async
+    func shutdown() async
 }
 ```
 
-### 9.2 `LlamaServerProxyClient`
+### 9.2 `LLMService` / `RPCClient`
 
 职责：
 
-- 组装到内部 `llama-server` 的 HTTP 请求
-- 转发 `/v1/chat/completions`
-- 解析上游错误
-- 提供 typed adapter 给 RPC `generate`
+- 通过 `health` 发现 `inferencePort`
+- 组装发往 child `llama-server` 的 HTTP 请求
+- 调用 `/v1/chat/completions`
+- 解析上游错误并映射到 app 内部结果类型
 
-### 9.3 `OpenAICompatibilityAdapter`
+### 9.3 `RPCDispatcher`
 
 职责：
-
-- `GenerateParams` <-> chat completions request
-- chat completions response <-> `GenerateResult`
-
-这个层要纯数据转换，不碰进程生命周期。
-
-### 9.4 `RPCDispatcher`
-
-变更后只负责：
 
 - 控制面 RPC 分发
 - 调 supervisor
-- 兼容层 `generate` 转发
 
-### 9.5 `HTTPHandler`
+### 9.4 `HTTPHandler`
 
-变更后支持两类请求：
+变更后只支持控制面请求：
 
 - `POST /`：JSON-RPC
-- `POST /v1/chat/completions`：直接代理到 `llama-server`
 
 ## 10. `llama-server` 启动参数建议
 
@@ -392,18 +358,17 @@ llama-server
   --port <internal-port>
   --jinja
   --no-webui
+  --reasoning off
+  --flash-attn on
+  -m <model-path>
+  -c <context-size>
+  -ngl <gpu-layers>
 ```
-
-router mode 下附加：
-
-- 不传 `-m`
-- 根据需要传 `-c <context>`、`-ngl <gpuLayers>` 作为默认 preset
-- 若需要限定模型目录，可传 `--models-dir <dir>`
 
 注意点：
 
 - `--jinja` 应显式开启，避免继续走旧模板行为
-- 若通过本地绝对路径管理模型，需确认 router mode 能正确识别本地模型来源；否则采用 supervisor 重启单模型模式兜底
+- 当前通过本地绝对路径传 `-m <model-path>`
 - `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH` 继续沿用当前 `ServerProcessManager` 的动态库注入逻辑
 
 ## 11. 错误处理
@@ -412,12 +377,13 @@ router mode 下附加：
 
 对 `/v1/chat/completions`：
 
-- 如果存在已选模型且允许 lazy startup，先尝试自动启动 + load
-- 若失败，返回 OpenAI 风格错误对象
+- 调用层在 `loadModel` 后通过 `health` 缓存 `inferencePort`
+- 生成请求发送前只检查本地缓存是否存在，不会每次重新 probe child
+- 若当前无缓存端口，应先走 `loadModel` 或返回明确错误
 
 对 JSON-RPC：
 
-- `health` 明确体现 `no_model` / `failed`
+- `health` 明确体现 `no_model` / `loading_model` / `ready`
 - `loadModel` 返回详细错误
 
 ### 11.2 子进程异常退出
@@ -425,25 +391,27 @@ router mode 下附加：
 `AnkiMateServer` 必须：
 
 - 记录 child exit code
-- 将状态切为 failed/no-model
-- 让下一次 `loadModel` 或生成请求可以触发恢复
+- 将内部状态切为 `failed(message)`；当前 `health` 会把非 starting / ready 状态映射为 `no_model`
+- 下一次显式 `loadModel` 可以触发恢复
+- 当前生成请求不会自动刷新 `health` 或重启 child；如果还持有旧端口，通常会得到 transport error
 
 ### 11.3 上游 4xx / 5xx
 
 不自己重写语义，优先透传：
 
-- HTTP path：尽量原样返回上游 OAI-compatible error body
-- RPC path：把上游错误包装进 `inferenceError(...)`
+- child data-plane path：尽量原样返回上游 OAI-compatible error body
+- 调用层只做必要的 transport / decode 包装
 
 ## 12. 并发与序列化
 
-一期约束：
+当前约束：
 
-- 模型 lifecycle 操作串行化
-- `loadModel` / `unloadModel` / `shutdown` 与推理请求互斥
+- 常规 app 主路径按“先 lifecycle，后推理”顺序调用
+- supervisor 内部尚未提供显式 request queue / actor serialization
+- `loadModel` / `unloadModel` / `shutdown` 与正在进行的推理请求没有服务器侧互斥保护
 - 普通 `/v1/chat/completions` 请求允许并发，前提是当前 child 已 ready
 
-实现建议：
+后续若要支持并发控制面请求，需要补：
 
 - supervisor 内部使用单 actor 持有状态
 - `switch model` 期间新请求直接失败或等待，不能同时把一半请求打到旧模型、一半打到新模型
@@ -478,32 +446,23 @@ router mode 下附加：
 
 ### Step 2
 
-让 `HTTPHandler` 支持 `/v1/chat/completions` 代理。
+让 `health` 暴露 `inferencePort`，并确认调用层可以发现 child 数据面端口。
 
 验收：
 
-- curl 到 `AnkiMateServer` 的 `/v1/chat/completions` 能拿到 upstream 响应
-- tools / `response_format` / `finish_reason` 行为与直连 `llama-server` 一致
+- `health` 能返回当前 child port
+- app 能基于该端口构造数据面请求
 
 ### Step 3
 
-把 JSON-RPC `generate` 改成 compatibility adapter，彻底绕过 `InferenceEngine`。
+修改 `AnkiMateLLM` / `LLMService` 主调用链，直接请求 `http://127.0.0.1:<inferencePort>/v1/chat/completions`。
 
 验收：
 
-- 原有 app 调用无需立刻修改即可继续工作
-- 生成结果来自 upstream chat completions 映射
-
-### Step 4
-
-修改 `AnkiMateLLM` / `LLMService` 主调用链，直接请求 `AnkiMateServer` 的 `/v1/chat/completions`。
-
-验收：
-
-- 业务主路径不再依赖 RPC `generate`
+- 业务主路径不再经过 `AnkiMateServer` 的数据面代理
 - agent tool calling、structured output、usage 生成都走同一条 upstream API
 
-### Step 5
+### Step 4
 
 删除废弃的 direct-libllama inference 路径和桥接层。
 
@@ -516,22 +475,22 @@ router mode 下附加：
 
 ### 15.1 单元测试
 
-- `OpenAICompatibilityAdapterTests`
-  - `GenerateParams -> request body`
-  - `chat completion response -> GenerateResult`
 - `LlamaServerSupervisorTests`
   - 状态机
   - 幂等 load/unload
   - child crash 恢复
+- `RPCClient` / `LLMService` tests
+  - `health.inferencePort` 发现
+  - chat completion response -> `GenerateResult`
+  - 上游错误映射
 
 ### 15.2 集成测试
 
 - `RPCDispatcherTests`
   - `loadModel` / `unloadModel` / `shutdown`
-  - `generate` 兼容层
+  - `health` 返回 `inferencePort`
 - `HTTPHandlerTests`
-  - `/v1/chat/completions` 代理
-  - 上游错误透传
+  - `POST /` JSON-RPC 路由
 
 ### 15.3 端到端 smoke
 
@@ -541,21 +500,25 @@ router mode 下附加：
 - `response_format = json_schema`
 - tool calling
 - 模型切换后再次生成
-- child 被杀后自动恢复
+- child 被杀后 `health` 不再返回 `inferencePort`，旧端口生成请求返回可诊断错误
 
 ## 16. 风险
 
-### 16.1 router mode 与本地模型路径的适配风险
+### 16.1 单模型 child 的切换成本
 
-如果 router mode 对当前本地模型目录/路径管理不顺手，需要尽快切到“单模型 child + 切换即重启”模式，不要为了保 router mode 继续引入复杂 shim。
+当前已经采用单模型 child。风险不在 router mode 兼容性，而在模型切换成本、child 启动时间和端口占用失败。
 
 ### 16.2 双协议共存复杂度
 
-短期内既有 JSON-RPC 又有 `/v1/chat/completions`。这会增加一点维护面，但这是合理过渡成本，目的是让调用层可以渐进迁移。
+控制面和数据面分离在长期上是正确的，但意味着调用层要同时处理 supervisor 状态和 child 端口发现。需要确保 `health`、模型切换和端口缓存始终一致。
 
-### 16.3 流式代理
+### 16.3 流式直连
 
-如果 `AnkiMateServer` 继续基于当前 NIO HTTP handler，自行透传 SSE 要注意不要把 chunk 聚合坏。必要时先把非流式打通，再补 streaming 透传。
+streaming 不再由 `AnkiMateServer` 代理，因此不会有 supervisor 级 chunk 聚合问题；但 child 重启、切模型或端口变化会直接中断现有流，调用层需要能识别并恢复。
+
+### 16.4 child crash 后的缓存端口
+
+`LLMService` 当前缓存 `inferencePort`，生成前不会每次重新 `health`。如果 child 异常退出，后续生成可能先打到旧端口并失败；后续可以考虑在 transport failure 后清空缓存并重新走 `loadModel`。
 
 ## 17. 最终建议
 
@@ -564,6 +527,6 @@ router mode 下附加：
 - 保留 `AnkiMateServer` 这个产品层控制面
 - 把 `llama-server` 当内部 runtime
 - 一切生成都统一走 upstream `/v1/chat/completions`
-- 自己只维护 lifecycle、routing、compatibility adapter
+- 自己只维护 lifecycle、端口发现与调用层适配
 
 这样才能真正停止维护 parser/template/tool-call 细节，同时还保住当前项目需要的模型启动、停止、切换与 app 内状态控制。

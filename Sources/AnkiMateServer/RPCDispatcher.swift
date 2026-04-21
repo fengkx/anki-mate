@@ -1,7 +1,7 @@
 // RPC method dispatcher — routes JSON-RPC requests to the appropriate handler.
 //
 // Control plane only: health, loadModel, unloadModel, shutdown.
-// Data plane (generation) goes directly through /v1/chat/completions proxy.
+// Data plane requests go directly to the llama-server child port discovered via health.
 
 import Foundation
 import AnkiMateRPC

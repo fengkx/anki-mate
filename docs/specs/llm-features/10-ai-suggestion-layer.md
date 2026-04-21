@@ -154,7 +154,8 @@ Turn this word into an active-recall card.
 - 编辑后采纳
 - 拒绝
 - 重生成
-- 清空已采纳内容
+
+已采纳内容只提供逐条删除，不提供 section-level 或 bulk 清空。原因是批量清空风险高、恢复成本高，而当前学习材料的维护粒度本身就是单条 artifact。
 
 但 `Recall Card` 不适用这组文案，详见 `30-recall-card-draft.md`。
 
@@ -170,7 +171,7 @@ Turn this word into an active-recall card.
 - 用户采纳后的内容在重新打开应用后仍然存在
 - 已采纳内容能进入卡片预览
 - 已采纳内容能进入导出结果
-- 清空已采纳内容不会误删词典原始内容
+- 删除已采纳内容时只影响对应 AI artifact，不会误删词典原始内容
 - 模型未就绪时，面板能给出明确降级提示
 
 ## 6. 并行开发边界

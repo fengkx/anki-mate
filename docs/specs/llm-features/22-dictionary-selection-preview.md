@@ -19,7 +19,7 @@
 - 有没有短语、用法、词源等附加信息
 - 最终做出来的卡片会更接近哪种风格
 
-因此本功能不应继续停留在表单型 `Picker`，而应升级为一个**带实时预览和差异摘要的选择器**。
+因此本功能不应继续停留在表单型 `Picker`，而应升级为一个**带实时双栏预览的选择器**。
 
 ## 2. 功能目标
 
@@ -43,7 +43,6 @@
 - 可搜索的词典列表
 - 示例词驱动的实时预览
 - 当前词典 vs 候选词典的双栏对比
-- 差异摘要
 - 空状态、加载状态、失败状态
 
 不覆盖内容：
@@ -163,7 +162,7 @@
 | | Search dictionaries         |  | Preview                                   | |
 | | [ Oxford...            🔍 ] |  |-------------------------------------------| |
 | |                             |  | Sample word: [ apple                 ]    | |
-| | ○ Automatic                 |  | View: [Overview] [Senses] [Phrases] [Notes]|
+| | ○ Automatic                 |  |                                           | |
 | |   System default fallback   |  |                                           | |
 | |                             |  | +----------------+  +------------------+ | |
 | | ● Oxford Dictionary...      |  | | Current        |  | Candidate         | | |
@@ -173,10 +172,10 @@
 | | ○ 牛津英汉汉英词典            |  | | [Notes]        |  | [Notes]           | | |
 | |   bilingual, CN-friendly    |  | +----------------+  +------------------+ | |
 | |                             |  |                                           | |
-| | ○ New Oxford American...    |  | Diff summary                              | |
-| |   system dictionary         |  | - candidate has CN gloss                  | |
-| |                             |  | - current examples are shorter            | |
-| +-----------------------------+  | - pronunciation format differs            | |
+| | ○ New Oxford American...    |  |                                           | |
+| |   system dictionary         |  |                                           | |
+| |                             |  |                                           | |
+| +-----------------------------+  |                                           | |
 |                                  +---------------------------------------------+ |
 |                                                                                  |
 | Deck description                                                                 |
@@ -221,13 +220,12 @@ Better for CN-first reading
 
 1. 预览控制栏
 2. 双栏结果卡
-3. 差异摘要
-4. 状态反馈
+3. 状态反馈
 
 预览控制栏包含：
 
 - sample word 输入框
-- 视图过滤 segmented control
+- reload 按钮
 
 双栏结果卡中每一栏不再固定为单一字段列表，而是由一组动态 section 组成。
 
@@ -247,12 +245,10 @@ Better for CN-first reading
 - 如果两侧都存在同类 section，则按同一顺序对齐显示
 - 如果只有一侧存在，则另一侧显示 `Not available in this dictionary`
 
-差异摘要放在结果卡下方，不嵌入卡片正文。
-
 原因：
 
-- 让摘要承担“帮用户下判断”的职责
 - 保持结果卡本身中性，不污染源内容
+- 首版只展示两侧真实返回的数据，不再额外维护差异摘要或视图过滤状态
 
 ## 6. 详细线框
 
@@ -273,7 +269,7 @@ Better for CN-first reading
 | | [ Oxford                     🔍 ] |  | Sample word                           | |
 | |                                   |  | [ apple                          ]    | |
 | | ● Oxford Dictionary of English    |  |                                       | |
-| |   English monolingual             |  | [Overview] [Senses] [Phrases] [Notes]| |
+| |   English monolingual             |  |                                       | |
 | |                                   |  |                                       | |
 | | ○ Automatic                       |  | +----------------+ +----------------+ | |
 | |   System default fallback         |  | | Current        | | Candidate      | | |
@@ -301,7 +297,6 @@ Better for CN-first reading
 | Preview                                                                           |
 |                                                                                  |
 | Sample word: [ apple ]                                                           |
-| [Overview] [Senses] [Phrases] [Notes]                                            |
 |                                                                                  |
 | +--------------------------------+  +-----------------------------------------+ |
 | | Current                        |  | Candidate                               | |
@@ -315,10 +310,7 @@ Better for CN-first reading
 | | [Phrase Groups]                |  | Not available in this dictionary.       | |
 | +--------------------------------+  +-----------------------------------------+ |
 |                                                                                  |
-| Diff summary                                                                     |
-| - Candidate includes CN-forward glossing.                                        |
-| - Candidate definition is shorter and more translation-like.                     |
-| - Pronunciation looks similar for this word.                                     |
+|                                                                                  |
 +----------------------------------------------------------------------------------+
 ```
 
@@ -411,8 +403,7 @@ Better for CN-first reading
 
 1. 右侧预览卡
 2. 左侧当前候选高亮
-3. 差异摘要
-4. 辅助说明和次级标签
+3. 辅助说明和次级标签
 
 不要让：
 
@@ -482,25 +473,15 @@ Better for CN-first reading
 - `TextField` + `onSubmit`
 - 可加轻量 reload 按钮，但首版不是必须
 
-### 8.5 视图过滤
+### 8.5 不做视图过滤
 
-右侧顶部提供 segmented control：
-
-- `Overview`
-- `Senses`
-- `Phrases`
-- `Notes`
-
-作用：
-
-- `Overview` 显示最核心的数据块
-- 其他模式只聚焦对应类目
-- 类目内仍展示该词典实际存在的 section，而不是假造空字段
+首版不提供 `Overview / Senses / Phrases / Notes` segmented control。
 
 原因：
 
-- 某些词典差异只体现在某一维
-- 可以让用户更快聚焦“我最在意的维度”
+- 当前预览区已经按实际返回内容分 section 展示
+- 额外的视图过滤会引入一层状态，但对 collection 级词典选择的决策收益有限
+- 保持预览行为简单：输入示例词、选择候选词典、直接看 current / candidate 两栏结果
 
 ### 8.6 右侧直接浏览与点击展开
 
@@ -516,26 +497,15 @@ Better for CN-first reading
 
 这部分交互的目标不是做“摘要卡”，而是让用户能在当前 sheet 里直接看到词典查到的真实数据。
 
-### 8.7 差异摘要策略
+### 8.7 不做差异摘要
 
-差异摘要应遵循：
+首版不提供规则化 `Diff summary`。
 
-- 短句
-- 事实导向
-- 不做主观推荐
+原因：
 
-好例子：
-
-- `Candidate includes bilingual glossing.`
-- `Current shows longer example text.`
-- `Pronunciation formatting differs.`
-
-坏例子：
-
-- `Candidate is better.`
-- `This dictionary is recommended for most users.`
-
-首版摘要允许使用规则生成，不依赖 LLM。
+- 自动摘要需要额外维护比较规则，容易变成“看似智能但解释不完整”的判断层
+- 当前目标是让用户直接比较词典真实返回内容，而不是替用户下结论
+- 当前计划不把摘要作为后续默认 backlog
 
 ## 9. 状态机
 
@@ -705,7 +675,7 @@ struct DictionaryPreviewRow: Equatable, Sendable, Identifiable {
 - 可搜索列表
 - 默认示例词预览
 - 动态 section 双栏结果卡
-- 规则化差异摘要
+- 加载、失败、部分失败状态反馈
 
 ### 13.2 第二阶段
 
@@ -714,7 +684,6 @@ struct DictionaryPreviewRow: Equatable, Sendable, Identifiable {
 - 更丰富的词典 metadata
 - 分组展示
 - 最近使用词典
-- 更精细的差异高亮
 
 ## 14. 验收标准
 
