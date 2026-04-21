@@ -6,7 +6,19 @@ struct LLMServerStatusGuidance: Equatable {
     let actionHint: String
     let actionButtonTitle: String
 
-    static func make(for state: ServerProcessManager.State) -> LLMServerStatusGuidance {
+    static func make(
+        for state: ServerProcessManager.State,
+        hasModel: Bool = true
+    ) -> LLMServerStatusGuidance {
+        if !hasModel {
+            return .init(
+                summary: "Local AI is not set up yet.",
+                statusText: "Model required",
+                actionHint: "Download and select a model in AI Settings to generate AI content.",
+                actionButtonTitle: "Download Model"
+            )
+        }
+
         switch state {
         case .running:
             return .init(

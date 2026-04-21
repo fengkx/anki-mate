@@ -37,6 +37,22 @@ struct AIDraftListSyncResult<Persisted: Equatable, Draft: Equatable>: Equatable 
     let removedRowIDs: [UUID]
 }
 
+enum RecallDraftGenerationModeResolver {
+    static func preferredMode(
+        suggestedState: AIDraftListState<RecallCardDraft, RecallCardDraft>,
+        acceptedState: AIDraftListState<RecallCardDraft, RecallCardDraft>
+    ) -> RecallCardMode? {
+        currentDraft(in: suggestedState) ?? currentDraft(in: acceptedState)
+    }
+
+    private static func currentDraft(
+        in state: AIDraftListState<RecallCardDraft, RecallCardDraft>
+    ) -> RecallCardMode? {
+        guard let rowID = state.rowOrder.first else { return nil }
+        return (state.drafts[rowID] ?? state.persistedByRowID[rowID])?.mode
+    }
+}
+
 enum AIDraftListSynchronizer {
     static func sync<Persisted: Equatable, Draft: Equatable>(
         persistedValues: [Persisted],
@@ -203,7 +219,14 @@ private struct SectionHeaderAction {
     let systemImage: String
     let isLoading: Bool
     let isDisabled: Bool
+    let helpText: String?
     let handler: () -> Void
+}
+
+enum AIChatPanelState: Equatable {
+    case ready
+    case businessUnavailable
+    case llmUnavailable
 }
 
 private enum AIPanelMode: String, CaseIterable, Identifiable {
@@ -264,7 +287,7 @@ struct AIContentView: View {
     @State private var isLearningAidsSectionExpanded = false
     @State private var isUsageSectionExpanded = false
     @State private var isRecallSectionExpanded = false
-    @State private var showAIUnavailableAlert = false
+    @State private var unavailableAlertContent: LLMGenerationAvailability.AlertContent?
 
     private let logger = Logger(subsystem: "AnkiMateApp", category: "AIContentView")
 
@@ -272,6 +295,31 @@ struct AIContentView: View {
     private var isGeneratingLearningAids: Bool { learningAidsTask != nil }
     private var isGeneratingUsage: Bool { usageTask != nil }
     private var isGeneratingRecall: Bool { recallTask != nil }
+    private var activeAgentSession: AgentSession? {
+        Self.resolvedAgentSession(for: item.id, session: agentSession)
+    }
+    private var generationAvailabilityState: LLMGenerationAvailability.State {
+        LLMGenerationAvailability.resolvedState(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState
+        )
+    }
+    private var generationUnavailableBanner: LLMGenerationAvailability.AlertContent? {
+        LLMGenerationAvailability.bannerContent(for: generationAvailabilityState)
+    }
+    private var chatPanelState: AIChatPanelState {
+        switch generationAvailabilityState {
+        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+            return .llmUnavailable
+        case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
+            break
+        }
+        return Self.resolvedChatPanelState(
+            hasModel: llmService.hasModel,
+            itemID: item.id,
+            session: agentSession
+        )
+    }
     private var suggestedExampleArtifacts: [ExampleSentenceArtifact] { item.aiSuggestedExampleArtifacts }
     private var acceptedExampleArtifacts: [ExampleSentenceArtifact] { item.aiAcceptedExampleArtifacts }
     private var suggestedPitfallArtifacts: [PitfallArtifact] { item.aiSuggestedPitfallArtifacts }
@@ -387,16 +435,17 @@ struct AIContentView: View {
                 }
             }
 
-            if !llmService.hasModel {
-                noModelView
-            } else if panelMode == .chat {
-                if let agentSession {
+            if panelMode == .chat {
+                switch chatPanelState {
+                case .ready:
+                    if let activeAgentSession {
                     AgentChatView(
                         item: item,
-                        session: agentSession,
+                        session: activeAgentSession,
                         previewOverrideArtifacts: $agentPreviewOverrideArtifacts
                     )
-                } else {
+                    }
+                case .businessUnavailable:
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Chat is unavailable for the current word.")
                             .font(.subheadline)
@@ -407,6 +456,10 @@ struct AIContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
+                case .llmUnavailable:
+                    unavailableBannerCard(
+                        content: LLMGenerationAvailability.alertContent(for: generationAvailabilityState)
+                    )
                 }
             } else {
                 structuredPanel
@@ -464,19 +517,40 @@ struct AIContentView: View {
             cancelTransientTasks()
             syncGeneratingState()
         }
-        .alert(LLMGenerationAvailability.alertTitle, isPresented: $showAIUnavailableAlert) {
-            Button(LLMGenerationAvailability.settingsButtonTitle) {
+        .alert(item: $unavailableAlertContent) { content in
+            Alert(
+                title: Text(content.title),
+                message: Text(content.message),
+                primaryButton: .default(Text(content.settingsButtonTitle)) {
                 openWindow(id: AppWindowIDs.aiSettings)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(LLMGenerationAvailability.alertMessage)
+                },
+                secondaryButton: .cancel(Text("Cancel"))
+            )
         }
+    }
+
+    static func resolvedAgentSession(for itemID: UUID, session: AgentSession?) -> AgentSession? {
+        guard let session, session.wordID == itemID else {
+            return nil
+        }
+        return session
+    }
+
+    static func resolvedChatPanelState(
+        hasModel: Bool,
+        itemID: UUID,
+        session: AgentSession?
+    ) -> AIChatPanelState {
+        guard hasModel else { return .llmUnavailable }
+        return resolvedAgentSession(for: itemID, session: session) == nil ? .businessUnavailable : .ready
     }
 
     private var structuredPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                if let generationUnavailableBanner {
+                    unavailableBannerCard(content: generationUnavailableBanner)
+                }
                 sectionCard { sentencesSection }
                 sectionCard { learningAidsSection }
                 sectionCard { definitionNoteSection }
@@ -536,12 +610,6 @@ struct AIContentView: View {
         isLearningAidsSectionExpanded = hasAcceptedLearningAids
         isUsageSectionExpanded = hasSavedUsageNote
         isRecallSectionExpanded = !item.aiAcceptedRecallCardDrafts.isEmpty || !item.aiSuggestedRecallCardDrafts.isEmpty
-    }
-
-    private var noModelView: some View {
-        Text("Download and select a model in AI settings to enable AI features.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     private func actionButtonLabel(title: String, systemImage: String, isLoading: Bool) -> some View {
@@ -628,7 +696,12 @@ struct AIContentView: View {
                     title: isGeneratingExamples ? "Generating..." : "Regenerate",
                     systemImage: "text.quote",
                     isLoading: isGeneratingExamples,
-                    isDisabled: isGeneratingExamples,
+                    isDisabled: isGeneratingExamples || isActionBlocked(for: .examples),
+                    helpText: actionHelpText(
+                        for: .examples,
+                        isDisabled: isGeneratingExamples || isActionBlocked(for: .examples),
+                        defaultTitle: isGeneratingExamples ? "Generating..." : "Regenerate"
+                    ),
                     handler: generateSentences
                 )
             )
@@ -677,7 +750,12 @@ struct AIContentView: View {
                     title: isGeneratingUsage ? "Generating..." : "Regenerate",
                     systemImage: "text.magnifyingglass",
                     isLoading: isGeneratingUsage,
-                    isDisabled: isGeneratingUsage || firstDefinition == nil,
+                    isDisabled: isGeneratingUsage || firstDefinition == nil || isActionBlocked(for: .usage),
+                    helpText: actionHelpText(
+                        for: .usage,
+                        isDisabled: isGeneratingUsage || firstDefinition == nil || isActionBlocked(for: .usage),
+                        defaultTitle: isGeneratingUsage ? "Generating..." : "Regenerate"
+                    ),
                     handler: optimizeDefinition
                 )
             )
@@ -749,7 +827,12 @@ struct AIContentView: View {
                     title: recallHeaderActionTitle,
                     systemImage: "sparkles.rectangle.stack",
                     isLoading: isGeneratingRecall,
-                    isDisabled: isGeneratingRecall || firstDefinition == nil,
+                    isDisabled: isGeneratingRecall || firstDefinition == nil || isActionBlocked(for: .recallCard),
+                    helpText: actionHelpText(
+                        for: .recallCard,
+                        isDisabled: isGeneratingRecall || firstDefinition == nil || isActionBlocked(for: .recallCard),
+                        defaultTitle: recallHeaderActionTitle
+                    ),
                     handler: generateRecallDraft
                 )
             )
@@ -821,7 +904,12 @@ struct AIContentView: View {
                     title: isGeneratingLearningAids ? "Generating..." : learningAidsHeaderActionTitle,
                     systemImage: "wand.and.stars",
                     isLoading: isGeneratingLearningAids,
-                    isDisabled: isGeneratingLearningAids || firstDefinition == nil,
+                    isDisabled: isGeneratingLearningAids || firstDefinition == nil || isActionBlocked(for: .learningAids),
+                    helpText: actionHelpText(
+                        for: .learningAids,
+                        isDisabled: isGeneratingLearningAids || firstDefinition == nil || isActionBlocked(for: .learningAids),
+                        defaultTitle: isGeneratingLearningAids ? "Generating..." : learningAidsHeaderActionTitle
+                    ),
                     handler: generateLearningAids
                 )
             )
@@ -1033,14 +1121,24 @@ struct AIContentView: View {
             }
 
             do {
-                let decision = try await llmService.generateRecallCardDraftDecision(
-                    word: item.word,
-                    senses: senses,
-                    context: recallGenerationContext,
-                    allowedModes: recommendedRecallAllowedModes,
-                    modePrior: recommendedRecallModePrior
-                )
-                let generated = decision.draft
+                let generated: LLMRecallCardDraft
+                if let forcedMode = preferredRecallGenerationMode {
+                    generated = try await llmService.generateRecallCardDraft(
+                        word: item.word,
+                        senses: senses,
+                        context: recallGenerationContext,
+                        mode: forcedMode
+                    )
+                } else {
+                    let decision = try await llmService.generateRecallCardDraftDecision(
+                        word: item.word,
+                        senses: senses,
+                        context: recallGenerationContext,
+                        allowedModes: recommendedRecallAllowedModes,
+                        modePrior: recommendedRecallModePrior
+                    )
+                    generated = decision.draft
+                }
                 let draft = RecallCardDraft(
                     mode: RecallCardMode(rawValue: generated.mode.rawValue) ?? .fullSpelling,
                     front: generated.front,
@@ -1061,11 +1159,12 @@ struct AIContentView: View {
     }
 
     private func prepareManualGeneration() -> Bool {
+        let state = generationAvailabilityState
         if LLMGenerationAvailability.shouldPromptForManualAction(
             hasModel: llmService.hasModel,
             serverState: llmService.serverState
         ) {
-            showAIUnavailableAlert = true
+            unavailableAlertContent = LLMGenerationAvailability.alertContent(for: state)
             return false
         }
 
@@ -1081,8 +1180,38 @@ struct AIContentView: View {
             return false
         }
 
-        showAIUnavailableAlert = true
+        unavailableAlertContent = LLMGenerationAvailability.alertContent(
+            for: LLMGenerationAvailability.resolvedState(
+                hasModel: llmService.hasModel,
+                serverState: llmService.serverState,
+                error: error
+            )
+        )
         return true
+    }
+
+    private func actionHelpText(
+        for action: LLMGenerationAvailability.Action,
+        isDisabled: Bool,
+        defaultTitle: String
+    ) -> String {
+        if let message = LLMGenerationAvailability.actionMessage(
+            for: action,
+            state: generationAvailabilityState
+        ), isDisabled {
+            return message
+        }
+
+        return defaultTitle
+    }
+
+    private func isActionBlocked(for action: LLMGenerationAvailability.Action) -> Bool {
+        switch generationAvailabilityState {
+        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+            return true
+        case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
+            return false
+        }
     }
 
     private func acceptSuggestedExample(rowID: UUID) {
@@ -1839,6 +1968,7 @@ struct AIContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .help(action.helpText ?? action.title)
                         .disabled(action.isDisabled)
                     )
                 }
@@ -1857,7 +1987,7 @@ struct AIContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .help(action.title)
+                        .help(action.helpText ?? action.title)
                         .disabled(action.isDisabled)
                     )
                 }
@@ -1866,6 +1996,26 @@ struct AIContentView: View {
             headerRow(title: title, summary: summary)
         }
         .padding(.vertical, 2)
+    }
+
+    private func unavailableBannerCard(
+        content: LLMGenerationAvailability.AlertContent
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(content.title)
+                .font(.subheadline.weight(.semibold))
+            Text(content.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(content.settingsButtonTitle) {
+                openWindow(id: AppWindowIDs.aiSettings)
+            }
+            .buttonStyle(.link)
+            .font(.caption)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.thinMaterial))
     }
 
     private func headerRow(title: String, summary: String, trailing: AnyView? = nil) -> some View {
@@ -2060,6 +2210,16 @@ struct AIContentView: View {
             context: recallGenerationContext,
             allowedModes: recommendedRecallAllowedModes
         )
+    }
+
+    private var preferredRecallGenerationMode: LLMRecallCardMode? {
+        guard let mode = RecallDraftGenerationModeResolver.preferredMode(
+            suggestedState: suggestedRecallState,
+            acceptedState: acceptedRecallState
+        ) else {
+            return nil
+        }
+        return LLMRecallCardMode(rawValue: mode.rawValue)
     }
 
     private func acceptedUsageHints(from note: String?) -> [String] {

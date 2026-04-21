@@ -31,12 +31,15 @@ struct LLMSettingsView: View {
     @EnvironmentObject private var llmService: LLMService
     @Environment(\.dismiss) private var dismiss
 
-    @State private var isTogglingServer = false
+    @StateObject private var serverControls = LLMServerControlsModel()
     @AppStorage(LLMDebugSettings.streamDebugEnabledKey) private var streamDebugEnabled = false
     @AppStorage(LLMContentStyle.defaultsKey) private var storedContentStyle = LLMContentStyle.balanced.rawValue
 
     private var serverGuidance: LLMServerStatusGuidance {
-        LLMServerStatusGuidance.make(for: llmService.serverState)
+        LLMServerStatusGuidance.make(
+            for: llmService.serverState,
+            hasModel: llmService.hasModel
+        )
     }
 
     var body: some View {
@@ -91,22 +94,10 @@ struct LLMSettingsView: View {
 
     @ViewBuilder
     private var overviewSection: some View {
-        GeometryReader { proxy in
-            Group {
-                if proxy.size.width >= 820 {
-                    HStack(alignment: .top, spacing: 12) {
-                        primaryOverviewCard
-                        secondaryOverviewCard
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        primaryOverviewCard
-                        secondaryOverviewCard
-                    }
-                }
-            }
+        HStack(alignment: .top, spacing: 12) {
+            primaryOverviewCard
+            secondaryOverviewCard
         }
-        .frame(height: 132)
     }
 
     @ViewBuilder
@@ -114,28 +105,25 @@ struct LLMSettingsView: View {
         settingsCard(
             title: "Local AI",
             subtitle: serverStatusSummary,
-            tone: serverCardTone
+            tone: serverCardTone,
+            minHeight: 176
         ) {
-            HStack(alignment: .center, spacing: 12) {
-                StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 16) {
+                    serverStatusSummaryBlock
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(serverStatusText)
-                        .font(.headline)
-
-                    Text(serverActionHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-
-                    if shouldShowServerDiagnosticsActions {
-                        serverDiagnosticsActions
-                    }
+                    serverActionButtons
+                        .fixedSize()
+                        .padding(.top, 4)
                 }
 
-                Spacer(minLength: 12)
+                serverEndpointPanel
 
-                serverActionButton
+                if shouldShowServerDiagnosticsActions {
+                    serverDiagnosticsActions
+                }
             }
         }
     }
@@ -145,7 +133,8 @@ struct LLMSettingsView: View {
         settingsCard(
             title: "Current Model",
             subtitle: selectedModelSummary,
-            tone: .neutral
+            tone: .neutral,
+            minHeight: 176
         ) {
             if let selectedModel = selectedModel {
                 VStack(alignment: .leading, spacing: 8) {
@@ -308,7 +297,7 @@ struct LLMSettingsView: View {
 
     private var mirrorControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 let binding = Binding<String>(
                     get: { llmService.downloadManager.hfMirror },
                     set: { llmService.downloadManager.hfMirror = $0 }
@@ -636,38 +625,124 @@ struct LLMSettingsView: View {
     // MARK: - Server
 
     @ViewBuilder
-    private var serverActionButton: some View {
+    private var serverActionButtons: some View {
+        if !llmService.hasModel {
+            EmptyView()
+        } else {
         switch llmService.serverState {
         case .running:
-            Button(serverGuidance.actionButtonTitle) {
-                toggleServer(start: false)
+            HStack(spacing: 6) {
+                serverControlButton(
+                    title: serverGuidance.actionButtonTitle,
+                    isLoading: serverControls.isStopping,
+                    prominent: false,
+                    disabled: serverControls.isBusy
+                ) {
+                    Task { @MainActor in
+                        await serverControls.performStop(using: llmService)
+                    }
+                }
+
+                serverControlButton(
+                    title: "Restart",
+                    isLoading: serverControls.isRestarting,
+                    prominent: false,
+                    disabled: serverControls.isBusy
+                ) {
+                    Task { @MainActor in
+                        try? await serverControls.performRestart(using: llmService)
+                    }
+                }
             }
-            .buttonStyle(.bordered)
-            .disabled(isTogglingServer)
         case .stopped, .failed:
-            Button(serverGuidance.actionButtonTitle) {
-                toggleServer(start: true)
+            serverControlButton(
+                title: serverGuidance.actionButtonTitle,
+                isLoading: serverControls.isStarting,
+                prominent: true,
+                disabled: serverControls.isBusy
+            ) {
+                Task { @MainActor in
+                    await serverControls.performStart(using: llmService)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(isTogglingServer)
         case .starting:
-            Button(serverGuidance.actionButtonTitle) {}
-                .buttonStyle(.bordered)
-                .disabled(true)
+            serverControlButton(
+                title: serverGuidance.actionButtonTitle,
+                isLoading: true,
+                prominent: false,
+                disabled: true,
+                action: {}
+            )
+        }
         }
     }
 
-    private func toggleServer(start: Bool) {
-        guard !isTogglingServer else { return }
-        isTogglingServer = true
-        Task { @MainActor in
-            if start {
-                await llmService.startServer()
-            } else {
-                await llmService.stopServer()
+    private var serverStatusSummaryBlock: some View {
+        HStack(alignment: .top, spacing: 12) {
+            StatusPulseDot(color: serverStatusColor, isPulsing: shouldPulseServerStatus)
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(serverStatusText)
+                    .font(.headline)
+
+                Text(serverActionHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            isTogglingServer = false
         }
+    }
+
+    private var serverEndpointPanel: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 8) {
+                ForEach(serverEndpointRows, id: \.label) { endpoint in
+                    serverEndpointPill(endpoint)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(serverEndpointRows, id: \.label) { endpoint in
+                    serverEndpointPill(endpoint)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var serverEndpointRows: [LLMServerStatusDisplay.Endpoint] {
+        LLMServerStatusDisplay.endpoints(
+            ankimateServerPort: llmService.serverState.port,
+            llamaServerPort: llmService.llamaServerPort
+        )
+    }
+
+    private func serverEndpointPill(_ endpoint: LLMServerStatusDisplay.Endpoint) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(endpoint.label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Text(endpoint.value)
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(endpoint.isAvailable ? Color.primary.opacity(0.72) : Color.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.92))
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+        )
     }
 
     private var serverStatusColor: Color {
@@ -680,12 +755,7 @@ struct LLMSettingsView: View {
     }
 
     private var shouldPulseServerStatus: Bool {
-        switch llmService.serverState {
-        case .starting, .running:
-            return true
-        case .stopped, .failed:
-            return false
-        }
+        llmService.serverState.shouldPulseStatusIndicator
     }
 
     private var serverStatusText: String {
@@ -724,6 +794,9 @@ struct LLMSettingsView: View {
     private var selectedModelSummary: String {
         if selectedModel != nil {
             return "This model is currently selected for local AI features."
+        }
+        if !llmService.hasModel {
+            return "Download and select a model to set up local AI features."
         }
         return "A model can be selected after it finishes downloading."
     }
@@ -799,6 +872,7 @@ struct LLMSettingsView: View {
         title: String,
         subtitle: String,
         tone: SettingsCardTone,
+        minHeight: CGFloat? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -813,6 +887,7 @@ struct LLMSettingsView: View {
             content()
         }
         .padding(12)
+        .frame(minHeight: minHeight, alignment: .topLeading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
@@ -851,6 +926,41 @@ struct LLMSettingsView: View {
         }
         .controlSize(.small)
         .frame(minWidth: 76)
+    }
+
+    private func serverControlButton(
+        title: String,
+        isLoading: Bool,
+        prominent: Bool,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Group {
+            if prominent {
+                Button(action: action) {
+                    serverControlButtonLabel(title: title, isLoading: isLoading)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button(action: action) {
+                    serverControlButtonLabel(title: title, isLoading: isLoading)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .controlSize(.small)
+        .frame(minWidth: 76)
+        .disabled(disabled)
+    }
+
+    private func serverControlButtonLabel(title: String, isLoading: Bool) -> some View {
+        HStack(spacing: 6) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Text(title)
+        }
     }
 
     private var serverCardTone: SettingsCardTone {

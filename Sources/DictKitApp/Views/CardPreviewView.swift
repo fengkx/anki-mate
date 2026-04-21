@@ -22,12 +22,18 @@ struct CardPreviewView: View {
     @State private var generatingPronunciationDialects = Set<String>()
     @State private var pronunciationEnhancementErrorMessage: String?
     @State private var attemptedAutomaticPronunciationDialects = Set<String>()
-    @State private var showAIUnavailableAlert = false
+    @State private var unavailableAlertContent: LLMGenerationAvailability.AlertContent?
     @State private var agentSession: AgentSession?
     @State private var agentPreviewOverrideArtifacts: AIArtifacts?
 
     private let minAIPanelHeight: CGFloat = 180
     private let maxAIPanelHeight: CGFloat = 520
+    private var generationAvailabilityState: LLMGenerationAvailability.State {
+        LLMGenerationAvailability.resolvedState(
+            hasModel: llmService.hasModel,
+            serverState: llmService.serverState
+        )
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -127,13 +133,15 @@ struct CardPreviewView: View {
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .alert(LLMGenerationAvailability.alertTitle, isPresented: $showAIUnavailableAlert) {
-            Button(LLMGenerationAvailability.settingsButtonTitle) {
-                openWindow(id: AppWindowIDs.aiSettings)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(LLMGenerationAvailability.alertMessage)
+        .alert(item: $unavailableAlertContent) { content in
+            Alert(
+                title: Text(content.title),
+                message: Text(content.message),
+                primaryButton: .default(Text(content.settingsButtonTitle)) {
+                    openWindow(id: AppWindowIDs.aiSettings)
+                },
+                secondaryButton: .cancel(Text("Cancel"))
+            )
         }
     }
 
@@ -214,10 +222,10 @@ struct CardPreviewView: View {
                             let dialectKey = item.dialectStorageKey(for: target.dialect)
                             pronunciationIconButton(
                                 systemImage: "arrow.clockwise",
-                                help: "Regenerate stress syllables",
+                                help: pronunciationActionHelpText(defaultText: "Regenerate stress syllables"),
                                 tint: Self.generateIPATint,
                                 isLoading: generatingPronunciationDialects.contains(dialectKey),
-                                disabled: !item.isReady || generatingPronunciationDialects.contains(dialectKey)
+                                disabled: !item.isReady || generatingPronunciationDialects.contains(dialectKey) || isActionBlocked(for: .pronunciationEnhancement)
                             ) {
                                 generatePronunciationEnhancement(
                                     for: target.dialect,
@@ -428,7 +436,8 @@ struct CardPreviewView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isGeneratingRecallPreviewDraft || item.lookupResult == nil)
+                    .help(recallPreviewActionHelpText)
+                    .disabled(isGeneratingRecallPreviewDraft || item.lookupResult == nil || isActionBlocked(for: .recallCard))
                     if let recallPreviewFeedback {
                         Text(recallPreviewFeedback)
                             .font(.caption)
@@ -500,6 +509,7 @@ struct CardPreviewView: View {
             artifactsManager: bridge,
             generator: LLMAgentGeneratorAdapter(llmService: llmService)
         )
+        try? session.reload()
         self.agentSession = session
     }
 
@@ -853,7 +863,7 @@ struct CardPreviewView: View {
             hasModel: llmService.hasModel,
             serverState: llmService.serverState
         ) {
-            showAIUnavailableAlert = true
+            unavailableAlertContent = LLMGenerationAvailability.alertContent(for: generationAvailabilityState)
             return false
         }
 
@@ -869,8 +879,37 @@ struct CardPreviewView: View {
             return false
         }
 
-        showAIUnavailableAlert = true
+        unavailableAlertContent = LLMGenerationAvailability.alertContent(
+            for: LLMGenerationAvailability.resolvedState(
+                hasModel: llmService.hasModel,
+                serverState: llmService.serverState,
+                error: error
+            )
+        )
         return true
+    }
+
+    private func isActionBlocked(for action: LLMGenerationAvailability.Action) -> Bool {
+        switch generationAvailabilityState {
+        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+            return true
+        case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
+            return false
+        }
+    }
+
+    private func pronunciationActionHelpText(defaultText: String) -> String {
+        LLMGenerationAvailability.actionMessage(
+            for: .pronunciationEnhancement,
+            state: generationAvailabilityState
+        ) ?? defaultText
+    }
+
+    private var recallPreviewActionHelpText: String {
+        LLMGenerationAvailability.actionMessage(
+            for: .recallCard,
+            state: generationAvailabilityState
+        ) ?? "Generate Draft"
     }
 
     private func resizeHandle(availableHeight: CGFloat) -> some View {
