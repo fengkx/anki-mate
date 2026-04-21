@@ -1,4 +1,7 @@
-// JSON-RPC client — sends requests to the local inference server via URLSession.
+// RPC + HTTP client for the local inference server.
+//
+// JSON-RPC: health, loadModel, unloadModel, shutdown (control plane via POST /)
+// OpenAI: chatCompletion, chatCompletionStream (data plane via POST /v1/chat/completions)
 
 import Foundation
 import AnkiMateRPC
@@ -9,6 +12,7 @@ public enum RPCClientError: Error, LocalizedError {
     case httpError(statusCode: Int)
     case decodingError(String)
     case rpcError(JSONRPCError)
+    case upstreamError(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +20,7 @@ public enum RPCClientError: Error, LocalizedError {
         case .httpError(let code): return "HTTP error: \(code)"
         case .decodingError(let msg): return "Failed to decode response: \(msg)"
         case .rpcError(let err): return err.detailedDescription
+        case .upstreamError(let msg): return "Upstream error: \(msg)"
         }
     }
 }
@@ -28,13 +33,15 @@ public actor RPCClient {
 
     public init() {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 120 // generation can be slow
+        config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: config)
         self.debugTraceWriter = LLMDebugTraceWriter.shared
     }
 
-    /// Call a JSON-RPC method.
+    // MARK: - JSON-RPC (Control Plane)
+
+    /// Call a JSON-RPC method (health, loadModel, unloadModel, shutdown).
     public func call<P: Encodable & Sendable, R: Decodable & Sendable>(
         method: String,
         params: P,
@@ -51,14 +58,42 @@ public actor RPCClient {
         urlRequest.httpBody = bodyData
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        let (data, httpResponse) = try await session.data(for: urlRequest)
+
+        if let resp = httpResponse as? HTTPURLResponse, resp.statusCode != 200 {
+            throw RPCClientError.httpError(statusCode: resp.statusCode)
+        }
+
+        let rpcResponse: JSONRPCResponse<R>
+        do {
+            rpcResponse = try JSONDecoder().decode(JSONRPCResponse<R>.self, from: data)
+        } catch {
+            throw RPCClientError.decodingError(error.localizedDescription)
+        }
+
+        if let err = rpcResponse.error {
+            throw RPCClientError.rpcError(err)
+        }
+
+        guard let result = rpcResponse.result else {
+            throw RPCClientError.decodingError("Response has neither result nor error")
+        }
+
+        return result
+    }
+
+    // MARK: - OpenAI Chat Completions (Data Plane)
+
+    /// Non-streaming chat completion.
+    public func chatCompletion(
+        request: ChatCompletionRequest,
+        port: Int
+    ) async throws -> ChatCompletionResponse {
         let debugSessionID: UUID?
-        if LLMDebugSettings.isStreamDebugEnabled,
-           method == RPCMethod.generate,
-           let generateParams = params as? GenerateParams {
-            debugSessionID = try? await debugTraceWriter.beginRequest(
+        if LLMDebugSettings.isStreamDebugEnabled {
+            debugSessionID = try? await debugTraceWriter.beginChatRequest(
                 transport: "request-response",
-                rpcMethod: method,
-                params: generateParams,
+                request: request,
                 port: port
             )
         } else {
@@ -66,32 +101,31 @@ public actor RPCClient {
         }
 
         do {
+            let bodyData = try JSONEncoder().encode(request)
+            var urlRequest = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
+            urlRequest.httpMethod = "POST"
+            urlRequest.httpBody = bodyData
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
             let (data, httpResponse) = try await session.data(for: urlRequest)
 
             if let resp = httpResponse as? HTTPURLResponse, resp.statusCode != 200 {
-                throw RPCClientError.httpError(statusCode: resp.statusCode)
+                let body = String(data: data, encoding: .utf8) ?? ""
+                throw RPCClientError.upstreamError("HTTP \(resp.statusCode): \(body)")
             }
 
-            let rpcResponse: JSONRPCResponse<R>
+            let response: ChatCompletionResponse
             do {
-                rpcResponse = try JSONDecoder().decode(JSONRPCResponse<R>.self, from: data)
+                response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             } catch {
                 throw RPCClientError.decodingError(error.localizedDescription)
             }
 
-            if let err = rpcResponse.error {
-                throw RPCClientError.rpcError(err)
+            if let debugSessionID {
+                try? await debugTraceWriter.finishChatRequest(debugSessionID, response: response)
             }
 
-            guard let result = rpcResponse.result else {
-                throw RPCClientError.decodingError("Response has neither result nor error")
-            }
-
-            if let debugSessionID, let generateResult = result as? GenerateResult {
-                try? await debugTraceWriter.finishRequest(debugSessionID, response: generateResult)
-            }
-
-            return result
+            return response
         } catch {
             if let debugSessionID {
                 try? await debugTraceWriter.failRequest(debugSessionID, error: error)
@@ -100,123 +134,148 @@ public actor RPCClient {
         }
     }
 
-    public func streamGenerate(
-        params: GenerateParams,
+    /// Streaming chat completion via SSE.
+    ///
+    /// Returns the accumulated response. Calls `onDelta` for each content delta
+    /// and `onReasoningDelta` for each reasoning/thinking delta.
+    public func chatCompletionStream(
+        request: ChatCompletionRequest,
         port: Int,
-        onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> GenerateResult {
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> ChatCompletionResponse {
+        var streamRequest = request
+        streamRequest.stream = true
+
         let debugEnabled = LLMDebugSettings.isStreamDebugEnabled
-        let debugSessionID = debugEnabled
-            ? (try? await debugTraceWriter.beginRequest(
-                transport: "stream",
-                rpcMethod: RPCMethod.generate,
-                params: params,
-                port: port
-            ))
-            : nil
-        var urlRequest = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/stream")!)
-        urlRequest.httpMethod = "POST"
-        urlRequest.httpBody = try JSONEncoder().encode(params)
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let debugSessionID: UUID?
         if debugEnabled {
-            logger.info("streamGenerate request sent, port=\(port)")
+            debugSessionID = try? await debugTraceWriter.beginChatRequest(
+                transport: "stream",
+                request: streamRequest,
+                port: port
+            )
+        } else {
+            debugSessionID = nil
         }
 
         do {
+            let bodyData = try JSONEncoder().encode(streamRequest)
+            var urlRequest = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
+            urlRequest.httpMethod = "POST"
+            urlRequest.httpBody = bodyData
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+            if debugEnabled {
+                logger.info("chatCompletionStream request sent, port=\(port)")
+            }
+
             let (bytes, httpResponse) = try await session.bytes(for: urlRequest)
             if let resp = httpResponse as? HTTPURLResponse, resp.statusCode != 200 {
                 throw RPCClientError.httpError(statusCode: resp.statusCode)
             }
 
-            var finalTokens = 0
-            var finalDuration = 0
-            var finalText = ""
+            var accumulatedContent = ""
+            var accumulatedReasoning = ""
+            var accumulatedToolCalls: [ChatToolCall] = []
+            var finishReason: String?
+            var usage: ChatCompletionResponse.Usage?
+            var lastId: String?
+            var lastModel: String?
 
-            var sawDone = false
             for try await line in bytes.lines {
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                guard trimmed.first == "{" else {
-                    if debugEnabled {
-                        logger.debug("stream line skipped: \(trimmed, privacy: .public)")
-                    }
-                    continue
-                }
-                let data = Data(trimmed.utf8)
-                let chunk = try decodeStreamChunk(from: data)
 
-                if let error = chunk.error, !error.isEmpty {
-                    if debugEnabled {
-                        logger.error("stream chunk error: \(error, privacy: .public)")
-                    }
-                    throw RPCClientError.decodingError(error)
-                }
+                // SSE format: "data: {...}" or "data: [DONE]"
+                guard trimmed.hasPrefix("data: ") else { continue }
+                let payload = String(trimmed.dropFirst(6))
 
-                if let delta = chunk.delta, !delta.isEmpty {
-                    finalText += delta
-                    onDelta(delta)
-                    if let debugSessionID {
-                        try? await debugTraceWriter.appendStreamDelta(delta, for: debugSessionID)
-                    }
+                if payload == "[DONE]" {
                     if debugEnabled {
-                        logger.debug("stream delta len=\(delta.count)")
-                    }
-                }
-
-                if chunk.done == true {
-                    finalTokens = chunk.tokensUsed ?? finalTokens
-                    finalDuration = chunk.durationMs ?? finalDuration
-                    sawDone = true
-                    if debugEnabled {
-                        logger.info("stream done tokens=\(finalTokens) durationMs=\(finalDuration)")
+                        logger.info("stream done")
                     }
                     break
                 }
+
+                guard let chunkData = payload.data(using: .utf8),
+                      let chunk = try? JSONDecoder().decode(ChatCompletionStreamChunk.self, from: chunkData) else {
+                    if debugEnabled {
+                        logger.debug("stream chunk decode failed: \(payload, privacy: .public)")
+                    }
+                    continue
+                }
+
+                lastId = chunk.id ?? lastId
+                lastModel = chunk.model ?? lastModel
+                if let u = chunk.usage {
+                    usage = u
+                }
+
+                if let choice = chunk.choices.first {
+                    if let content = choice.delta.content, !content.isEmpty {
+                        accumulatedContent += content
+                        onDelta(content)
+                        if let debugSessionID {
+                            try? await debugTraceWriter.appendStreamDelta(content, for: debugSessionID)
+                        }
+                    }
+
+                    // Gemma 4 and other reasoning models put thinking output in reasoning_content
+                    if let reasoning = choice.delta.reasoning_content, !reasoning.isEmpty {
+                        accumulatedReasoning += reasoning
+                        onReasoningDelta?(reasoning)
+                        if let debugSessionID {
+                            try? await debugTraceWriter.appendStreamDelta("[reasoning] " + reasoning, for: debugSessionID)
+                        }
+                    }
+
+                    if let toolCalls = choice.delta.tool_calls {
+                        // Accumulate tool call fragments
+                        for tc in toolCalls {
+                            accumulatedToolCalls.append(tc)
+                        }
+                    }
+
+                    if let fr = choice.finish_reason {
+                        finishReason = fr
+                    }
+                }
             }
 
-            if !sawDone && finalText.isEmpty {
-                throw RPCClientError.decodingError("Streaming ended without payload")
-            }
+            // If the model only produced reasoning_content (no regular content),
+            // use reasoning as the content so the response isn't empty.
+            let finalContent = accumulatedContent.isEmpty ? accumulatedReasoning : accumulatedContent
 
-            let result = GenerateResult(
-                text: finalText.trimmingCharacters(in: .whitespacesAndNewlines),
-                tokensUsed: finalTokens,
-                durationMs: finalDuration
+            let responseMessage = ChatMessage(
+                role: "assistant",
+                content: finalContent.isEmpty ? nil : finalContent,
+                reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning,
+                tool_calls: accumulatedToolCalls.isEmpty ? nil : accumulatedToolCalls
             )
+
+            let response = ChatCompletionResponse(
+                id: lastId,
+                model: lastModel,
+                choices: [
+                    ChatCompletionResponse.Choice(
+                        index: 0,
+                        message: responseMessage,
+                        finish_reason: finishReason
+                    )
+                ],
+                usage: usage
+            )
+
             if let debugSessionID {
-                try? await debugTraceWriter.finishRequest(debugSessionID, response: result)
+                try? await debugTraceWriter.finishChatRequest(debugSessionID, response: response)
             }
-            return result
+
+            return response
         } catch {
             if let debugSessionID {
                 try? await debugTraceWriter.failRequest(debugSessionID, error: error)
             }
             throw error
-        }
-    }
-}
-
-private struct StreamChunk: Codable {
-    let delta: String?
-    let done: Bool?
-    let tokensUsed: Int?
-    let durationMs: Int?
-    let error: String?
-}
-
-private extension RPCClient {
-    func decodeStreamChunk(from data: Data) throws -> StreamChunk {
-        do {
-            return try JSONDecoder().decode(StreamChunk.self, from: data)
-        } catch {
-            if let envelope = try? JSONDecoder().decode(JSONRPCResponse<GenerateResult>.self, from: data),
-               let rpcError = envelope.error {
-                if LLMDebugSettings.isStreamDebugEnabled {
-                    logger.error("stream rpc error envelope: \(rpcError.message, privacy: .public)")
-                }
-                throw RPCClientError.rpcError(rpcError)
-            }
-            throw RPCClientError.decodingError("Invalid stream chunk: \(error.localizedDescription)")
         }
     }
 }

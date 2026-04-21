@@ -31,6 +31,9 @@ public final class LLMService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var autoStartOnAvailableModel = false
     private var autoStartTask: Task<Void, Never>?
+    private var loadedModelPath: String?
+    /// Port of the llama-server child process for direct chat completion requests.
+    private var inferencePort: Int?
 
     public convenience init(defaults: UserDefaults = .standard) {
         let client = RPCClient()
@@ -124,6 +127,16 @@ public final class LLMService: ObservableObject {
             )
 
             loadedModelId = model.id
+            loadedModelPath = modelPath
+
+            // Discover the inference port from health response
+            let healthResult: HealthResult = try await rpcClient.call(
+                method: RPCMethod.health,
+                params: HealthParams(),
+                port: port
+            )
+            inferencePort = healthResult.inferencePort
+
             defaults.set(model.id, forKey: Self.lastSuccessfulModelIdDefaultsKey)
         }
     }
@@ -132,6 +145,8 @@ public final class LLMService: ObservableObject {
     public func stopServer() async {
         await serverManager.stop()
         loadedModelId = nil
+        loadedModelPath = nil
+        inferencePort = nil
     }
 
     /// Start the server without triggering model load.
@@ -188,9 +203,7 @@ public final class LLMService: ObservableObject {
         senses: [LLMSensePromptInput]
     ) async throws -> [String] {
         try await ensureReady()
-        guard let port = serverState.port else {
-            throw LLMServiceError.serverNotAvailable
-        }
+        let port = try requireInferencePort()
 
         let prompt = LLMPrompt.exampleSentences(
             word: word,
@@ -198,19 +211,21 @@ public final class LLMService: ObservableObject {
         )
         let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-        let result: GenerateResult = try await rpcClient.call(
-            method: RPCMethod.generate,
-            params: GenerateParams(
-                prompt: prompt.user,
-                systemPrompt: prompt.system,
-                maxTokens: max(300, sentenceCount * 96),
-                temperature: adjustedTemperature(0.7)
+        let response = try await rpcClient.chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: adjustedTemperature(0.7),
+                max_tokens: max(300, sentenceCount * 96)
             ),
             port: port
         )
 
         // Parse numbered sentences
-        return parseSentences(result.text)
+        return parseSentences(response.choices.first?.message.content ?? "")
     }
 
     public func generateExampleSentenceArtifacts(
@@ -329,9 +344,7 @@ public final class LLMService: ObservableObject {
         onDelta: @escaping @Sendable (String) -> Void
     ) async throws -> [String] {
         try await ensureReady()
-        guard let port = serverState.port else {
-            throw LLMServiceError.serverNotAvailable
-        }
+        let port = try requireInferencePort()
 
         let prompt = LLMPrompt.exampleSentences(
             word: word,
@@ -339,17 +352,21 @@ public final class LLMService: ObservableObject {
         )
         let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-        let result = try await rpcClient.streamGenerate(
-            params: GenerateParams(
-                prompt: prompt.user,
-                systemPrompt: prompt.system,
-                maxTokens: max(360, sentenceCount * 112),
-                temperature: adjustedTemperature(0.7)
+        let response = try await rpcClient.chatCompletionStream(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: adjustedTemperature(0.7),
+                max_tokens: max(360, sentenceCount * 112),
+                stream: true
             ),
             port: port,
             onDelta: onDelta
         )
-        return parseSentences(result.text)
+        return parseSentences(response.choices.first?.message.content ?? "")
     }
 
     /// Generate an optimized definition.
@@ -402,9 +419,7 @@ public final class LLMService: ObservableObject {
         onDelta: @escaping @Sendable (String) -> Void
     ) async throws -> String {
         try await ensureReady()
-        guard let port = serverState.port else {
-            throw LLMServiceError.serverNotAvailable
-        }
+        let port = try requireInferencePort()
 
         let prompt = LLMPrompt.legacyOptimizeDefinitionText(
             word: word,
@@ -412,17 +427,21 @@ public final class LLMService: ObservableObject {
         )
         let hintCount = LLMPrompt.usageHintCount(for: senses)
 
-        let result = try await rpcClient.streamGenerate(
-            params: GenerateParams(
-                prompt: prompt.user,
-                systemPrompt: prompt.system,
-                maxTokens: max(260, hintCount * 104),
-                temperature: adjustedTemperature(0.5)
+        let response = try await rpcClient.chatCompletionStream(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: adjustedTemperature(0.5),
+                max_tokens: max(260, hintCount * 104),
+                stream: true
             ),
             port: port,
             onDelta: onDelta
         )
-        return normalizeLegacyUsageHints(result.text)
+        return normalizeLegacyUsageHints(response.choices.first?.message.content ?? "")
     }
 
     public func generateUsageHints(
@@ -1261,32 +1280,31 @@ public final class LLMService: ObservableObject {
         responseFormat: LLMResponseFormat? = nil
     ) async throws -> T {
         try await ensureReady()
-        guard let port = serverState.port else {
-            throw LLMServiceError.serverNotAvailable
-        }
+        let port = try requireInferencePort()
 
-        let result: GenerateResult = try await rpcClient.call(
-            method: RPCMethod.generate,
-            params: GenerateParams(
-                prompt: prompt.user,
-                systemPrompt: prompt.system,
-                responseFormat: responseFormat,
-                maxTokens: maxTokens,
-                temperature: temperature
+        let response = try await rpcClient.chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: temperature,
+                max_tokens: maxTokens,
+                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
             ),
             port: port
         )
 
-        return try Self.decodeStructuredOutput(type, from: result.text)
+        return try Self.decodeStructuredOutput(type, from: Self.primaryResponseText(from: response))
     }
 
     /// OpenAI-style chat generation entry point.
     ///
-    /// Mirrors the shape of OpenAI's `chat/completions`: `tools` is an optional
-    /// parameter to the single `generate` call. When `tools` is non-empty, the
-    /// server routes the request through the chat template bridge and returns
-    /// any model-emitted tool calls in `GenerateResult.toolCalls`; otherwise it
-    /// behaves like a plain chat completion.
+    /// Sends a `/v1/chat/completions` request to the server. When `tools` is
+    /// non-empty, the upstream llama-server handles tool-call parsing and
+    /// returns any model-emitted tool calls; otherwise it behaves like a plain
+    /// chat completion.
     public func generate(
         messages: [LLMMessage],
         tools: [LLMToolDefinition]? = nil,
@@ -1297,32 +1315,111 @@ public final class LLMService: ObservableObject {
         temperature: Float = 0.2
     ) async throws -> GenerateResult {
         try await ensureReady()
-        guard let port = serverState.port else {
-            throw LLMServiceError.serverNotAvailable
+        let port = try requireInferencePort()
+
+        let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
+
+        let chatTools: [ChatTool]? = tools.flatMap { defs in
+            let mapped = defs.map { tool in
+                ChatTool(
+                    function: ChatFunction(
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters
+                    )
+                )
+            }
+            return mapped.isEmpty ? nil : mapped
         }
 
-        // Keep the wire-level `prompt` / `systemPrompt` populated so older
-        // server paths (tools == nil) keep working without forcing callers to
-        // think about the legacy fields. When `messages` is the source of
-        // truth the server will prefer it.
-        let systemPrompt = messages.first(where: { $0.role == .system })?.content ?? ""
-        let userPrompt = messages.last(where: { $0.role == .user })?.content ?? ""
+        let chatToolChoice: JSONValue? = if let toolChoice {
+            .string(toolChoice)
+        } else if chatTools != nil {
+            .string("auto")
+        } else {
+            nil
+        }
 
-        return try await rpcClient.call(
-            method: RPCMethod.generate,
-            params: GenerateParams(
-                prompt: userPrompt,
-                systemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                messages: messages,
-                tools: tools,
-                toolChoice: toolChoice,
-                parallelToolCalls: parallelToolCalls,
-                responseFormat: responseFormat,
-                maxTokens: maxTokens,
-                temperature: temperature
+        let response = try await rpcClient.chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: chatMessages,
+                temperature: temperature,
+                max_tokens: maxTokens,
+                tools: chatTools,
+                tool_choice: chatToolChoice,
+                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
+                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
             ),
             port: port
         )
+
+        return Self.mapToGenerateResult(response)
+    }
+
+    /// Streaming variant of `generate`. Calls `onDelta` for each content chunk.
+    public func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition]? = nil,
+        toolChoice: String? = nil,
+        parallelToolCalls: Bool = false,
+        maxTokens: Int = 512,
+        temperature: Float = 0.2,
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> GenerateResult {
+        try await ensureReady()
+        let port = try requireInferencePort()
+
+        let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
+
+        let chatTools: [ChatTool]? = tools.flatMap { defs in
+            let mapped = defs.map { tool in
+                ChatTool(
+                    function: ChatFunction(
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters
+                    )
+                )
+            }
+            return mapped.isEmpty ? nil : mapped
+        }
+
+        let chatToolChoice: JSONValue? = if let toolChoice {
+            .string(toolChoice)
+        } else if chatTools != nil {
+            .string("auto")
+        } else {
+            nil
+        }
+
+        let response = try await rpcClient.chatCompletionStream(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: chatMessages,
+                temperature: temperature,
+                max_tokens: maxTokens,
+                stream: true,
+                tools: chatTools,
+                tool_choice: chatToolChoice,
+                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil
+            ),
+            port: port,
+            onDelta: onDelta,
+            onReasoningDelta: onReasoningDelta
+        )
+
+        return Self.mapToGenerateResult(response)
+    }
+
+    /// Returns the llama-server child port for direct chat completion requests.
+    /// Call `ensureReady()` first — this throws if the port is not available.
+    private func requireInferencePort() throws -> Int {
+        guard let port = inferencePort else {
+            throw LLMServiceError.serverNotAvailable
+        }
+        return port
     }
 
     private func adjustedTemperature(_ base: Float) -> Float {
@@ -1775,8 +1872,21 @@ extension LLMService {
             }
         }
 
+        let rawPreview = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(400)
+        let candidatePreview = attemptedPayloads.first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(400)
+
         throw LLMServiceError.invalidStructuredOutput(
-            "Expected JSON object for structured output"
+            [
+                "Expected JSON object for structured output",
+                rawPreview.isEmpty ? nil : "raw=\(rawPreview)",
+                candidatePreview.map { "candidate=\($0)" }
+            ]
+            .compactMap { $0 }
+            .joined(separator: " | ")
         )
     }
 
@@ -3386,6 +3496,72 @@ extension LLMService {
             text: text,
             note: anchor.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         )
+    }
+
+    // MARK: - OpenAI Mapping Helpers
+
+    private static func mapResponseFormat(_ format: LLMResponseFormat) -> ChatResponseFormat? {
+        switch format.kind {
+        case .text:
+            return ChatResponseFormat(type: "text")
+        case .json:
+            return ChatResponseFormat(type: "json_object")
+        case .jsonSchema:
+            guard let schema = format.schema else {
+                return ChatResponseFormat(type: "json_object")
+            }
+            return ChatResponseFormat(
+                type: "json_schema",
+                json_schema: ChatJSONSchemaSpec(name: "response", schema: schema, strict: format.strict)
+            )
+        }
+    }
+
+    static func primaryResponseText(from response: ChatCompletionResponse) -> String {
+        let choice = response.choices.first
+        let content = choice?.message.content ?? ""
+        let reasoning = choice?.message.reasoning_content ?? ""
+        return (content.isEmpty ? reasoning : content).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func mapToGenerateResult(_ response: ChatCompletionResponse) -> GenerateResult {
+        let choice = response.choices.first
+        let text = primaryResponseText(from: response)
+        let finishReason = choice?.finish_reason
+
+        let toolCalls: [LLMToolCall]? = choice?.message.tool_calls.flatMap { calls in
+            let mapped = calls.compactMap { call -> LLMToolCall? in
+                let name = call.function.name
+                guard !name.isEmpty else { return nil }
+                let arguments = decodeToolCallArguments(call.function.arguments)
+                return LLMToolCall(id: call.id, name: name, arguments: arguments)
+            }
+            return mapped.isEmpty ? nil : mapped
+        }
+
+        let tokensUsed = response.usage?.completion_tokens ?? response.usage?.total_tokens ?? 0
+
+        let reasoning = choice?.message.reasoning_content
+
+        return GenerateResult(
+            text: text,
+            tokensUsed: tokensUsed,
+            durationMs: 0,
+            finishReason: finishReason,
+            toolCalls: toolCalls,
+            reasoning: reasoning
+        )
+    }
+
+    private static func decodeToolCallArguments(_ raw: String) -> JSONValue {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else {
+            return .object([:])
+        }
+        if let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            return decoded
+        }
+        return .string(trimmed)
     }
 
 }

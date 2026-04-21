@@ -8,7 +8,6 @@ public enum RPCMethod {
     public static let health = "health"
     public static let loadModel = "loadModel"
     public static let unloadModel = "unloadModel"
-    public static let generate = "generate"
     public static let shutdown = "shutdown"
 }
 
@@ -87,11 +86,15 @@ public struct HealthResult: Codable, Sendable {
     public let status: ServerStatus
     public let modelId: String?
     public let uptimeSeconds: Int
+    /// Port of the internal llama-server child process. Clients send chat completion
+    /// requests directly to this port instead of going through the control-plane proxy.
+    public let inferencePort: Int?
 
-    public init(status: ServerStatus, modelId: String?, uptimeSeconds: Int) {
+    public init(status: ServerStatus, modelId: String?, uptimeSeconds: Int, inferencePort: Int? = nil) {
         self.status = status
         self.modelId = modelId
         self.uptimeSeconds = uptimeSeconds
+        self.inferencePort = inferencePort
     }
 }
 
@@ -133,63 +136,7 @@ public struct UnloadModelResult: Codable, Sendable {
     public init(ok: Bool = true) { self.ok = ok }
 }
 
-// MARK: - generate
-
-public struct GenerateParams: Codable, Sendable {
-    public let prompt: String
-    public let systemPrompt: String?
-    public let messages: [LLMMessage]?
-    public let tools: [LLMToolDefinition]?
-    /// OpenAI-style: "auto" | "none" | "required". Only consulted when `tools` is non-empty.
-    public let toolChoice: String?
-    /// OpenAI-style: whether the model may emit multiple tool calls per turn.
-    public let parallelToolCalls: Bool
-    public let responseFormat: LLMResponseFormat?
-    public let maxTokens: Int
-    public let temperature: Float
-
-    public init(
-        prompt: String,
-        systemPrompt: String? = nil,
-        messages: [LLMMessage]? = nil,
-        tools: [LLMToolDefinition]? = nil,
-        toolChoice: String? = nil,
-        parallelToolCalls: Bool = false,
-        responseFormat: LLMResponseFormat? = nil,
-        maxTokens: Int = 256,
-        temperature: Float = 0.7
-    ) {
-        self.prompt = prompt
-        self.systemPrompt = systemPrompt
-        self.messages = messages
-        self.tools = tools
-        self.toolChoice = toolChoice
-        self.parallelToolCalls = parallelToolCalls
-        self.responseFormat = responseFormat
-        self.maxTokens = maxTokens
-        self.temperature = temperature
-    }
-
-    // Custom Decodable to keep `parallelToolCalls` optional on the wire.
-    // Requests from older clients omit the field; default to false.
-    enum CodingKeys: String, CodingKey {
-        case prompt, systemPrompt, messages, tools, toolChoice, parallelToolCalls,
-             responseFormat, maxTokens, temperature
-    }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.prompt = try c.decode(String.self, forKey: .prompt)
-        self.systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
-        self.messages = try c.decodeIfPresent([LLMMessage].self, forKey: .messages)
-        self.tools = try c.decodeIfPresent([LLMToolDefinition].self, forKey: .tools)
-        self.toolChoice = try c.decodeIfPresent(String.self, forKey: .toolChoice)
-        self.parallelToolCalls = try c.decodeIfPresent(Bool.self, forKey: .parallelToolCalls) ?? false
-        self.responseFormat = try c.decodeIfPresent(LLMResponseFormat.self, forKey: .responseFormat)
-        self.maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 256
-        self.temperature = try c.decodeIfPresent(Float.self, forKey: .temperature) ?? 0.7
-    }
-}
+// MARK: - GenerateResult (internal convenience type for LLMService/AgentSession)
 
 public struct GenerateResult: Codable, Sendable {
     public let text: String
@@ -197,19 +144,22 @@ public struct GenerateResult: Codable, Sendable {
     public let durationMs: Int
     public let finishReason: String?
     public let toolCalls: [LLMToolCall]?
+    public let reasoning: String?
 
     public init(
         text: String,
         tokensUsed: Int,
         durationMs: Int,
         finishReason: String? = nil,
-        toolCalls: [LLMToolCall]? = nil
+        toolCalls: [LLMToolCall]? = nil,
+        reasoning: String? = nil
     ) {
         self.text = text
         self.tokensUsed = tokensUsed
         self.durationMs = durationMs
         self.finishReason = finishReason
         self.toolCalls = toolCalls
+        self.reasoning = reasoning
     }
 }
 

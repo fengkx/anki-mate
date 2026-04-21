@@ -65,7 +65,7 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertTrue(generator.calls[0].contains { $0.content.contains("Current card snapshot") })
     }
 
-    func testSendUserMessagePersistsRecoverableErrorMessageWhenGenerationFails() async throws {
+    func testSendUserMessageRollsBackMessagesAndRethrowsWhenGenerationFails() async throws {
         let persistence = InMemoryAgentPersistence()
         let wordID = UUID()
         let sut = AgentSession(
@@ -76,14 +76,16 @@ final class AgentSessionTests: XCTestCase {
         )
 
         try sut.reload()
-        try await sut.sendUserMessage("帮我缩短 back")
 
-        XCTAssertEqual(sut.messages.count, 2)
-        guard case .error(let message, let recoverable) = sut.messages[1].content else {
-            return XCTFail("Expected error message")
+        do {
+            try await sut.sendUserMessage("帮我缩短 back")
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertTrue(error is Failure)
         }
-        XCTAssertTrue(recoverable)
-        XCTAssertTrue(message.contains("stub failure"))
+
+        // The user message should have been rolled back — no messages remain.
+        XCTAssertEqual(sut.messages.count, 0)
     }
 
     func testSendUserMessageExecutesReadToolCallsBeforePersistingAssistantReply() async throws {
@@ -204,7 +206,7 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(sut.messages.count, 4)
         XCTAssertEqual(sut.pendingProposals.count, 1)
 
-        guard case .text(let assistantText) = sut.messages[1].content else {
+        guard case .text(let assistantText, reasoning: _) = sut.messages[1].content else {
             return XCTFail("Expected assistant rationale text")
         }
         XCTAssertTrue(assistantText.contains("商业语境"))
@@ -482,6 +484,12 @@ private final class InMemoryAgentPersistence: AgentSessionPersisting {
         )
         messagesBySessionID[sessionID, default: []].append(message)
         return message
+    }
+
+    func deleteMessages(ids: [UUID]) throws {
+        for (sessionID, messages) in messagesBySessionID {
+            messagesBySessionID[sessionID] = messages.filter { !ids.contains($0.id) }
+        }
     }
 
     func clearMessages(sessionID: UUID) throws {

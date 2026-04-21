@@ -642,7 +642,11 @@ public enum LLMPrompt {
 
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
-            "Generate strict JSON learning aids that help with recall, correct usage, and collocations.",
+            "Generate strict JSON learning aids for a vocabulary learner.",
+            "Your job is not to fill sections. Your job is to return only items that add non-obvious learning value beyond the dictionary senses.",
+            "A good item must teach at least one of: a likely learner mistake, a word-specific retrieval hook, or a reusable phrase pattern that is more informative than the definition itself.",
+            "If a section does not contain that level of value, return an empty array.",
+            "Prefer omission over low-information correctness.",
             "Keep every field concise and practical for flashcards.",
             "Use accepted learning material as already-covered teaching points and avoid repeating them. Accepted material may be in Chinese or English; concept overlap still counts.",
             "Prefer returning fewer, stronger items over filling every section with weak content."
@@ -653,6 +657,15 @@ public enum LLMPrompt {
             PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
             PromptText.labeledBlock("Accepted learning material", value: learningAidAcceptedContextText(acceptedContext)),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            PromptText.labeledBlock(
+                "Quality bar",
+                value: PromptText.bulletList([
+                    "Every item must add information that is not already obvious from the sense inventory",
+                    "Every item must be specific to this target word, not a generic fact that would also fit nearby synonyms",
+                    "Every item must save the learner effort: after reading it once, the learner should know what to remember or what mistake to avoid",
+                    "If an item is correct but generic, obvious, or weakly memorable, do not return it"
+                ])
+            ),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -700,14 +713,25 @@ public enum LLMPrompt {
                     "If accepted material says this word has a double-letter spelling trap, an English rewording of that same trap is still duplicate",
                     "If accepted material already covers the clearest point for a section, return an empty array instead of rewording it",
                     "Stay on the current target word only; never borrow a clue, pitfall, or phrase that fits another word better",
+                    "Do not copy wording from the examples below; use them only to learn the quality bar",
                     "Never output self-reference, direct definition restatements, translation rewrites, or gloss-wording contrasts",
+                    "Target output budget: pitfalls 0 to 2, mnemonics 0 to 2, collocations 0 to 2",
+                    "Do not use the full budget unless each item clearly passes the quality bar",
                     "pitfalls: require a concrete wrong form, confusable alternative, spelling trap, or misuse context; otherwise return an empty array",
                     "pitfalls: a near-synonym wording contrast is not enough unless it points to a concrete learner mistake",
                     "pitfalls: if accepted pitfalls already cover a spelling trap, do not emit another pitfall whose main information is that same letters or chunk",
+                    "pitfalls: reject vague nuance comments that do not predict a real learner error",
                     "mnemonics: require a vivid image, a concrete spelling chunk, or a memorable contrast that still works without seeing the headword",
                     "mnemonics: for abstract words, a concrete scene is acceptable; a synonym paraphrase is not",
                     "mnemonics: no acrostics, no whole-word spelling, no \"think of a <word> person\"",
+                    "mnemonics: reject abstract slogan-like cues that still require the learner to re-derive the meaning from scratch",
+                    "mnemonics: if the clue stops working once the headword is hidden, it is too weak",
                     "collocations: require a real reusable phrase pattern for this target word, not definition wording and not another word's phrase",
+                    "collocations: do not return headword + obvious object phrases that are predictable from the definition alone",
+                    "collocations: do not return broad phrases that would work just as well with several close synonyms",
+                    "collocations: prefer patterns that reveal register, argument structure, or a typical semantic environment",
+                    "collocations: prefer 1 to 2 high-value collocations; zero is better than filler",
+                    "collocations: if you cannot name a phrase that would make the learner noticeably better at using or recognizing this word, return an empty array",
                     "recallRelevant should be true only when the item directly helps active recall, hint design, or mistake avoidance",
                     "senseIndex is optional and should refer to the numbered sense inventory above when provided",
                     "Keep every string compact and learner-facing",
@@ -719,8 +743,10 @@ public enum LLMPrompt {
                 value: PromptText.bulletList([
                     "Good mnemonic: reluctant -> \"dragging feet at the doorway\"",
                     "Bad mnemonic: reluctant -> \"Think of a person who is hesitant to agree\"",
-                    "Bad pitfall: collocation -> \"Mistake in using 'habitual' vs. 'regular'\"",
-                    "Bad collocation: collocation -> \"reluctant to admit\"",
+                    "Bad pitfall: fragile -> \"Means weak or delicate\"",
+                    "Bad collocation: principal -> \"principal of the school\"",
+                    "Bad collocation: dismantle -> \"dismantle a machine\"",
+                    "Why bad: these are too obvious from the core meaning or just restate the dictionary sense",
                     "If accepted pitfalls already include \"easy to miss the double l\", return an empty pitfall unless you have a genuinely different risk",
                     "If accepted collocations already include \"strong collocation\", do not output it again"
                 ])

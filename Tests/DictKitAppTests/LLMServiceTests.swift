@@ -744,49 +744,71 @@ final class LLMServiceTests: XCTestCase {
         }
     }
 
-    func testGenerateParamsSupportStructuredRequestExtensions() throws {
-        let params = GenerateParams(
-            prompt: "Say hello",
-            systemPrompt: "Be brief",
-            messages: [
-                LLMMessage(role: .system, content: "Use JSON"),
-                LLMMessage(role: .user, content: "Hello")
-            ],
-            tools: [
-                LLMToolDefinition(
-                    name: "lookup",
-                    description: "Look up a term",
-                    parameters: .object([
-                        "type": .string("object"),
-                        "properties": .object([
-                            "query": .object([
-                                "type": .string("string")
-                            ])
-                        ]),
-                        "required": .array([.string("query")])
-                    ])
+    func testPrimaryResponseTextFallsBackToReasoningContentWhenContentIsEmpty() {
+        let response = ChatCompletionResponse(
+            choices: [
+                .init(
+                    message: ChatMessage(
+                        role: "assistant",
+                        content: nil,
+                        reasoning_content: """
+                        {"pitfalls":[],"mnemonics":[],"collocations":[]}
+                        """
+                    )
                 )
-            ],
-            responseFormat: LLMResponseFormat(
-                kind: .jsonSchema,
-                schema: .object([
-                    "type": .string("object")
-                ]),
-                strict: true
-            ),
-            maxTokens: 128,
-            temperature: 0.2
+            ]
         )
 
-        let data = try JSONEncoder().encode(params)
-        let decoded = try JSONDecoder().decode(GenerateParams.self, from: data)
+        XCTAssertEqual(
+            LLMService.primaryResponseText(from: response),
+            #"{"pitfalls":[],"mnemonics":[],"collocations":[]}"#
+        )
+    }
 
-        XCTAssertEqual(decoded.prompt, "Say hello")
-        XCTAssertEqual(decoded.systemPrompt, "Be brief")
-        XCTAssertEqual(decoded.messages?.count, 2)
-        XCTAssertEqual(decoded.tools?.first?.name, "lookup")
-        XCTAssertEqual(decoded.responseFormat?.kind, .jsonSchema)
-        XCTAssertEqual(decoded.maxTokens, 128)
+    func testChatCompletionRequestRoundTripsCorrectly() throws {
+        let request = ChatCompletionRequest(
+            model: "/test.gguf",
+            messages: [
+                ChatMessage(role: "system", content: "Use JSON"),
+                ChatMessage(role: "user", content: "Hello")
+            ],
+            temperature: 0.2,
+            max_tokens: 128,
+            tools: [
+                ChatTool(
+                    function: ChatFunction(
+                        name: "lookup",
+                        description: "Look up a term",
+                        parameters: .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "query": .object([
+                                    "type": .string("string")
+                                ])
+                            ]),
+                            "required": .array([.string("query")])
+                        ])
+                    )
+                )
+            ],
+            response_format: ChatResponseFormat(
+                type: "json_schema",
+                json_schema: ChatJSONSchemaSpec(
+                    name: "response",
+                    schema: .object(["type": .string("object")]),
+                    strict: true
+                )
+            )
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+
+        XCTAssertEqual(decoded.model, "/test.gguf")
+        XCTAssertEqual(decoded.messages.count, 2)
+        XCTAssertEqual(decoded.tools?.first?.function.name, "lookup")
+        XCTAssertEqual(decoded.response_format?.type, "json_schema")
+        XCTAssertEqual(decoded.max_tokens, 128)
         XCTAssertEqual(decoded.temperature, 0.2)
     }
 
@@ -923,6 +945,31 @@ final class LLMServiceTests: XCTestCase {
                 XCTAssertFalse(collocationPhrases.contains(rejected), "word=\(testCase.word) should reject collocation: \(rejected)")
             }
         }
+    }
+
+    func testLearningAidFilterRejectsHabitualBehaviorForCollocation() {
+        let senses = [
+            LLMSensePromptInput(
+                partOfSpeech: "noun",
+                definition: "habitual word pairing",
+                semanticHint: "word pairing"
+            )
+        ]
+        let aids = LLMLearningAids(
+            collocations: [
+                LLMCollocation(phrase: "habitual behavior"),
+                LLMCollocation(phrase: "strong collocation"),
+                LLMCollocation(phrase: "natural collocation")
+            ]
+        )
+
+        let filtered = LLMService.filterLearningAids(
+            aids,
+            word: "collocation",
+            senses: senses
+        )
+
+        XCTAssertFalse(filtered.collocations.map(\.phrase).contains("habitual behavior"))
     }
 
     private func makeTemporaryDirectory() -> URL {

@@ -1,9 +1,12 @@
-// AnkiMate local inference server — JSON-RPC 2.0 over HTTP.
+// AnkiMate local inference server — supervisor for llama-server.
 //
 // Usage: AnkiMateServer [port] [--parent-pid PID]
 //   port: TCP port to bind (0 = auto-assign). Default: 0
 //
 // On startup, prints "LISTENING:<port>" to stdout so the parent process can discover the port.
+//
+// Control plane: JSON-RPC 2.0 over POST / (health, loadModel, unloadModel, shutdown)
+// Data plane: Clients talk directly to llama-server child port (returned in health response)
 
 import Foundation
 import NIOCore
@@ -13,10 +16,20 @@ import AnkiMateRPC
 
 let launchConfiguration = try ServerLaunchConfiguration(arguments: CommandLine.arguments)
 let port = launchConfiguration.port
-
-let engine = InferenceEngine()
-let dispatcher = RPCDispatcher(engine: engine)
 let startTime = Date()
+
+// Late-bind supervisor after we know the actual port.
+final class ServerContext {
+    var dispatcher: RPCDispatcher?
+    var startTime: Date
+    var shutdownCallback: (() -> Void)?
+
+    init(startTime: Date) {
+        self.startTime = startTime
+    }
+}
+
+let serverContext = ServerContext(startTime: startTime)
 
 let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 var serverChannel: Channel?
@@ -27,12 +40,7 @@ let bootstrap = ServerBootstrap(group: group)
     .childChannelInitializer { channel in
         channel.pipeline.configureHTTPServerPipeline().flatMap {
             channel.pipeline.addHandler(
-                HTTPHandler(dispatcher: dispatcher, startTime: startTime, shutdownCallback: {
-                    guard let serverChannel else { return }
-                    serverChannel.eventLoop.execute {
-                        serverChannel.close(promise: nil)
-                    }
-                })
+                DeferredHTTPHandler(context: serverContext)
             )
         }
     }
@@ -45,23 +53,39 @@ guard let localAddress = channel.localAddress, let actualPort = localAddress.por
     exit(1)
 }
 
+let childPort = actualPort + 1
+let supervisor = LlamaServerSupervisor(childPort: childPort)
+let dispatcher = RPCDispatcher(supervisor: supervisor)
+
+serverContext.dispatcher = dispatcher
+serverContext.shutdownCallback = {
+    guard let serverChannel else { return }
+    serverChannel.eventLoop.execute {
+        serverChannel.close(promise: nil)
+    }
+}
+
 // Signal port to parent process
 print("LISTENING:\(actualPort)")
 fflush(stdout)
 
-fputs("AnkiMateServer running on 127.0.0.1:\(actualPort)\n", stderr)
+fputs("AnkiMateServer running on 127.0.0.1:\(actualPort) (llama-server child port: \(childPort))\n", stderr)
 
 if let expectedParentProcessID = launchConfiguration.expectedParentProcessID {
     parentProcessMonitor = ParentProcessMonitor(expectedParentProcessID: expectedParentProcessID) {
         fputs("Parent process \(expectedParentProcessID) exited; shutting down AnkiMateServer\n", stderr)
         fflush(stderr)
 
-        guard let serverChannel else {
-            exit(EXIT_SUCCESS)
-        }
+        Task {
+            await supervisor.shutdown()
 
-        serverChannel.eventLoop.execute {
-            serverChannel.close(promise: nil)
+            guard let serverChannel else {
+                exit(EXIT_SUCCESS)
+            }
+
+            serverChannel.eventLoop.execute {
+                serverChannel.close(promise: nil)
+            }
         }
     }
     parentProcessMonitor?.start()
@@ -69,4 +93,47 @@ if let expectedParentProcessID = launchConfiguration.expectedParentProcessID {
 
 try channel.closeFuture.wait()
 parentProcessMonitor?.stop()
+
+// Best-effort child cleanup on exit
+let sema = DispatchSemaphore(value: 0)
+Task {
+    await supervisor.shutdown()
+    sema.signal()
+}
+_ = sema.wait(timeout: .now() + 5)
+
 try group.syncShutdownGracefully()
+
+// MARK: - Deferred HTTP Handler
+
+/// Thin NIO handler that delegates to HTTPHandler once the server context is initialized.
+final class DeferredHTTPHandler: ChannelInboundHandler {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+
+    private let serverContext: ServerContext
+    private var inner: HTTPHandler?
+
+    init(context: ServerContext) {
+        self.serverContext = context
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        if inner == nil, let dispatcher = serverContext.dispatcher {
+            inner = HTTPHandler(
+                dispatcher: dispatcher,
+                startTime: serverContext.startTime,
+                shutdownCallback: serverContext.shutdownCallback ?? {}
+            )
+        }
+
+        guard let inner else {
+            let response = HTTPResponseHead(version: .http1_1, status: .serviceUnavailable)
+            context.write(wrapOutboundOut(.head(response)), promise: nil)
+            context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+            return
+        }
+
+        inner.channelRead(context: context, data: data)
+    }
+}
