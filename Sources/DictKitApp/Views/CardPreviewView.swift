@@ -1,4 +1,5 @@
 import AnkiMateLLM
+import AppKit
 import DictKit
 import DictKitAnkiExport
 import SwiftUI
@@ -15,7 +16,6 @@ struct CardPreviewView: View {
     @State private var previewFamily: PreviewFamily = .standard
     @AppStorage("cardPreview.aiPanelRatio") private var aiPanelRatio: Double = 0.38
     @State private var aiPanelHeight: CGFloat = 320
-    @State private var dragStartHeight: CGFloat?
     @State private var isGeneratingRecallPreviewDraft = false
     @State private var recallPreviewFeedback: String?
     @State private var recallPreviewErrorMessage: String?
@@ -27,7 +27,7 @@ struct CardPreviewView: View {
     @State private var agentPreviewOverrideArtifacts: AIArtifacts?
 
     private let minAIPanelHeight: CGFloat = 180
-    private let maxAIPanelHeight: CGFloat = 520
+    private let minPreviewHeight: CGFloat = 96
     private var generationAvailabilityState: LLMGenerationAvailability.State {
         LLMGenerationAvailability.resolvedState(
             hasModel: llmService.hasModel,
@@ -92,37 +92,10 @@ struct CardPreviewView: View {
                 }
 
                 Divider()
-
-                Group {
-                    switch previewFamily {
-                    case .standard:
-                        standardPreview
-                    case .recall:
-                        recallPreview
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if item.isReady {
-                    Divider()
-                    resizeHandle(availableHeight: geometry.size.height)
-                    AIContentView(
-                        item: item,
-                        agentSession: agentSession,
-                        agentPreviewOverrideArtifacts: $agentPreviewOverrideArtifacts
-                    )
-                        .id(item.id)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .frame(height: aiPanelHeight)
-                }
+                contentArea
             }
             .onAppear {
-                aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * geometry.size.height, availableHeight: geometry.size.height)
                 configureAgentSession()
-            }
-            .onChange(of: geometry.size.height) { newHeight in
-                aiPanelHeight = clampHeight(CGFloat(aiPanelRatio) * newHeight, availableHeight: newHeight)
             }
             .onChange(of: item.id) { _ in
                 agentPreviewOverrideArtifacts = nil
@@ -143,6 +116,65 @@ struct CardPreviewView: View {
                 secondaryButton: .cancel(Text("Cancel"))
             )
         }
+    }
+
+    @ViewBuilder
+    private var contentArea: some View {
+        if item.isReady {
+            GeometryReader { geometry in
+                CardPreviewSplitView(
+                    desiredBottomHeight: aiPanelHeight,
+                    availableHeight: geometry.size.height,
+                    minBottomHeight: minAIPanelHeight,
+                    minTopHeight: minPreviewHeight,
+                    persistedRatio: aiPanelRatio,
+                    onBottomHeightCommit: { height in
+                        aiPanelHeight = height
+                        aiPanelRatio = CardPreviewAIPanelLayout.persistedRatio(
+                            forHeight: height,
+                            availableHeight: geometry.size.height
+                        )
+                    },
+                    topContent: previewContent,
+                    bottomContent: AIContentView(
+                        item: item,
+                        agentSession: agentSession,
+                        agentPreviewOverrideArtifacts: $agentPreviewOverrideArtifacts
+                    )
+                    .id(item.id)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                )
+                .onAppear {
+                    syncAIPanelHeight(availableHeight: geometry.size.height)
+                }
+                .onChange(of: geometry.size.height) { newHeight in
+                    syncAIPanelHeight(availableHeight: newHeight)
+                }
+            }
+        } else {
+            previewContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch previewFamily {
+        case .standard:
+            standardPreview
+        case .recall:
+            recallPreview
+        }
+    }
+
+    private func syncAIPanelHeight(availableHeight: CGFloat) {
+        aiPanelHeight = CardPreviewAIPanelLayout.restoredHeight(
+            fromPersistedRatio: aiPanelRatio,
+            availableHeight: availableHeight,
+            minHeight: minAIPanelHeight,
+            minTopHeight: minPreviewHeight
+        )
     }
 
     @ViewBuilder
@@ -912,34 +944,6 @@ struct CardPreviewView: View {
         ) ?? "Generate Draft"
     }
 
-    private func resizeHandle(availableHeight: CGFloat) -> some View {
-        HStack {
-            Spacer()
-            RoundedRectangle(cornerRadius: 3)
-                .fill(.secondary.opacity(0.6))
-                .frame(width: 56, height: 6)
-            Spacer()
-        }
-        .contentShape(Rectangle())
-        .hoverCursor(.resizeUpDown)
-        .padding(.vertical, 6)
-        .background(.background.opacity(0.85))
-        .gesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { value in
-                    let start = dragStartHeight ?? aiPanelHeight
-                    if dragStartHeight == nil { dragStartHeight = aiPanelHeight }
-                    let next = clampHeight(start - value.translation.height, availableHeight: availableHeight)
-                    aiPanelHeight = next
-                    aiPanelRatio = Double((next / max(availableHeight, 1)).clamped(to: 0.2...0.75))
-                }
-                .onEnded { _ in dragStartHeight = nil }
-        )
-    }
-
-    private func clampHeight(_ value: CGFloat, availableHeight: CGFloat) -> CGFloat {
-        min(max(value, minAIPanelHeight), min(maxAIPanelHeight, availableHeight * 0.75))
-    }
 }
 
 private enum PreviewFamily: String, CaseIterable, Hashable {
@@ -953,8 +957,330 @@ private extension CGFloat {
     }
 }
 
+enum CardPreviewAIPanelLayout {
+    static let persistedRatioRange: ClosedRange<CGFloat> = 0.2...0.92
+
+    static func restoredHeight(
+        fromPersistedRatio ratio: Double,
+        availableHeight: CGFloat,
+        minHeight: CGFloat,
+        minTopHeight: CGFloat
+    ) -> CGFloat {
+        clampedHeight(
+            CGFloat(ratio) * availableHeight,
+            availableHeight: availableHeight,
+            minHeight: minHeight,
+            minTopHeight: minTopHeight
+        )
+    }
+
+    static func clampedHeight(
+        _ value: CGFloat,
+        availableHeight: CGFloat,
+        minHeight: CGFloat,
+        minTopHeight: CGFloat
+    ) -> CGFloat {
+        let maxAllowedHeight = max(
+            minHeight,
+            availableHeight - minTopHeight
+        )
+        return min(
+            max(value, minHeight),
+            min(maxAllowedHeight, availableHeight * persistedRatioRange.upperBound)
+        )
+    }
+
+    static func persistedRatio(forHeight height: CGFloat, availableHeight: CGFloat) -> Double {
+        Double((height / max(availableHeight, 1)).clamped(to: persistedRatioRange))
+    }
+}
+
+enum CardPreviewHTMLReloadPolicy {
+    static func shouldReload(previousHTML: String?, nextHTML: String) -> Bool {
+        previousHTML != nextHTML
+    }
+}
+
+struct CardPreviewSplitView<TopContent: View, BottomContent: View>: NSViewControllerRepresentable {
+    let desiredBottomHeight: CGFloat
+    let availableHeight: CGFloat
+    let minBottomHeight: CGFloat
+    let minTopHeight: CGFloat
+    let persistedRatio: Double
+    let onBottomHeightCommit: (CGFloat) -> Void
+    let topContent: TopContent
+    let bottomContent: BottomContent
+
+    func makeNSViewController(context: Context) -> CardPreviewSplitViewController {
+        let controller = CardPreviewSplitViewController()
+        controller.onBottomHeightCommit = onBottomHeightCommit
+        controller.configureLayout(
+            availableHeight: availableHeight,
+            minBottomHeight: minBottomHeight,
+            minTopHeight: minTopHeight
+        )
+        controller.updateTop(rootView: AnyView(topContent))
+        controller.updateBottom(rootView: AnyView(bottomContent))
+        controller.apply(
+            bottomHeight: desiredBottomHeight,
+            persistedRatio: persistedRatio
+        )
+        return controller
+    }
+
+    func updateNSViewController(_ controller: CardPreviewSplitViewController, context: Context) {
+        controller.onBottomHeightCommit = onBottomHeightCommit
+        controller.configureLayout(
+            availableHeight: availableHeight,
+            minBottomHeight: minBottomHeight,
+            minTopHeight: minTopHeight
+        )
+        controller.updateTop(rootView: AnyView(topContent))
+        controller.updateBottom(rootView: AnyView(bottomContent))
+        controller.apply(
+            bottomHeight: desiredBottomHeight,
+            persistedRatio: persistedRatio
+        )
+    }
+}
+
+final class CardPreviewSplitViewController: NSViewController, NSSplitViewDelegate {
+    private let splitView = CardPreviewNativeSplitView()
+    private let topHostingController = NSHostingController(rootView: AnyView(EmptyView()))
+    private let bottomHostingController = NSHostingController(rootView: AnyView(EmptyView()))
+    private let topContainerView = CardPreviewLiveResizeContainerView()
+    private let bottomContainerView = CardPreviewLiveResizeContainerView()
+
+    var onBottomHeightCommit: ((CGFloat) -> Void)?
+
+    private var availableHeight: CGFloat = 0
+    private var minBottomHeight: CGFloat = 180
+    private var minTopHeight: CGFloat = 96
+    private var isApplyingProgrammaticLayout = false
+    private var pendingBottomHeight: CGFloat?
+    private var persistedRatio: Double = 0.38
+
+    override func loadView() {
+        splitView.isVertical = false
+        splitView.delegate = self
+        splitView.dividerStyle = .thin
+        splitView.autosaveName = NSSplitView.AutosaveName("")
+        topContainerView.embed(topHostingController.view)
+        bottomContainerView.embed(bottomHostingController.view)
+        splitView.topView = topContainerView
+        splitView.bottomView = bottomContainerView
+        splitView.onDividerDragEnded = { [weak self] in
+            self?.commitCurrentBottomHeight()
+        }
+        view = splitView
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+
+        if let pendingBottomHeight {
+            applyBottomHeight(pendingBottomHeight)
+            self.pendingBottomHeight = nil
+        }
+    }
+
+    func configureLayout(
+        availableHeight: CGFloat,
+        minBottomHeight: CGFloat,
+        minTopHeight: CGFloat
+    ) {
+        self.availableHeight = availableHeight
+        self.minBottomHeight = minBottomHeight
+        self.minTopHeight = minTopHeight
+    }
+
+    func updateTop(rootView: AnyView) {
+        topHostingController.rootView = rootView
+    }
+
+    func updateBottom(rootView: AnyView) {
+        bottomHostingController.rootView = rootView
+    }
+
+    func apply(bottomHeight: CGFloat, persistedRatio: Double) {
+        self.persistedRatio = persistedRatio
+
+        let resolvedHeight: CGFloat
+        if bottomHeight > 0 {
+            resolvedHeight = bottomHeight
+        } else {
+            resolvedHeight = CardPreviewAIPanelLayout.restoredHeight(
+                fromPersistedRatio: persistedRatio,
+                availableHeight: effectiveAvailableHeight,
+                minHeight: minBottomHeight,
+                minTopHeight: minTopHeight
+            )
+        }
+
+        applyBottomHeight(resolvedHeight)
+    }
+
+    private var effectiveAvailableHeight: CGFloat {
+        max(splitView.bounds.height, availableHeight)
+    }
+
+    private func applyBottomHeight(_ height: CGFloat) {
+        guard splitView.bounds.height > 0 else {
+            pendingBottomHeight = height
+            return
+        }
+
+        let bottomHeight = CardPreviewAIPanelLayout.clampedHeight(
+            height,
+            availableHeight: splitView.bounds.height,
+            minHeight: minBottomHeight,
+            minTopHeight: minTopHeight
+        )
+        let topHeight = splitView.bounds.height - splitView.dividerThickness - bottomHeight
+        isApplyingProgrammaticLayout = true
+        splitView.setPosition(max(0, topHeight), ofDividerAt: 0)
+        splitView.layoutSubtreeIfNeeded()
+        isApplyingProgrammaticLayout = false
+    }
+
+    private func commitCurrentBottomHeight() {
+        let height = CardPreviewAIPanelLayout.clampedHeight(
+            splitView.currentBottomHeight,
+            availableHeight: splitView.bounds.height,
+            minHeight: minBottomHeight,
+            minTopHeight: minTopHeight
+        )
+        onBottomHeightCommit?(height)
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainSplitPosition proposedPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        let totalHeight = splitView.bounds.height
+        let dividerThickness = splitView.dividerThickness
+        let minPosition = minTopHeight
+        let maxPosition = totalHeight - dividerThickness - minBottomHeight
+        return min(max(proposedPosition, minPosition), maxPosition)
+    }
+
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard !isApplyingProgrammaticLayout else { return }
+
+        pendingBottomHeight = nil
+    }
+}
+
+final class CardPreviewNativeSplitView: NSSplitView {
+    var onDividerDragEnded: (() -> Void)?
+
+    var topView: NSView? {
+        didSet {
+            guard let topView else { return }
+            installArrangedSubview(topView, at: 0)
+        }
+    }
+
+    var bottomView: NSView? {
+        didSet {
+            guard let bottomView else { return }
+            installArrangedSubview(bottomView, at: 1)
+        }
+    }
+
+    var currentBottomHeight: CGFloat {
+        arrangedSubviews.count > 1 ? arrangedSubviews[1].frame.height : 0
+    }
+
+    override var dividerThickness: CGFloat {
+        16
+    }
+
+    override func drawDivider(in rect: NSRect) {
+        NSColor.controlBackgroundColor.setFill()
+        rect.fill()
+
+        let handleRect = NSRect(
+            x: rect.midX - 28,
+            y: rect.midY - 3,
+            width: 56,
+            height: 6
+        )
+        let path = NSBezierPath(roundedRect: handleRect, xRadius: 3, yRadius: 3)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.65).setFill()
+        path.fill()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let rect = dividerHitRect
+        guard !rect.isEmpty else { return }
+        addCursorRect(rect, cursor: .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        let didHitDivider = dividerHitRect.contains(location)
+        super.mouseDown(with: event)
+        if didHitDivider {
+            onDividerDragEnded?()
+        }
+    }
+
+    private var dividerHitRect: NSRect {
+        guard arrangedSubviews.count >= 2 else { return .zero }
+        let topFrame = arrangedSubviews[0].frame
+        return NSRect(
+            x: 0,
+            y: topFrame.maxY,
+            width: bounds.width,
+            height: dividerThickness
+        )
+    }
+
+    private func installArrangedSubview(_ view: NSView, at index: Int) {
+        if arrangedSubviews.indices.contains(index), arrangedSubviews[index] === view {
+            return
+        }
+
+        if arrangedSubviews.contains(view) {
+            return
+        }
+
+        if arrangedSubviews.indices.contains(index) {
+            let existing = arrangedSubviews[index]
+            removeArrangedSubview(existing)
+            existing.removeFromSuperview()
+        }
+
+        insertArrangedSubview(view, at: index)
+        view.translatesAutoresizingMaskIntoConstraints = true
+    }
+}
+
+final class CardPreviewLiveResizeContainerView: NSView {
+    override var preservesContentDuringLiveResize: Bool {
+        true
+    }
+
+    func embed(_ contentView: NSView) {
+        guard contentView.superview !== self else { return }
+        subviews.forEach { existing in
+            existing.removeFromSuperview()
+        }
+        addSubview(contentView)
+        contentView.frame = bounds
+        contentView.autoresizingMask = [.width, .height]
+    }
+}
+
 struct AnkiCardWebView: NSViewRepresentable {
     let html: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -964,6 +1290,17 @@ struct AnkiCardWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        guard CardPreviewHTMLReloadPolicy.shouldReload(
+            previousHTML: context.coordinator.lastLoadedHTML,
+            nextHTML: html
+        ) else {
+            return
+        }
+        context.coordinator.lastLoadedHTML = html
         webView.loadHTMLString(html, baseURL: nil)
+    }
+
+    final class Coordinator {
+        var lastLoadedHTML: String?
     }
 }
