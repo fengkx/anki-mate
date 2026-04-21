@@ -143,6 +143,11 @@ final class LLMServiceE2ETests: XCTestCase {
     }
 
     func testBaselineRecallDraftsMeetFixedCorpusContractWhenEnabled() async throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["CI"] != nil,
+            "Recall baseline output is too sensitive to local model drift for CI; run it locally with DICTKIT_RUN_LLM_E2E_BASELINE_TESTS=1."
+        )
+
         let service = try configuredServiceOrSkip(suite: "baseline", requireBaseline: true)
         defer { Task { await service.stopServer() } }
 
