@@ -141,7 +141,7 @@ struct WordListView: View {
             Text("No words yet")
                 .font(.headline)
 
-            Text("Add a word above, or use Batch Add for a list.")
+            Text("Add your first word, or use Batch Add if you already have a list.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -153,7 +153,7 @@ struct WordListView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button("Help") {
+                Button("Open Guide") {
                     openWindow(id: AppWindowIDs.help)
                 }
                 .buttonStyle(.bordered)

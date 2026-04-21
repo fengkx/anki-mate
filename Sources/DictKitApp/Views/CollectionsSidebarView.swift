@@ -24,7 +24,7 @@ struct CollectionsSidebarView: View {
                     Label("New Collection", systemImage: "plus")
                 }
                 .labelStyle(.iconOnly)
-                .help("New collection")
+                .help("Create a new collection")
             }
             .padding()
 
@@ -34,7 +34,7 @@ struct CollectionsSidebarView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(collection.name)
                                 .font(.body.weight(.medium))
-                            Text("\(viewModel.exportableWordCount(for: collection.id)) ready")
+                            Text("\(viewModel.exportableWordCount(for: collection.id)) ready to export")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -50,7 +50,7 @@ struct CollectionsSidebarView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.borderless)
-                            .help("Collection settings")
+                            .help("Open collection settings")
                         }
                     }
                     .tag(collection.id)
@@ -77,7 +77,7 @@ struct CollectionsSidebarView: View {
                     title: syncStatusLabel,
                     systemImage: "arrow.triangle.2.circlepath",
                     tint: syncStatusColor,
-                    helpText: "Sync settings"
+                    helpText: "Open sync settings"
                 ) {
                     openWindow(id: AppWindowIDs.syncSettings)
                 }
@@ -94,7 +94,7 @@ struct CollectionsSidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .hoverCursor()
-                .help("AI settings")
+                .help("Open AI settings")
 
                 Divider()
                     .padding(.leading, 12)
@@ -103,7 +103,7 @@ struct CollectionsSidebarView: View {
                     title: "Help",
                     systemImage: "questionmark.circle",
                     tint: .secondary,
-                    helpText: "Help"
+                    helpText: "Open guide"
                 ) {
                     openWindow(id: AppWindowIDs.help)
                 }
@@ -199,7 +199,7 @@ struct CollectionsSidebarView: View {
         switch syncStatus.state {
         case .idle:
             if syncStatus.hasPendingChanges {
-                return "Sync available"
+                return "Pending Sync"
             }
             return syncStatus.isConfigured ? "Sync is on" : "Set up sync"
         case .syncing:

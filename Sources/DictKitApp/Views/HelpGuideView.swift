@@ -43,7 +43,7 @@ struct HelpGuideView: View {
                 Text("Welcome to AnkiMate")
                     .font(.system(size: 22, weight: .semibold))
 
-                Text("A simple place to get familiar with the app.")
+                Text("Look up words, review dictionary results, and export study cards to Anki.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -115,18 +115,17 @@ struct HelpGuideView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     IntroCard()
                     GuideSection(
-                        title: "1. A collection can be a good place to start",
-                        systemImage: "books.vertical",
+                        title: "1. Add words",
+                        systemImage: "text.badge.plus",
                         items: [
-                            "Collections can help keep different topics or decks separate.",
-                            "One collection is also fine if everything belongs in the same place."
+                            "Type one word at a time, or use Batch Add when you already have a list."
                         ]
                     )
                     GuideSection(
-                        title: "2. Words can be added whenever they come up",
-                        systemImage: "text.badge.plus",
+                        title: "2. Review the result and preview",
+                        systemImage: "rectangle.on.rectangle",
                         items: [
-                            "You can type one word at a time, or paste a list when you already have one."
+                            "Selecting a word shows its dictionary result and card preview, so you can decide what to keep."
                         ]
                     )
                 }
@@ -138,19 +137,19 @@ struct HelpGuideView: View {
                         openSyncSettings: { openWindow(id: AppWindowIDs.syncSettings) }
                     )
                     GuideSection(
-                        title: "3. The preview is there when you want a closer look",
-                        systemImage: "rectangle.on.rectangle",
+                        title: "3. Set up Local AI for generated study content",
+                        systemImage: "sparkles",
                         items: [
-                            "Selecting a word shows its dictionary result and the card preview.",
-                            "You can review the result, generate extra study content when needed, and then add what you want to keep."
+                            "Local AI generates example sentences, recall cards, mnemonics, and more for your words.",
+                            "Model downloads can take some time, so it is worth setting up before you need those features."
                         ]
                     )
                     GuideSection(
-                        title: "4. Export can wait until the list feels ready",
+                        title: "4. Export when ready",
                         systemImage: "square.and.arrow.up",
                         items: [
-                            "Export can wait until a collection feels ready.",
-                            "Many people save words first and export later."
+                            "Export creates an .apkg file you can import into Anki.",
+                            "The collection name becomes the deck name in Anki."
                         ]
                     )
                 }
@@ -164,34 +163,33 @@ struct HelpGuideView: View {
                     openSyncSettings: { openWindow(id: AppWindowIDs.syncSettings) }
                 )
                 GuideSection(
-                    title: "1. A collection can be a good place to start",
-                    systemImage: "books.vertical",
-                    items: [
-                        "Collections can help keep different topics or decks separate.",
-                        "One collection is also fine if everything belongs in the same place."
-                    ]
-                )
-                GuideSection(
-                    title: "2. Words can be added whenever they come up",
+                    title: "1. Add words",
                     systemImage: "text.badge.plus",
                     items: [
-                        "You can type one word at a time, or paste a list when you already have one."
+                        "Type one word at a time, or use Batch Add when you already have a list."
                     ]
                 )
                 GuideSection(
-                    title: "3. The preview is there when you want a closer look",
+                    title: "2. Review the result and preview",
                     systemImage: "rectangle.on.rectangle",
                     items: [
-                        "Selecting a word shows its dictionary result and the card preview.",
-                        "You can review the result, generate extra study content when needed, and then add what you want to keep."
+                        "Selecting a word shows its dictionary result and card preview, so you can decide what to keep."
                     ]
                 )
                 GuideSection(
-                    title: "4. Export can wait until the list feels ready",
+                    title: "3. Set up Local AI for generated study content",
+                    systemImage: "sparkles",
+                    items: [
+                        "Local AI generates example sentences, recall cards, mnemonics, and more for your words.",
+                        "Model downloads can take some time, so it is worth setting up before you need those features."
+                    ]
+                )
+                GuideSection(
+                    title: "4. Export when ready",
                     systemImage: "square.and.arrow.up",
                     items: [
-                        "Export can wait until a collection feels ready.",
-                        "Many people save words first and export later."
+                        "Export creates an .apkg file you can import into Anki.",
+                        "The collection name becomes the deck name in Anki."
                     ]
                 )
             }
@@ -204,44 +202,49 @@ struct HelpGuideView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 16) {
                     GuideSection(
-                        title: "When should I create multiple collections?",
-                        systemImage: "square.stack.3d.up",
+                        title: "Do I need to set up AI before using the app?",
+                        systemImage: "cpu",
                         items: [
-                            "More than one collection can be useful when you want to keep topics or decks separate.",
-                            "If everything belongs in one place, a single collection usually feels simpler."
+                            "No.",
+                            "You can add words, check dictionary results, and preview cards without it.",
+                            "Local AI adds generated content like example sentences, recall cards, and mnemonics.",
+                            "Set it up when you want those features."
                         ]
                     )
                     GuideSection(
                         title: "Why are some words not ready yet?",
                         systemImage: "clock.badge.exclamationmark",
                         items: [
-                            "A word may still be loading, the lookup may not have finished, or it may need a quick check in the preview.",
-                            "If something does not look right, opening the word again and trying the lookup once more can help."
+                            "A word may still be loading, the lookup may need another try, or an AI-generated section may still be unavailable.",
+                            "Open the word again or refresh the lookup if something looks incomplete."
                         ]
                     )
                     GuideSection(
                         title: "When should I use Batch Add?",
                         systemImage: "text.insert",
                         items: [
-                            "Batch Add is useful when you already have a list from notes, copied text, or another app."
+                            "Use Batch Add when you already have a list from notes, copied text, or another app.",
+                            "Use single-word entry when you want to review each word as you add it."
                         ]
                     )
                 }
 
                 VStack(alignment: .leading, spacing: 16) {
                     GuideSection(
-                        title: "Do I need to set up AI before using the app?",
-                        systemImage: "cpu",
+                        title: "What is a collection?",
+                        systemImage: "books.vertical",
                         items: [
-                            "You can start without it.",
-                            "Many people still prefer to set it up early."
+                            "A collection is a group of words.",
+                            "The collection name becomes the deck name when you export to Anki.",
+                            "You can use one collection for everything, or separate collections for different topics."
                         ]
                     )
                     GuideSection(
                         title: "Do I need sync right away?",
                         systemImage: "arrow.triangle.2.circlepath",
                         items: [
-                            "If you may use more than one device, or if you would like a WebDAV-based backup, setting up sync early is often worth it."
+                            "No.",
+                            "Sync is useful for backup and multi-device use, but it isn't required to start adding words."
                         ]
                     )
                 }
@@ -250,41 +253,46 @@ struct HelpGuideView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 GuideSection(
-                    title: "When should I create multiple collections?",
-                    systemImage: "square.stack.3d.up",
-                    items: [
-                        "More than one collection can be useful when you want to keep topics or decks separate.",
-                        "If everything belongs in one place, a single collection usually feels simpler."
-                    ]
-                )
-                GuideSection(
                     title: "Do I need to set up AI before using the app?",
                     systemImage: "cpu",
                     items: [
-                        "You can start without it.",
-                        "Many people still prefer to set it up early."
+                        "No.",
+                        "You can add words, check dictionary results, and preview cards without it.",
+                        "Local AI adds generated content like example sentences, recall cards, and mnemonics.",
+                        "Set it up when you want those features."
                     ]
                 )
                 GuideSection(
                     title: "Why are some words not ready yet?",
                     systemImage: "clock.badge.exclamationmark",
                     items: [
-                        "A word may still be loading, the lookup may not have finished, or it may need a quick check in the preview.",
-                        "If something does not look right, opening the word again and trying the lookup once more can help."
+                        "A word may still be loading, the lookup may need another try, or an AI-generated section may still be unavailable.",
+                        "Open the word again or refresh the lookup if something looks incomplete."
                     ]
                 )
                 GuideSection(
                     title: "When should I use Batch Add?",
                     systemImage: "text.insert",
                     items: [
-                        "Batch Add is useful when you already have a list from notes, copied text, or another app."
+                        "Use Batch Add when you already have a list from notes, copied text, or another app.",
+                        "Use single-word entry when you want to review each word as you add it."
+                    ]
+                )
+                GuideSection(
+                    title: "What is a collection?",
+                    systemImage: "books.vertical",
+                    items: [
+                        "A collection is a group of words.",
+                        "The collection name becomes the deck name when you export to Anki.",
+                        "You can use one collection for everything, or separate collections for different topics."
                     ]
                 )
                 GuideSection(
                     title: "Do I need sync right away?",
                     systemImage: "arrow.triangle.2.circlepath",
                     items: [
-                        "If you may use more than one device, or if you would like a WebDAV-based backup, setting up sync early is often worth it."
+                        "No.",
+                        "Sync is useful for backup and multi-device use, but it isn't required to start adding words."
                     ]
                 )
             }
@@ -316,7 +324,7 @@ private struct IntroCard: View {
                     Label("What AnkiMate helps with", systemImage: "text.book.closed")
                         .font(.headline)
 
-                    Text("AnkiMate can help turn words you come across into study material.")
+                    Text("Add words, review them with dictionary context, and export study cards to Anki.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -325,9 +333,9 @@ private struct IntroCard: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                IntroFact(title: "Save", detail: "Collect words while reading, studying, or working.")
-                IntroFact(title: "Review", detail: "Check the dictionary result and card preview before keeping a word.")
-                IntroFact(title: "Export", detail: "Send the words you want to review into Anki when the list feels ready.")
+                IntroFact(title: "Add", detail: "Add words one at a time or paste a list with Batch Add.")
+                IntroFact(title: "Review", detail: "Check dictionary results and preview cards before keeping what you want.")
+                IntroFact(title: "Export", detail: "Export your collection to Anki as a deck whenever you're ready.")
             }
         }
         .padding(18)
@@ -373,30 +381,34 @@ private struct SetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Settings you may want early on")
+            Text("Helpful setup")
                 .font(.headline)
 
-            Text("Local AI and sync can be useful early on, especially if richer card content or a backup copy would be helpful.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Local AI generates example sentences, recall cards, and other study content.")
+                Text("Sync keeps your data backed up and available across devices.")
+                Text("Neither is required to start adding words.")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 10) {
                 CompactShortcutRow(
                     title: "Local AI settings",
-                    detail: "A local model can be selected here whenever AI features feel useful.",
+                    detail: "Set this up before you want generated study content, since model downloads can take some time.",
                     systemImage: "sparkles",
                     action: openAISettings
                 )
 
                 CompactShortcutRow(
                     title: "Sync settings",
-                    detail: "WebDAV can be set up here if sync or backup would be helpful.",
+                    detail: "Set up WebDAV if you want backup or sync across devices.",
                     systemImage: "arrow.triangle.2.circlepath",
                     action: openSyncSettings
                 )
             }
 
-            Text("This page is always available again from Help.")
+            Text("You can always come back here from Help.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
