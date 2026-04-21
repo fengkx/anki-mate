@@ -55,91 +55,93 @@ final class SyncEngine {
             updatePhase("Connecting...")
             try await client.ensureDirectoryStructure()
 
-            updatePhase("Acquiring lock...")
-            try await acquireLock(client: client)
-            defer { Task { try? await self.releaseLock(client: client) } }
+            try await withManifestLock(client: client) {
+                updatePhase("Downloading manifest...")
+                let remote = try await pullManifest(client: client)
 
-            updatePhase("Downloading manifest...")
-            let remote = try await pullManifest(client: client)
+                if case .legacy(let legacyManifest) = remote {
+                    updatePhase("Upgrading remote state...")
+                    try await backupLegacyManifest(client: client)
+                    let upgradedRemote = SyncManifest(legacyManifest: legacyManifest)
+                    let audioData = try await downloadAudioIfNeeded(for: upgradedRemote.words, client: client)
+                    if bootstrapLocalState {
+                        try store.resetLocalSyncContent()
+                    }
+                    try store.applySyncBatch(
+                        collections: upgradedRemote.collections,
+                        words: upgradedRemote.words,
+                        audioData: audioData
+                    )
+                    try await pushManifest(upgradedRemote, client: client)
+                    try store.setSyncMetadata(String(Date().timeIntervalSince1970), forKey: "last_sync_timestamp")
 
-            if case .legacy(let legacyManifest) = remote {
-                updatePhase("Upgrading remote state...")
-                try await backupLegacyManifest(client: client)
-                let upgradedRemote = SyncManifest(legacyManifest: legacyManifest)
-                let audioData = try await downloadAudioIfNeeded(for: upgradedRemote.words, client: client)
-                if bootstrapLocalState {
-                    try store.resetLocalSyncContent()
+                    status.state = .idle
+                    status.lastSyncDate = Date()
+                    status.lastError = nil
+                    status.hasPendingChanges = false
+                    onStoreChanged()
+                    return
                 }
-                try store.applySyncBatch(
-                    collections: upgradedRemote.collections,
-                    words: upgradedRemote.words,
-                    audioData: audioData
+
+                updatePhase("Building local state...")
+                let localManifest: SyncManifest
+                if bootstrapLocalState {
+                    localManifest = SyncManifest(deviceId: deviceId, collections: [], words: [])
+                } else {
+                    localManifest = try buildLocalManifest()
+                }
+                let remoteManifest: SyncManifest?
+                if case .current(let manifest) = remote {
+                    remoteManifest = manifest
+                } else {
+                    remoteManifest = nil
+                }
+
+                updatePhase("Merging...")
+                let mergeResult = SyncMerger.merge(local: localManifest, remote: remoteManifest)
+
+                if !mergeResult.audioRefsToDownload.isEmpty || !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
+                    let audioData = try await downloadAudioIfNeeded(for: mergeResult.wordsToApplyLocally, refs: mergeResult.audioRefsToDownload, client: client)
+                    updatePhase("Applying changes...")
+                    if bootstrapLocalState, remoteManifest != nil {
+                        try store.resetLocalSyncContent()
+                    }
+                    try store.applySyncBatch(
+                        collections: mergeResult.collectionsToApplyLocally,
+                        words: mergeResult.wordsToApplyLocally,
+                        audioData: audioData
+                    )
+                }
+
+                if !mergeResult.audioRefsToUpload.isEmpty {
+                    updatePhase("Uploading audio (\(mergeResult.audioRefsToUpload.count))...")
+                    for (wordId, ref) in mergeResult.audioRefsToUpload {
+                        guard let uuid = UUID(uuidString: wordId),
+                              let audioData = try store.audioData(forWordId: uuid) else { continue }
+                        try await SyncAudioStore.upload(hash: ref, data: audioData, client: client)
+                    }
+                }
+
+                updatePhase("Uploading manifest...")
+                try await pushManifest(mergeResult.mergedManifest, client: client)
+                try? await backupManifest(client: client)
+                try? await cleanOrphanAudioIfNeeded(manifest: mergeResult.mergedManifest, client: client)
+                try store.purgeLocalTombstones(
+                    collectionIDs: mergeResult.localCollectionTombstonesToPurge,
+                    wordIDs: mergeResult.localWordTombstonesToPurge
                 )
-                try await pushManifest(upgradedRemote, client: client)
-                try store.setSyncMetadata(String(Date().timeIntervalSince1970), forKey: "last_sync_timestamp")
+
+                let ts = String(Date().timeIntervalSince1970)
+                try store.setSyncMetadata(ts, forKey: "last_sync_timestamp")
 
                 status.state = .idle
                 status.lastSyncDate = Date()
                 status.lastError = nil
                 status.hasPendingChanges = false
-                onStoreChanged()
-                return
-            }
 
-            updatePhase("Building local state...")
-            let localManifest: SyncManifest
-            if bootstrapLocalState {
-                localManifest = SyncManifest(deviceId: deviceId, collections: [], words: [])
-            } else {
-                localManifest = try buildLocalManifest()
-            }
-            let remoteManifest: SyncManifest?
-            if case .current(let manifest) = remote {
-                remoteManifest = manifest
-            } else {
-                remoteManifest = nil
-            }
-
-            updatePhase("Merging...")
-            let mergeResult = SyncMerger.merge(local: localManifest, remote: remoteManifest)
-
-            if !mergeResult.audioRefsToDownload.isEmpty || !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
-                let audioData = try await downloadAudioIfNeeded(for: mergeResult.wordsToApplyLocally, refs: mergeResult.audioRefsToDownload, client: client)
-                updatePhase("Applying changes...")
-                if bootstrapLocalState, remoteManifest != nil {
-                    try store.resetLocalSyncContent()
+                if !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
+                    onStoreChanged()
                 }
-                try store.applySyncBatch(
-                    collections: mergeResult.collectionsToApplyLocally,
-                    words: mergeResult.wordsToApplyLocally,
-                    audioData: audioData
-                )
-            }
-
-            if !mergeResult.audioRefsToUpload.isEmpty {
-                updatePhase("Uploading audio (\(mergeResult.audioRefsToUpload.count))...")
-                for (wordId, ref) in mergeResult.audioRefsToUpload {
-                    guard let uuid = UUID(uuidString: wordId),
-                          let audioData = try store.audioData(forWordId: uuid) else { continue }
-                    try await SyncAudioStore.upload(hash: ref, data: audioData, client: client)
-                }
-            }
-
-            updatePhase("Uploading manifest...")
-            try await pushManifest(mergeResult.mergedManifest, client: client)
-            try? await backupManifest(client: client)
-            try? await cleanOrphanAudioIfNeeded(manifest: mergeResult.mergedManifest, client: client)
-
-            let ts = String(Date().timeIntervalSince1970)
-            try store.setSyncMetadata(ts, forKey: "last_sync_timestamp")
-
-            status.state = .idle
-            status.lastSyncDate = Date()
-            status.lastError = nil
-            status.hasPendingChanges = false
-
-            if !mergeResult.collectionsToApplyLocally.isEmpty || !mergeResult.wordsToApplyLocally.isEmpty {
-                onStoreChanged()
             }
         } catch {
             status.state = .error
@@ -153,7 +155,6 @@ final class SyncEngine {
                 id: snapshot.record.id.uuidString,
                 name: snapshot.record.name,
                 dictionaryName: snapshot.record.dictionaryName,
-                ankiDeckName: snapshot.record.ankiDeckName,
                 deckDescription: snapshot.record.ankiDeckDescription,
                 createdAt: snapshot.record.createdAt.timeIntervalSince1970,
                 updatedAt: snapshot.record.updatedAt.timeIntervalSince1970,
@@ -275,6 +276,22 @@ final class SyncEngine {
         try await client.delete("anki-mate/manifest.lock")
     }
 
+    @MainActor
+    private func withManifestLock(
+        client: any WebDAVClientProtocol,
+        operation: () async throws -> Void
+    ) async throws {
+        updatePhase("Acquiring lock...")
+        try await acquireLock(client: client)
+        do {
+            try await operation()
+            try await releaseLock(client: client)
+        } catch {
+            try? await releaseLock(client: client)
+            throw error
+        }
+    }
+
     private func loadOrCreateDeviceId() throws -> String {
         if let existing = try store.syncMetadata(forKey: "device_id") {
             return existing
@@ -315,7 +332,6 @@ extension SyncManifest {
                     id: record.id,
                     name: record.name,
                     dictionaryName: record.dictionaryName,
-                    ankiDeckName: record.ankiDeckName,
                     deckDescription: record.deckDescription,
                     createdAt: record.createdAt,
                     updatedAt: record.updatedAt,

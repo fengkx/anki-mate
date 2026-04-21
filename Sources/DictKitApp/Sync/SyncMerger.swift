@@ -2,6 +2,7 @@ import Foundation
 
 /// Pure-function merge logic for sync manifests.
 enum SyncMerger {
+    private static let tombstoneRetentionInterval: TimeInterval = 90 * 24 * 60 * 60
 
     struct MergeResult {
         var mergedManifest: SyncManifest
@@ -9,22 +10,31 @@ enum SyncMerger {
         var wordsToApplyLocally: [SyncWordRecord]
         var audioRefsToDownload: Set<String>
         var audioRefsToUpload: [String: String]
+        var localCollectionTombstonesToPurge: Set<String>
+        var localWordTombstonesToPurge: Set<String>
     }
 
-    static func merge(local: SyncManifest, remote: SyncManifest?) -> MergeResult {
+    static func merge(local: SyncManifest, remote: SyncManifest?, now: TimeInterval = Date().timeIntervalSince1970) -> MergeResult {
         guard let remote else {
             let audioToUpload = Dictionary(
                 uniqueKeysWithValues: local.words.compactMap { word -> (String, String)? in
+                    guard !shouldPruneTombstone(local: word, remote: nil, now: now) else { return nil }
                     guard let ref = word.payload.audioRef, !word.isDeleted else { return nil }
                     return (word.id, ref)
                 }
             )
+            let mergedCollections = local.collections.filter { !shouldPruneTombstone(local: $0, remote: nil, now: now) }
+            let mergedWords = local.words.filter { !shouldPruneTombstone(local: $0, remote: nil, now: now) }
+            let localCollectionsToPurge = Set(local.collections.filter { shouldPruneTombstone(local: $0, remote: nil, now: now) }.map(\.id))
+            let localWordsToPurge = Set(local.words.filter { shouldPruneTombstone(local: $0, remote: nil, now: now) }.map(\.id))
             return MergeResult(
-                mergedManifest: local,
+                mergedManifest: SyncManifest(deviceId: local.deviceId, collections: mergedCollections, words: mergedWords),
                 collectionsToApplyLocally: [],
                 wordsToApplyLocally: [],
                 audioRefsToDownload: [],
-                audioRefsToUpload: audioToUpload
+                audioRefsToUpload: audioToUpload,
+                localCollectionTombstonesToPurge: localCollectionsToPurge,
+                localWordTombstonesToPurge: localWordsToPurge
             )
         }
 
@@ -41,6 +51,8 @@ enum SyncMerger {
         var wordsToApply: [SyncWordRecord] = []
         var audioToDownload = Set<String>()
         var audioToUpload: [String: String] = [:]
+        var localCollectionsToPurge = Set<String>()
+        var localWordsToPurge = Set<String>()
 
         for id in Set(localCollections.keys).union(remoteCollections.keys) {
             let localCollection = localCollections[id]
@@ -59,6 +71,12 @@ enum SyncMerger {
             }
 
             guard let merged else { continue }
+            if shouldPruneTombstone(local: localCollection, remote: remoteCollection, now: now, merged: merged) {
+                if localCollection?.isDeleted == true {
+                    localCollectionsToPurge.insert(id)
+                }
+                continue
+            }
             mergedCollections.append(merged)
             if localCollection != merged {
                 collectionsToApply.append(merged)
@@ -71,6 +89,12 @@ enum SyncMerger {
 
             let merged = mergeWord(local: localWord, remote: remoteWord)
             guard let merged else { continue }
+            if shouldPruneTombstone(local: localWord, remote: remoteWord, now: now, merged: merged.word) {
+                if localWord?.isDeleted == true {
+                    localWordsToPurge.insert(id)
+                }
+                continue
+            }
             mergedWords.append(merged.word)
 
             if localWord != merged.word {
@@ -97,8 +121,32 @@ enum SyncMerger {
             collectionsToApplyLocally: collectionsToApply.sorted { $0.createdAt < $1.createdAt },
             wordsToApplyLocally: wordsToApply.sorted { $0.createdAt < $1.createdAt },
             audioRefsToDownload: audioToDownload,
-            audioRefsToUpload: audioToUpload
+            audioRefsToUpload: audioToUpload,
+            localCollectionTombstonesToPurge: localCollectionsToPurge,
+            localWordTombstonesToPurge: localWordsToPurge
         )
+    }
+
+    private static func shouldPruneTombstone(local: SyncCollectionRecord?, remote: SyncCollectionRecord?, now: TimeInterval, merged: SyncCollectionRecord? = nil) -> Bool {
+        let candidate = merged ?? local ?? remote
+        guard let candidate,
+              candidate.isDeleted,
+              let deletedAt = candidate.deletedAt,
+              now - deletedAt >= tombstoneRetentionInterval else {
+            return false
+        }
+        return !(local?.isDeleted == false || remote?.isDeleted == false)
+    }
+
+    private static func shouldPruneTombstone(local: SyncWordRecord?, remote: SyncWordRecord?, now: TimeInterval, merged: SyncWordRecord? = nil) -> Bool {
+        let candidate = merged ?? local ?? remote
+        guard let candidate,
+              candidate.isDeleted,
+              let deletedAt = candidate.deletedAt,
+              now - deletedAt >= tombstoneRetentionInterval else {
+            return false
+        }
+        return !(local?.isDeleted == false || remote?.isDeleted == false)
     }
 
     private static func mergeWord(local: SyncWordRecord?, remote: SyncWordRecord?) -> (word: SyncWordRecord, audioRefToDownload: String?, audioRefToUpload: (wordId: String, audioRef: String)?)? {

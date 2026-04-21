@@ -19,7 +19,6 @@ final class SyncEngineTests: XCTestCase {
                     id: UUID().uuidString,
                     name: "Reading",
                     dictionaryName: "ODE",
-                    ankiDeckName: "Reading",
                     deckDescription: "Remote deck",
                     createdAt: 10,
                     updatedAt: 20,
@@ -109,7 +108,6 @@ final class SyncEngineTests: XCTestCase {
                     id: collectionID,
                     name: "Remote Set",
                     dictionaryName: "ODE",
-                    ankiDeckName: "Remote Deck",
                     deckDescription: "desc",
                     createdAt: 10,
                     updatedAt: 20,
@@ -174,6 +172,121 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertNotNil(try store.syncMetadata(forKey: "last_sync_timestamp"))
         let lockFile = await client.file(at: "anki-mate/manifest.lock")
         XCTAssertNil(lockFile)
+    }
+
+    func testSyncDoesNotFinishUntilRemoteLockIsReleased() async throws {
+        let store = try makeStore()
+        let status = SyncStatus()
+        let client = DelayedDeleteWebDAVClient(
+            files: [
+                "anki-mate/manifest.json": try JSONEncoder().encode(
+                    SyncManifest(deviceId: "remote-device", collections: [], words: [])
+                )
+            ]
+        )
+        let engine = SyncEngine(
+            store: store,
+            status: status,
+            environment: .init(
+                loadCredentials: { testWebDAVCredentials },
+                makeClient: { _ in client }
+            )
+        )
+        let completion = AsyncCompletionFlag()
+
+        let syncTask = Task {
+            await engine.sync()
+            await completion.markCompleted()
+        }
+        await client.waitUntilDeleteStarts()
+
+        try? await Task<Never, Never>.sleep(nanoseconds: 50_000_000)
+        let deletePending = await client.isDeletePending()
+        let syncCompleted = await completion.isCompleted()
+        XCTAssertTrue(deletePending)
+        XCTAssertFalse(syncCompleted)
+
+        await client.finishDelete()
+        await syncTask.value
+        XCTAssertEqual(status.state, .idle)
+    }
+
+    func testSyncPrunesExpiredTombstonesFromUploadedManifest() async throws {
+        let store = try makeStore()
+        let status = SyncStatus()
+        let collection = try XCTUnwrap(try store.loadCollections().only)
+        let deletedCollection = try store.createCollection(
+            name: "Reading",
+            exportSettings: CollectionExportSettings(deckDescription: ""),
+            dictionaryName: ""
+        )
+        let deletedWord = PersistedWordRecord(
+            id: UUID(),
+            displayWord: "Apple",
+            normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+            lookupState: .pending,
+            audioData: nil,
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 20),
+            lastRefreshedAt: nil
+        )
+
+        _ = try store.upsertWord(deletedWord, into: deletedCollection.id)
+        try store.deleteCollection(id: deletedCollection.id)
+        let tombstoneAt = Date().timeIntervalSince1970 - (90 * 24 * 60 * 60) - 1
+        try store.withDatabase { db in
+            try WordListStore.exec(
+                db: db,
+                sql: """
+                UPDATE collections
+                SET updated_at = \(tombstoneAt), deleted_at = \(tombstoneAt)
+                WHERE id = '\(deletedCollection.id.uuidString)'
+                """
+            )
+            try WordListStore.exec(
+                db: db,
+                sql: """
+                UPDATE words
+                SET updated_at = \(tombstoneAt), deleted_at = \(tombstoneAt)
+                WHERE id = '\(deletedWord.id.uuidString)'
+                """
+            )
+        }
+        try store.setSyncMetadata("1", forKey: "last_sync_timestamp")
+
+        let client = FakeWebDAVClient(
+            files: [
+                "anki-mate/manifest.json": try JSONEncoder().encode(
+                    SyncManifest(deviceId: "remote-device", collections: [], words: [])
+                )
+            ]
+        )
+        let engine = SyncEngine(
+            store: store,
+            status: status,
+            environment: .init(
+                loadCredentials: { testWebDAVCredentials },
+                makeClient: { _ in client }
+            )
+        )
+
+        await engine.sync()
+
+        let uploadedData = await client.file(at: "anki-mate/manifest.json")
+        let unwrappedUploadedData = try XCTUnwrap(uploadedData)
+        let uploadedManifest = try JSONDecoder().decode(SyncManifest.self, from: unwrappedUploadedData)
+
+        XCTAssertFalse(uploadedManifest.collections.contains { $0.id == deletedCollection.id.uuidString })
+        XCTAssertFalse(uploadedManifest.words.contains { $0.id == deletedWord.id.uuidString })
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertNil(status.lastError)
+
+        let syncCollectionSnapshots = try store.loadAllCollectionsForSync()
+        let syncWordSnapshots = try store.loadAllWordsForSync()
+        XCTAssertEqual(syncCollectionSnapshots.count, 1)
+        XCTAssertEqual(syncCollectionSnapshots.only?.record.id, collection.id)
+        XCTAssertEqual(syncCollectionSnapshots.only?.deletedAt, nil)
+        XCTAssertFalse(syncWordSnapshots.contains { $0.record.id == deletedWord.id })
     }
 
     private func makeStore() throws -> WordListStore {
@@ -270,6 +383,79 @@ private actor FakeWebDAVClient: WebDAVClientProtocol {
             current += component + "/"
             directories.insert(current)
         }
+    }
+}
+
+private actor DelayedDeleteWebDAVClient: WebDAVClientProtocol {
+    private let base: FakeWebDAVClient
+    private var deleteStartedContinuation: CheckedContinuation<Void, Never>?
+    private var finishDeleteContinuation: CheckedContinuation<Void, Never>?
+    private var deleteStarted = false
+
+    init(files: [String: Data] = [:], directories: Set<String> = []) {
+        self.base = FakeWebDAVClient(files: files, directories: directories)
+    }
+
+    func get(_ path: String) async throws -> Data? {
+        try await base.get(path)
+    }
+
+    func put(_ path: String, data: Data, contentType: String) async throws {
+        try await base.put(path, data: data, contentType: contentType)
+    }
+
+    func delete(_ path: String) async throws {
+        deleteStarted = true
+        deleteStartedContinuation?.resume()
+        deleteStartedContinuation = nil
+        await withCheckedContinuation { continuation in
+            finishDeleteContinuation = continuation
+        }
+        try await base.delete(path)
+    }
+
+    func mkcol(_ path: String) async throws {
+        try await base.mkcol(path)
+    }
+
+    func exists(_ path: String) async throws -> Bool {
+        try await base.exists(path)
+    }
+
+    func ensureDirectoryStructure() async throws {
+        try await base.ensureDirectoryStructure()
+    }
+
+    func listFiles(in path: String) async throws -> [String] {
+        try await base.listFiles(in: path)
+    }
+
+    func waitUntilDeleteStarts() async {
+        guard !deleteStarted else { return }
+        await withCheckedContinuation { continuation in
+            deleteStartedContinuation = continuation
+        }
+    }
+
+    func isDeletePending() -> Bool {
+        finishDeleteContinuation != nil
+    }
+
+    func finishDelete() {
+        finishDeleteContinuation?.resume()
+        finishDeleteContinuation = nil
+    }
+}
+
+private actor AsyncCompletionFlag {
+    private var completed = false
+
+    func markCompleted() {
+        completed = true
+    }
+
+    func isCompleted() -> Bool {
+        completed
     }
 }
 

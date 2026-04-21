@@ -18,7 +18,6 @@ final class SyncManifestTests: XCTestCase {
                     id: "col-1",
                     name: "Reading",
                     dictionaryName: "ODE",
-                    ankiDeckName: "Reading",
                     deckDescription: "desc",
                     createdAt: 10,
                     updatedAt: 20,
@@ -47,7 +46,7 @@ final class SyncManifestTests: XCTestCase {
         let upgraded = SyncManifest(legacyManifest: legacy)
 
         XCTAssertEqual(upgraded.format, SyncManifest.currentFormat)
-        XCTAssertEqual(upgraded.version, 1)
+        XCTAssertEqual(upgraded.version, SyncManifest.currentVersion)
         XCTAssertEqual(upgraded.collections.first?.deletedAt, 20)
         XCTAssertEqual(upgraded.words.first?.deletedAt, 30)
         XCTAssertEqual(upgraded.words.first?.payload.payloadUpdatedAt, 30)
@@ -116,5 +115,188 @@ final class SyncManifestTests: XCTestCase {
         XCTAssertEqual(word.payload.payloadUpdatedAt, 50)
         XCTAssertTrue(merge.audioRefsToUpload.values.contains("local-audio"))
         XCTAssertTrue(merge.wordsToApplyLocally.contains(word))
+    }
+
+    func testMergePrunesExpiredTombstonesWithoutActiveCounterpart() {
+        let now: TimeInterval = 200 * 24 * 60 * 60
+        let deletedAt = now - (90 * 24 * 60 * 60) - 1
+        let collectionID = "col-1"
+        let wordID = "word-1"
+        let local = SyncManifest(
+            deviceId: "local",
+            collections: [
+                SyncCollectionRecord(
+                    id: collectionID,
+                    name: "Reading",
+                    dictionaryName: "ODE",
+                    deckDescription: "desc",
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt
+                )
+            ],
+            words: [
+                SyncWordRecord(
+                    id: wordID,
+                    collectionId: collectionID,
+                    normalizedWord: "apple",
+                    displayWord: "Apple",
+                    sourceForm: nil,
+                    inflectionKind: nil,
+                    expectedPartOfSpeech: nil,
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt,
+                    payload: SyncWordPayloadRecord(
+                        lookupStateBase64: nil,
+                        lookupRefreshedAt: nil,
+                        payloadUpdatedAt: deletedAt,
+                        audioRef: nil,
+                        aiArtifactsJSON: nil
+                    )
+                )
+            ]
+        )
+
+        let merge = SyncMerger.merge(local: local, remote: nil, now: now)
+
+        XCTAssertTrue(merge.mergedManifest.collections.isEmpty)
+        XCTAssertTrue(merge.mergedManifest.words.isEmpty)
+        XCTAssertEqual(merge.localCollectionTombstonesToPurge, Set([collectionID]))
+        XCTAssertEqual(merge.localWordTombstonesToPurge, Set([wordID]))
+    }
+
+    func testMergePrunesExpiredTombstonesAgainstEmptyRemoteManifest() {
+        let now: TimeInterval = 200 * 24 * 60 * 60
+        let deletedAt = now - (90 * 24 * 60 * 60) - 1
+        let collectionID = "col-1"
+        let wordID = "word-1"
+        let local = SyncManifest(
+            deviceId: "local",
+            collections: [
+                SyncCollectionRecord(
+                    id: collectionID,
+                    name: "Reading",
+                    dictionaryName: "ODE",
+                    deckDescription: "desc",
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt
+                )
+            ],
+            words: [
+                SyncWordRecord(
+                    id: wordID,
+                    collectionId: collectionID,
+                    normalizedWord: "apple",
+                    displayWord: "Apple",
+                    sourceForm: nil,
+                    inflectionKind: nil,
+                    expectedPartOfSpeech: nil,
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt,
+                    payload: SyncWordPayloadRecord(
+                        lookupStateBase64: nil,
+                        lookupRefreshedAt: nil,
+                        payloadUpdatedAt: deletedAt,
+                        audioRef: nil,
+                        aiArtifactsJSON: nil
+                    )
+                )
+            ]
+        )
+        let remote = SyncManifest(deviceId: "remote", collections: [], words: [])
+
+        let merge = SyncMerger.merge(local: local, remote: remote, now: now)
+
+        XCTAssertTrue(merge.mergedManifest.collections.isEmpty)
+        XCTAssertTrue(merge.mergedManifest.words.isEmpty)
+        XCTAssertEqual(merge.localCollectionTombstonesToPurge, Set([collectionID]))
+        XCTAssertEqual(merge.localWordTombstonesToPurge, Set([wordID]))
+    }
+
+    func testMergeKeepsExpiredTombstonesWhenActiveCounterpartStillExists() {
+        let now: TimeInterval = 200 * 24 * 60 * 60
+        let deletedAt = now - (90 * 24 * 60 * 60) - 1
+        let collectionID = "col-1"
+        let wordID = "word-1"
+        let local = SyncManifest(
+            deviceId: "local",
+            collections: [
+                SyncCollectionRecord(
+                    id: collectionID,
+                    name: "Reading",
+                    dictionaryName: "ODE",
+                    deckDescription: "desc",
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt
+                )
+            ],
+            words: [
+                SyncWordRecord(
+                    id: wordID,
+                    collectionId: collectionID,
+                    normalizedWord: "apple",
+                    displayWord: "Apple",
+                    sourceForm: nil,
+                    inflectionKind: nil,
+                    expectedPartOfSpeech: nil,
+                    createdAt: 10,
+                    updatedAt: deletedAt,
+                    deletedAt: deletedAt,
+                    payload: SyncWordPayloadRecord(
+                        lookupStateBase64: nil,
+                        lookupRefreshedAt: nil,
+                        payloadUpdatedAt: deletedAt,
+                        audioRef: nil,
+                        aiArtifactsJSON: nil
+                    )
+                )
+            ]
+        )
+        let remote = SyncManifest(
+            deviceId: "remote",
+            collections: [
+                SyncCollectionRecord(
+                    id: collectionID,
+                    name: "Reading Remote",
+                    dictionaryName: "ODE",
+                    deckDescription: "desc",
+                    createdAt: 10,
+                    updatedAt: deletedAt - 10,
+                    deletedAt: nil
+                )
+            ],
+            words: [
+                SyncWordRecord(
+                    id: wordID,
+                    collectionId: collectionID,
+                    normalizedWord: "apple",
+                    displayWord: "Apple Remote",
+                    sourceForm: nil,
+                    inflectionKind: nil,
+                    expectedPartOfSpeech: nil,
+                    createdAt: 10,
+                    updatedAt: deletedAt - 10,
+                    deletedAt: nil,
+                    payload: SyncWordPayloadRecord(
+                        lookupStateBase64: nil,
+                        lookupRefreshedAt: nil,
+                        payloadUpdatedAt: deletedAt - 10,
+                        audioRef: nil,
+                        aiArtifactsJSON: nil
+                    )
+                )
+            ]
+        )
+
+        let merge = SyncMerger.merge(local: local, remote: remote, now: now)
+
+        XCTAssertEqual(merge.mergedManifest.collections.first?.deletedAt, deletedAt)
+        XCTAssertEqual(merge.mergedManifest.words.first?.deletedAt, deletedAt)
+        XCTAssertTrue(merge.localCollectionTombstonesToPurge.isEmpty)
+        XCTAssertTrue(merge.localWordTombstonesToPurge.isEmpty)
     }
 }

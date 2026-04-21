@@ -169,6 +169,8 @@ SQLite ──export──→  manifest.json + /audio/   ──import──→ SQ
 - 如果直接删除，远程 manifest 里还有这条记录，下次同步会把它重新拉回来
 - 软删除产生一个 tombstone，让合并逻辑知道"这条记录在某台设备上被删了"
 - 合并时：如果 tombstone 的 `updatedAt` 比对方的活跃记录新 → 删除传播
+- tombstone 在同步 manifest 与本地 SQLite store 中保留，保证删除状态可以继续参与后续同步
+- tombstone 超过 90 天后可以清理，但只有在这次合并里没有活跃副本需要它来压制回弹时才会裁剪 manifest，并在上传成功后 hard delete 对应本地 soft delete 行
 
 **Schema 变更（v6 → v7）：**
 
@@ -181,7 +183,12 @@ CREATE TABLE sync_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 所有现有查询加上 `WHERE is_deleted = 0`，对上层代码透明。
 
-未来考虑：tombstone 超过 90 天后可清理，但目前未实现。
+**实现细节：**
+
+- 清理先发生在 manifest 合并阶段，并记录可安全清理的本地 tombstone ID
+- 只有 `deletedAt` 距离当前时间超过 90 天，且合并输入里没有对应的活跃 collection/word 副本时，才会从导出的 manifest 中裁剪该 tombstone
+- manifest 上传成功后，才会 hard delete 对应的本地 soft delete 行及其 payload，避免上传失败时丢失删除传播状态
+- 这样既能避免 manifest 永久保留历史删除记录，也不会把仍在传播中的删除状态提前抹掉
 
 ### 3.7 锁机制
 
@@ -357,12 +364,12 @@ SyncSettingsView sheet 包含：
 
 | 项目 | 现状 | 未来改进 |
 |------|------|---------|
-| Tombstone 清理 | 软删除记录永久保留 | 实现 90 天自动清理 |
+| Tombstone 清理 | 已实现；超过 90 天且无活跃副本冲突时裁剪 manifest，并在上传成功后清理本地 tombstone | 若需要更强保证，可在未来引入逻辑时钟或同步确认水位 |
 | 首次同步大量数据 | 一次性上传所有音频 | 分批上传 + 进度展示 |
 | 网络重试 | 失败后等下一个 10 分钟周期 | 指数退避重试 |
 | 带宽优化 | manifest 每次全量传输 | 考虑 ETag / If-Modified-Since |
 | 坚果云限速 | 未处理 | 尊重 Retry-After header，串行上传加延迟 |
 | 多设备时钟偏差 | 依赖本地时钟 | 考虑用 manifest 中的逻辑时钟辅助 |
-| 孤儿音频清理 | 未实现 | 对比 manifest 中的 audioRef，清理 /audio/ 中无引用的文件 |
+| 孤儿音频清理 | 已实现；同步后按 7 天节流对比 manifest 中的 audioRef，删除 /audio/ 中无引用文件 | 如需更激进回收，可调整清理间隔或增加手动清理入口 |
 | auto-sync 开关 | UI 上没有 | 在 SyncSettingsView 中加 Toggle |
 | iOS 支持 | 仅 macOS | WebDAV 方案天然跨平台，需处理 Keychain 差异 |

@@ -28,7 +28,7 @@ extension WordListStore {
     func loadAllCollectionsForSync() throws -> [SyncCollectionSnapshot] {
         try withDatabase { db in
             let sql = """
-            SELECT id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, deleted_at
+            SELECT id, name, dictionary_name, deck_description, created_at, updated_at, deleted_at
             FROM collections
             ORDER BY created_at ASC
             """
@@ -44,14 +44,11 @@ extension WordListStore {
                     id: try uuidColumn(stmt, index: 0),
                     name: try textColumn(stmt, index: 1),
                     dictionaryName: try textColumn(stmt, index: 2),
-                    exportSettings: CollectionExportSettings(
-                        deckName: try textColumn(stmt, index: 3),
-                        deckDescription: try textColumn(stmt, index: 4)
-                    ),
-                    createdAt: dateColumn(stmt, index: 5),
-                    updatedAt: dateColumn(stmt, index: 6)
+                    exportSettings: CollectionExportSettings(deckDescription: try textColumn(stmt, index: 3)),
+                    createdAt: dateColumn(stmt, index: 4),
+                    updatedAt: dateColumn(stmt, index: 5)
                 )
-                let deletedAt = nullableDateColumn(stmt, index: 7)
+                let deletedAt = nullableDateColumn(stmt, index: 6)
                 results.append(SyncCollectionSnapshot(record: record, deletedAt: deletedAt))
             }
             return results
@@ -161,6 +158,22 @@ extension WordListStore {
         }
     }
 
+    func purgeLocalTombstones(collectionIDs: Set<String>, wordIDs: Set<String>) throws {
+        guard !collectionIDs.isEmpty || !wordIDs.isEmpty else { return }
+
+        try withDatabase { db in
+            try Self.exec(db: db, sql: "BEGIN TRANSACTION;")
+            do {
+                try purgeSyncWords(Array(wordIDs), db: db)
+                try purgeSyncCollections(Array(collectionIDs), db: db)
+                try Self.exec(db: db, sql: "COMMIT;")
+            } catch {
+                try? Self.exec(db: db, sql: "ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
     func syncMetadata(forKey key: String) throws -> String? {
         try withDatabase { db in
             let sql = "SELECT value FROM sync_state WHERE key = ?"
@@ -172,6 +185,55 @@ extension WordListStore {
             sqlite3_bind_text(stmt, 1, key, -1, syncTransientDestructor)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return nullableTextColumn(stmt, index: 0)
+        }
+    }
+
+    private func purgeSyncWords(_ ids: [String], db: OpaquePointer?) throws {
+        guard !ids.isEmpty else { return }
+        try executeInChunks(ids, db: db) { placeholders in
+            """
+            DELETE FROM word_payloads
+            WHERE word_id IN (\(placeholders))
+              AND EXISTS (
+                SELECT 1 FROM words
+                WHERE words.id = word_payloads.word_id
+                  AND words.deleted_at IS NOT NULL
+              )
+            """
+        }
+        try executeInChunks(ids, db: db) { placeholders in
+            "DELETE FROM words WHERE deleted_at IS NOT NULL AND id IN (\(placeholders))"
+        }
+    }
+
+    private func purgeSyncCollections(_ ids: [String], db: OpaquePointer?) throws {
+        guard !ids.isEmpty else { return }
+        try executeInChunks(ids, db: db) { placeholders in
+            "DELETE FROM collections WHERE deleted_at IS NOT NULL AND id IN (\(placeholders))"
+        }
+    }
+
+    private func executeInChunks(
+        _ ids: [String],
+        db: OpaquePointer?,
+        makeSQL: (String) -> String
+    ) throws {
+        for startIndex in stride(from: 0, to: ids.count, by: 900) {
+            let chunk = Array(ids[startIndex..<Swift.min(startIndex + 900, ids.count)])
+            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, makeSQL(placeholders), -1, &stmt, nil) == SQLITE_OK else {
+                throw sqliteError(db: db)
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            for (index, id) in chunk.enumerated() {
+                sqlite3_bind_text(stmt, Int32(index + 1), id, -1, syncTransientDestructor)
+            }
+
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw sqliteError(db: db)
+            }
         }
     }
 
@@ -242,7 +304,6 @@ extension WordListStore {
         let collection = collections[0]
         return collection.name == "Default" &&
             collection.dictionaryName.isEmpty &&
-            collection.ankiDeckName == "Default" &&
             collection.ankiDeckDescription.isEmpty
     }
 
@@ -283,13 +344,13 @@ extension WordListStore {
         if exists {
             sql = """
             UPDATE collections
-            SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, created_at = ?, updated_at = ?, deleted_at = ?
+            SET name = ?, dictionary_name = ?, deck_description = ?, created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ?
             """
         } else {
             sql = """
-            INSERT INTO collections (name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at, deleted_at, id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collections (name, dictionary_name, deck_description, created_at, updated_at, deleted_at, id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """
         }
 
@@ -301,16 +362,15 @@ extension WordListStore {
 
         sqlite3_bind_text(stmt, 1, collection.name, -1, syncTransientDestructor)
         sqlite3_bind_text(stmt, 2, collection.dictionaryName, -1, syncTransientDestructor)
-        sqlite3_bind_text(stmt, 3, collection.ankiDeckName, -1, syncTransientDestructor)
-        sqlite3_bind_text(stmt, 4, collection.deckDescription, -1, syncTransientDestructor)
-        sqlite3_bind_double(stmt, 5, collection.createdAt)
-        sqlite3_bind_double(stmt, 6, collection.updatedAt)
+        sqlite3_bind_text(stmt, 3, collection.deckDescription, -1, syncTransientDestructor)
+        sqlite3_bind_double(stmt, 4, collection.createdAt)
+        sqlite3_bind_double(stmt, 5, collection.updatedAt)
         if collection.deletedAt != nil {
-            sqlite3_bind_double(stmt, 7, deletedAt)
+            sqlite3_bind_double(stmt, 6, deletedAt)
         } else {
-            sqlite3_bind_null(stmt, 7)
+            sqlite3_bind_null(stmt, 6)
         }
-        sqlite3_bind_text(stmt, 8, uuid.uuidString, -1, syncTransientDestructor)
+        sqlite3_bind_text(stmt, 7, uuid.uuidString, -1, syncTransientDestructor)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw sqliteError(db: db)
