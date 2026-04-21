@@ -20,10 +20,7 @@ struct CollectionEditorFormData: Equatable, Sendable {
     }
 
     var exportSettings: CollectionExportSettings {
-        CollectionExportSettings(
-            deckName: collectionName,
-            deckDescription: deckDescription
-        )
+        CollectionExportSettings(deckDescription: deckDescription)
     }
 }
 

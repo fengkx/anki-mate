@@ -14,7 +14,7 @@ final class WordListViewModelTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let otherCollection = try store.createCollection(
             name: "Other",
-            exportSettings: CollectionExportSettings(deckName: "Other", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
         _ = try store.upsertWord(
@@ -55,7 +55,7 @@ final class WordListViewModelTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let otherCollection = try store.createCollection(
             name: "Other",
-            exportSettings: CollectionExportSettings(deckName: "Other", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
         _ = try store.upsertWord(PersistedWordRecord(item: WordItem(word: "Apple")), into: defaultCollection.id)
@@ -85,7 +85,6 @@ final class WordListViewModelTests: XCTestCase {
         XCTAssertTrue(created)
         XCTAssertEqual(viewModel.currentCollection?.name, "Reading")
         XCTAssertEqual(viewModel.currentCollection?.dictionaryName, "Oxford Dictionary of English")
-        XCTAssertEqual(viewModel.currentCollection?.ankiDeckName, "Reading")
         XCTAssertEqual(viewModel.currentCollection?.ankiDeckDescription, "Reading vocabulary")
     }
 
@@ -111,7 +110,7 @@ final class WordListViewModelTests: XCTestCase {
         let store = try makeStore()
         let otherCollection = try store.createCollection(
             name: "Other",
-            exportSettings: CollectionExportSettings(deckName: "Other Deck", deckDescription: "Notes"),
+            exportSettings: CollectionExportSettings(deckDescription: "Notes"),
             dictionaryName: "Oxford Dictionary of English"
         )
         let viewModel = try makeViewModel(store: store)
@@ -138,7 +137,7 @@ final class WordListViewModelTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let otherCollection = try store.createCollection(
             name: "Other",
-            exportSettings: CollectionExportSettings(deckName: "Other", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
 
@@ -200,6 +199,25 @@ final class WordListViewModelTests: XCTestCase {
 
         let refreshedLookupCount = await lookupCount.current()
         XCTAssertEqual(refreshedLookupCount, 1)
+    }
+
+    func testDeletingWordWhileLookupIsInFlightDoesNotResurrectIt() async throws {
+        let store = try makeStore()
+        let lookup = BlockingLookup(result: Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"]))
+        let viewModel = try makeViewModel(store: store, rawLookup: lookup.lookup)
+
+        viewModel.addWord("apple")
+        await lookup.waitUntilStarted()
+
+        let item = try XCTUnwrap(viewModel.words.only)
+        viewModel.removeWord(item)
+
+        await lookup.resume()
+        await viewModel.waitForIdle()
+
+        XCTAssertTrue(viewModel.words.isEmpty)
+        let defaultCollection = try XCTUnwrap(viewModel.currentCollection)
+        XCTAssertTrue(try store.loadWords(in: defaultCollection.id).isEmpty)
     }
 
     func testReloadFromStoreReflectsExternalChangesImmediately() throws {
@@ -1219,6 +1237,39 @@ private actor LookupSpy {
 
     func recordedSources() -> [DictionaryLookupSource] {
         sources
+    }
+}
+
+private actor BlockingLookup {
+    private let result: LookupResult
+    private var startContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+    private var hasStarted = false
+
+    init(result: LookupResult) {
+        self.result = result
+    }
+
+    func lookup(query: String, source: DictionaryLookupSource) async throws -> LookupResult {
+        hasStarted = true
+        startContinuation?.resume()
+        startContinuation = nil
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+        return result
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+    }
+
+    func resume() {
+        resumeContinuation?.resume()
+        resumeContinuation = nil
     }
 }
 

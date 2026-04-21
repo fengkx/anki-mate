@@ -3,7 +3,7 @@ import Foundation
 /// The top-level manifest exchanged via WebDAV for the current sync generation.
 struct SyncManifest: Codable, Equatable {
     static let currentFormat = "ankimate-sync-v2"
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     let format: String
     let version: Int
@@ -26,7 +26,6 @@ struct SyncCollectionRecord: Codable, Identifiable, Equatable {
     let id: String
     var name: String
     var dictionaryName: String
-    var ankiDeckName: String
     var deckDescription: String
     var createdAt: TimeInterval
     var updatedAt: TimeInterval
@@ -75,7 +74,6 @@ struct LegacySyncCollectionRecord: Codable {
     let id: String
     var name: String
     var dictionaryName: String
-    var ankiDeckName: String
     var deckDescription: String
     var createdAt: TimeInterval
     var updatedAt: TimeInterval

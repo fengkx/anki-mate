@@ -47,42 +47,17 @@ extension WordListStoring {
     func renameCollection(id: UUID, name: String, exportSettings: CollectionExportSettings) throws -> PersistedCollectionRecord {
         try renameCollection(id: id, name: name, exportSettings: exportSettings, dictionaryName: "")
     }
-
-    func createCollection(name: String, deckName: String?) throws -> PersistedCollectionRecord {
-        try createCollection(
-            name: name,
-            exportSettings: CollectionExportSettings(
-                deckName: deckName ?? name,
-                deckDescription: ""
-            ),
-            dictionaryName: ""
-        )
-    }
-
-    func renameCollection(id: UUID, name: String, deckName: String?) throws -> PersistedCollectionRecord {
-        try renameCollection(
-            id: id,
-            name: name,
-            exportSettings: CollectionExportSettings(
-                deckName: deckName ?? name,
-                deckDescription: ""
-            ),
-            dictionaryName: ""
-        )
-    }
 }
 
 struct CollectionExportSettings: Equatable, Sendable {
-    let deckName: String
     let deckDescription: String
 
-    init(deckName: String, deckDescription: String) {
-        self.deckName = deckName
+    init(deckDescription: String) {
         self.deckDescription = deckDescription
     }
 
     static func defaults(forCollectionName name: String) -> CollectionExportSettings {
-        CollectionExportSettings(deckName: name, deckDescription: "")
+        CollectionExportSettings(deckDescription: "")
     }
 }
 
@@ -101,21 +76,6 @@ struct PersistedCollectionRecord: Identifiable, Equatable {
         self.exportSettings = exportSettings
         self.createdAt = createdAt
         self.updatedAt = updatedAt
-    }
-
-    init(id: UUID, name: String, dictionaryName: String, ankiDeckName: String, createdAt: Date, updatedAt: Date) {
-        self.init(
-            id: id,
-            name: name,
-            dictionaryName: dictionaryName,
-            exportSettings: .init(deckName: ankiDeckName, deckDescription: ""),
-            createdAt: createdAt,
-            updatedAt: updatedAt
-        )
-    }
-
-    var ankiDeckName: String {
-        exportSettings.deckName
     }
 
     var ankiDeckDescription: String {
@@ -229,7 +189,7 @@ enum PersistedLookupState: Codable, Equatable {
 }
 
 struct WordListStore: WordListStoring {
-    private static let schemaVersion = 2
+    private static let schemaVersion = 3
     private static let applicationID = 0x414D5632
     private static let coreRequiredIndexNames = [
         "collections_name_active_idx",
@@ -274,7 +234,7 @@ struct WordListStore: WordListStoring {
     func loadCollections() throws -> [PersistedCollectionRecord] {
         try withDatabase { db in
             let sql = """
-            SELECT id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at
+            SELECT id, name, dictionary_name, deck_description, created_at, updated_at
             FROM collections
             WHERE deleted_at IS NULL
             ORDER BY created_at ASC
@@ -292,12 +252,9 @@ struct WordListStore: WordListStoring {
                         id: try uuidColumn(stmt, index: 0),
                         name: try textColumn(stmt, index: 1),
                         dictionaryName: try textColumn(stmt, index: 2),
-                        exportSettings: CollectionExportSettings(
-                            deckName: try textColumn(stmt, index: 3),
-                            deckDescription: try textColumn(stmt, index: 4)
-                        ),
-                        createdAt: dateColumn(stmt, index: 5),
-                        updatedAt: dateColumn(stmt, index: 6)
+                        exportSettings: CollectionExportSettings(deckDescription: try textColumn(stmt, index: 3)),
+                        createdAt: dateColumn(stmt, index: 4),
+                        updatedAt: dateColumn(stmt, index: 5)
                     )
                 )
             }
@@ -319,8 +276,8 @@ struct WordListStore: WordListStoring {
 
         try withDatabase { db in
             let sql = """
-            INSERT INTO collections (id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collections (id, name, dictionary_name, deck_description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -356,7 +313,7 @@ struct WordListStore: WordListStoring {
         try withDatabase { db in
             let sql = """
             UPDATE collections
-            SET name = ?, dictionary_name = ?, anki_deck_name = ?, deck_description = ?, updated_at = ?, deleted_at = NULL
+            SET name = ?, dictionary_name = ?, deck_description = ?, updated_at = ?, deleted_at = NULL
             WHERE id = ?
             """
             var stmt: OpaquePointer?
@@ -367,10 +324,9 @@ struct WordListStore: WordListStoring {
 
             sqlite3_bind_text(stmt, 1, record.name, -1, transientDestructor)
             sqlite3_bind_text(stmt, 2, record.dictionaryName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 3, record.ankiDeckName, -1, transientDestructor)
-            sqlite3_bind_text(stmt, 4, record.ankiDeckDescription, -1, transientDestructor)
-            sqlite3_bind_double(stmt, 5, record.updatedAt.timeIntervalSince1970)
-            sqlite3_bind_text(stmt, 6, id.uuidString, -1, transientDestructor)
+            sqlite3_bind_text(stmt, 3, record.ankiDeckDescription, -1, transientDestructor)
+            sqlite3_bind_double(stmt, 4, record.updatedAt.timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 5, id.uuidString, -1, transientDestructor)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 if sqlite3_errcode(db) == SQLITE_CONSTRAINT {
@@ -550,14 +506,6 @@ struct WordListStore: WordListStoring {
         return trimmed
     }
 
-    private func validatedDeckName(_ deckName: String?, fallback: String) throws -> String {
-        let trimmed = deckName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let trimmed, !trimmed.isEmpty {
-            return trimmed
-        }
-        return try validatedCollectionName(fallback)
-    }
-
     private func validatedDeckDescription(_ description: String) -> String {
         description.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -570,10 +518,8 @@ struct WordListStore: WordListStoring {
         _ settings: CollectionExportSettings,
         fallbackName: String
     ) throws -> CollectionExportSettings {
-        CollectionExportSettings(
-            deckName: try validatedDeckName(settings.deckName, fallback: fallbackName),
-            deckDescription: validatedDeckDescription(settings.deckDescription)
-        )
+        _ = try validatedCollectionName(fallbackName)
+        return CollectionExportSettings(deckDescription: validatedDeckDescription(settings.deckDescription))
     }
 
     private func validateWord(_ record: PersistedWordRecord) throws {
@@ -654,10 +600,9 @@ struct WordListStore: WordListStoring {
         sqlite3_bind_text(stmt, 1, record.id.uuidString, -1, transientDestructor)
         sqlite3_bind_text(stmt, 2, record.name, -1, transientDestructor)
         sqlite3_bind_text(stmt, 3, record.dictionaryName, -1, transientDestructor)
-        sqlite3_bind_text(stmt, 4, record.ankiDeckName, -1, transientDestructor)
-        sqlite3_bind_text(stmt, 5, record.ankiDeckDescription, -1, transientDestructor)
-        sqlite3_bind_double(stmt, 6, record.createdAt.timeIntervalSince1970)
-        sqlite3_bind_double(stmt, 7, record.updatedAt.timeIntervalSince1970)
+        sqlite3_bind_text(stmt, 4, record.ankiDeckDescription, -1, transientDestructor)
+        sqlite3_bind_double(stmt, 5, record.createdAt.timeIntervalSince1970)
+        sqlite3_bind_double(stmt, 6, record.updatedAt.timeIntervalSince1970)
     }
 
     private func bindWordCoreFields(_ record: PersistedWordRecord, stmt: OpaquePointer?, startIndex: Int32) throws {
@@ -716,8 +661,8 @@ struct WordListStore: WordListStoring {
         try exec(
             db: db,
             sql: """
-            INSERT INTO collections (id, name, dictionary_name, anki_deck_name, deck_description, created_at, updated_at)
-            VALUES ('\(collectionID)', 'Default', '', 'Default', '', \(now), \(now))
+            INSERT INTO collections (id, name, dictionary_name, deck_description, created_at, updated_at)
+            VALUES ('\(collectionID)', 'Default', '', '', \(now), \(now))
             """
         )
     }
@@ -782,7 +727,6 @@ struct WordListStore: WordListStoring {
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL COLLATE NOCASE,
               dictionary_name TEXT NOT NULL,
-              anki_deck_name TEXT NOT NULL,
               deck_description TEXT NOT NULL,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
@@ -1083,6 +1027,24 @@ struct WordListStore: WordListStoring {
         return sqlite3_step(stmt) == SQLITE_ROW
     }
 
+    static func tableHasColumn(_ tableName: String, columnName: String, db: OpaquePointer?) throws -> Bool {
+        let sql = "PRAGMA table_info(\(tableName));"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw WordListStoreError.sqlError("cannot query table info for \(tableName)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let currentColumn = sqlite3_column_text(stmt, 1) else { continue }
+            if String(cString: currentColumn) == columnName {
+                return true
+            }
+        }
+
+        return false
+    }
+
     private static func hasCurrentGenerationArtifacts(db: OpaquePointer?) throws -> Bool {
         let version = try currentSchemaVersion(db: db)
         let hasCoreArtifacts = try hasCurrentGenerationCoreArtifacts(db: db)
@@ -1116,8 +1078,55 @@ struct WordListStore: WordListStoring {
 
     private static func migrateCurrentGenerationSchema(db: OpaquePointer?) throws {
         try exec(db: db, sql: "PRAGMA foreign_keys = OFF;")
+        try migrateCollectionsTableIfNeeded(db: db)
         try createAgentSchemaIfNeeded(db: db)
         try exec(db: db, sql: "PRAGMA foreign_keys = ON;")
+    }
+
+    private static func migrateCollectionsTableIfNeeded(db: OpaquePointer?) throws {
+        guard try tableHasColumn("collections", columnName: "anki_deck_name", db: db) else {
+            return
+        }
+
+        try exec(
+            db: db,
+            sql: """
+            DROP INDEX IF EXISTS collections_name_active_idx;
+            DROP INDEX IF EXISTS collections_created_at_idx;
+            DROP INDEX IF EXISTS collections_active_created_idx;
+            DROP INDEX IF EXISTS collections_updated_at_idx;
+
+            CREATE TABLE collections_new (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL COLLATE NOCASE,
+              dictionary_name TEXT NOT NULL,
+              deck_description TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              deleted_at REAL
+            );
+
+            INSERT INTO collections_new (id, name, dictionary_name, deck_description, created_at, updated_at, deleted_at)
+            SELECT id, name, dictionary_name, deck_description, created_at, updated_at, deleted_at
+            FROM collections;
+
+            DROP TABLE collections;
+            ALTER TABLE collections_new RENAME TO collections;
+
+            CREATE UNIQUE INDEX collections_name_active_idx
+            ON collections(name COLLATE NOCASE)
+            WHERE deleted_at IS NULL;
+
+            CREATE INDEX collections_created_at_idx
+            ON collections(created_at);
+
+            CREATE INDEX collections_active_created_idx
+            ON collections(deleted_at, created_at);
+
+            CREATE INDEX collections_updated_at_idx
+            ON collections(updated_at);
+            """
+        )
     }
 
     private static func createAgentSchemaIfNeeded(db: OpaquePointer?) throws {

@@ -718,6 +718,7 @@ final class WordListViewModel: ObservableObject {
         mode: LookupMode,
         cachedResult: LookupResult?
     ) {
+        guard wordCache[item.id] === item else { return }
         let resultChanged = cachedResult != resolved.lookupResult
         item.word = resolved.word
         item.sourceForm = resolved.sourceForm
@@ -745,6 +746,7 @@ final class WordListViewModel: ObservableObject {
         mode: LookupMode,
         cachedResult: LookupResult?
     ) {
+        guard wordCache[item.id] === item else { return }
         item.isRefreshing = false
         let message = error.localizedDescription
         switch mode {
@@ -812,6 +814,7 @@ final class WordListViewModel: ObservableObject {
 
     private func deleteWord(id: UUID) {
         guard let currentCollectionID else { return }
+        lookupQueue.removeAll { $0.id == id }
         do {
             try store.removeWord(id: id, from: currentCollectionID)
             notifyDataChanged()

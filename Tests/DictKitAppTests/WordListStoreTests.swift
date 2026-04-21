@@ -14,8 +14,10 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collections.count, 1)
         XCTAssertEqual(collections.only?.name, "Default")
         XCTAssertEqual(collections.only?.dictionaryName, "")
-        XCTAssertEqual(collections.only?.ankiDeckName, "Default")
         XCTAssertEqual(collections.only?.ankiDeckDescription, "")
+        try store.withDatabase { db in
+            XCTAssertFalse(try WordListStore.tableHasColumn("collections", columnName: "anki_deck_name", db: db))
+        }
     }
 
     func testInitResetsPreRedesignSchema() throws {
@@ -33,12 +35,12 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(collections.only?.name, "Default")
         XCTAssertEqual(collections.only?.dictionaryName, "")
         XCTAssertTrue(try store.loadAllWords().isEmpty)
-        XCTAssertEqual(try readUserVersion(at: databaseURL), 2)
+        XCTAssertEqual(try readUserVersion(at: databaseURL), 3)
         XCTAssertEqual(try readApplicationID(at: databaseURL), 0x414D5632)
         XCTAssertEqual(try legacyBackupURLs(in: baseURL).count, 1)
     }
 
-    func testInitMigratesCurrentGenerationSchemaV1ToV2WithoutLosingWords() throws {
+    func testInitMigratesCurrentGenerationSchemaV1ToV3WithoutLosingWords() throws {
         let baseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
@@ -47,13 +49,14 @@ final class WordListStoreTests: XCTestCase {
 
         let store = try WordListStore(databaseURL: databaseURL)
 
-        XCTAssertEqual(try readUserVersion(at: databaseURL), 2)
+        XCTAssertEqual(try readUserVersion(at: databaseURL), 3)
         let migrated = try XCTUnwrap(try store.loadWords(in: fixture.collectionID).only)
         XCTAssertEqual(migrated.id, fixture.wordID)
         XCTAssertEqual(migrated.displayWord, "Apple")
         XCTAssertEqual(migrated.lookupState, .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: ["I ate an apple"])))
 
         try store.withDatabase { db in
+            XCTAssertFalse(try WordListStore.tableHasColumn("collections", columnName: "anki_deck_name", db: db))
             XCTAssertTrue(try WordListStore.tableExists("agent_sessions", db: db))
             XCTAssertTrue(try WordListStore.tableExists("agent_messages", db: db))
             XCTAssertTrue(try WordListStore.indexExists("idx_agent_messages_session_ord", db: db))
@@ -99,16 +102,12 @@ final class WordListStoreTests: XCTestCase {
 
         let collection = try store.createCollection(
             name: "Reading",
-            exportSettings: CollectionExportSettings(
-                deckName: "Reading",
-                deckDescription: "Reading vocabulary"
-            ),
+            exportSettings: CollectionExportSettings(deckDescription: "Reading vocabulary"),
             dictionaryName: "Oxford Dictionary of English"
         )
 
         XCTAssertEqual(collection.name, "Reading")
         XCTAssertEqual(collection.dictionaryName, "Oxford Dictionary of English")
-        XCTAssertEqual(collection.ankiDeckName, "Reading")
         XCTAssertEqual(collection.ankiDeckDescription, "Reading vocabulary")
     }
 
@@ -118,20 +117,16 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertTrue(try store.hasChangesAfterLastSync())
     }
 
-    func testCreateCollectionUsesCollectionNameFallbackForBlankDeckName() throws {
+    func testCreateCollectionTrimsDeckDescription() throws {
         let store = try makeStore()
 
         let collection = try store.createCollection(
             name: "Study Set",
-            exportSettings: CollectionExportSettings(
-                deckName: "   ",
-                deckDescription: "  Custom description  "
-            ),
+            exportSettings: CollectionExportSettings(deckDescription: "  Custom description  "),
             dictionaryName: ""
         )
 
         XCTAssertEqual(collection.name, "Study Set")
-        XCTAssertEqual(collection.ankiDeckName, "Study Set")
         XCTAssertEqual(collection.ankiDeckDescription, "Custom description")
     }
 
@@ -140,7 +135,7 @@ final class WordListStoreTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let collection = try store.createCollection(
             name: "Reading",
-            exportSettings: CollectionExportSettings(deckName: "Reading", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
 
@@ -148,7 +143,7 @@ final class WordListStoreTests: XCTestCase {
 
         let recreated = try store.createCollection(
             name: "Reading",
-            exportSettings: CollectionExportSettings(deckName: "Reading", deckDescription: "Updated"),
+            exportSettings: CollectionExportSettings(deckDescription: "Updated"),
             dictionaryName: "Oxford"
         )
 
@@ -158,23 +153,19 @@ final class WordListStoreTests: XCTestCase {
         XCTAssertEqual(recreated.dictionaryName, "Oxford")
     }
 
-    func testRenameCollectionUpdatesDictionaryAndExportSettingsIndependently() throws {
+    func testRenameCollectionUpdatesDictionaryAndDeckDescription() throws {
         let store = try makeStore()
         let collection = try XCTUnwrap(try store.loadCollections().only)
 
         let renamed = try store.renameCollection(
             id: collection.id,
             name: "Reading",
-            exportSettings: CollectionExportSettings(
-                deckName: "English::Reading",
-                deckDescription: "Review reading vocabulary"
-            ),
+            exportSettings: CollectionExportSettings(deckDescription: "Review reading vocabulary"),
             dictionaryName: "Oxford Dictionary of English"
         )
 
         XCTAssertEqual(renamed.name, "Reading")
         XCTAssertEqual(renamed.dictionaryName, "Oxford Dictionary of English")
-        XCTAssertEqual(renamed.ankiDeckName, "English::Reading")
         XCTAssertEqual(renamed.ankiDeckDescription, "Review reading vocabulary")
     }
 
@@ -236,7 +227,7 @@ final class WordListStoreTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let secondaryCollection = try store.createCollection(
             name: "Study Set",
-            exportSettings: CollectionExportSettings(deckName: "Study Set", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
         let record1 = PersistedWordRecord(
@@ -276,7 +267,7 @@ final class WordListStoreTests: XCTestCase {
         let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
         let secondaryCollection = try store.createCollection(
             name: "Study Set",
-            exportSettings: CollectionExportSettings(deckName: "Study Set", deckDescription: ""),
+            exportSettings: CollectionExportSettings(deckDescription: ""),
             dictionaryName: ""
         )
         let record1 = PersistedWordRecord(
