@@ -222,7 +222,11 @@ final class LLMServiceE2ETests: XCTestCase {
                     "\(context) issue=targeted_letter_cloze must contain exactly one continuous underscore gap"
                 )
                 let gapLength = longestUnderscoreRun(in: surface)
-                XCTAssertTrue((2...3).contains(gapLength), "\(context) issue=targeted_letter_cloze gap length must be 2 or 3, got \(gapLength)")
+                XCTAssertGreaterThan(gapLength, 0, "\(context) issue=targeted_letter_cloze gap must not be empty")
+                XCTAssertTrue(
+                    clozeGapMatchesTarget(surface, target: testCase.word),
+                    "\(context) issue=targeted_letter_cloze underscore count must match hidden letter count"
+                )
                 XCTAssertFalse(surface.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_"), "\(context) issue=targeted_letter_cloze masked the leading characters first")
                 XCTAssertTrue(surface.containsHanScript, "\(context) issue=targeted_letter_cloze front must retain a Chinese cue")
             }
@@ -774,6 +778,55 @@ private extension LLMServiceE2ETests {
             }
         }
         return longest
+    }
+
+    func clozeGapMatchesTarget(_ front: String, target: String) -> Bool {
+        let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedTarget.isEmpty else { return false }
+
+        for candidate in clozeTokenCandidates(in: front) where underscoreGroupCount(in: candidate) == 1 {
+            let gapLength = longestUnderscoreRun(in: candidate)
+            guard gapLength > 0,
+                  let firstGap = candidate.firstIndex(of: "_"),
+                  let lastGap = candidate.lastIndex(of: "_") else {
+                continue
+            }
+            let prefix = String(candidate[..<firstGap]).lowercased()
+            let suffix = String(candidate[candidate.index(after: lastGap)...]).lowercased()
+            guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+            guard normalizedTarget.hasPrefix(prefix),
+                  normalizedTarget.hasSuffix(suffix),
+                  prefix.count + suffix.count < normalizedTarget.count else {
+                continue
+            }
+            if normalizedTarget.count - prefix.count - suffix.count == gapLength {
+                return true
+            }
+        }
+        return false
+    }
+
+    func clozeTokenCandidates(in text: String) -> [String] {
+        var candidates: [String] = []
+        var current = ""
+
+        func flushCurrent() {
+            if current.contains("_") {
+                candidates.append(current)
+            }
+            current.removeAll(keepingCapacity: true)
+        }
+
+        for character in text {
+            if character == "_" || character.unicodeScalars.allSatisfy({ $0.isASCII && CharacterSet.alphanumerics.contains($0) }) {
+                current.append(character)
+            } else {
+                flushCurrent()
+            }
+        }
+        flushCurrent()
+
+        return candidates
     }
 
     func cuePlanContainsTarget(_ cue: String, target: String) -> Bool {

@@ -85,6 +85,13 @@ final class LLMServiceTests: XCTestCase {
         wait(for: [changed], timeout: 1.0)
     }
 
+    func testServerStatusIndicatorPulsesOnlyWhileStarting() {
+        XCTAssertTrue(ServerProcessManager.State.starting.shouldPulseStatusIndicator)
+        XCTAssertFalse(ServerProcessManager.State.running(port: 8080).shouldPulseStatusIndicator)
+        XCTAssertFalse(ServerProcessManager.State.stopped.shouldPulseStatusIndicator)
+        XCTAssertFalse(ServerProcessManager.State.failed("boom").shouldPulseStatusIndicator)
+    }
+
     func testActiveDownloadSummaryUsesHumanReadableTransferStatus() {
         let manager = ModelDownloadManager()
         manager.downloads["test-model"] = .init(
@@ -434,6 +441,58 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(drafts.first?.hint, "watch the ll")
     }
 
+    func testDecodeStructuredRecallDraftAcceptsSingleUnderscoreWhenOneLetterIsHidden() throws {
+        let payload = """
+        {
+          "draft": {
+            "mode": "targeted_letter_cloze",
+            "front": "找到一个词的原始形态：lemma_ize",
+            "back": "lemmatize",
+            "hint": "transitive verb"
+          }
+        }
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            [decoded.primaryDraft].compactMap { $0 },
+            requestedModes: [.targetedLetterCloze],
+            target: "lemmatize"
+        )
+
+        XCTAssertEqual(drafts.map(\.mode), [.targetedLetterCloze])
+        XCTAssertEqual(drafts.first?.front, "找到一个词的原始形态：lemma_ize")
+        XCTAssertEqual(drafts.first?.back, "lemmatize")
+    }
+
+    func testDecodeStructuredRecallDraftRejectsUnderscoreCountThatDoesNotMatchHiddenLetters() throws {
+        let payload = """
+        {
+          "draft": {
+            "mode": "targeted_letter_cloze",
+            "front": "找到一个词的原始形态：lemma__ize",
+            "back": "lemmatize",
+            "hint": "transitive verb"
+          }
+        }
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            [decoded.primaryDraft].compactMap { $0 },
+            requestedModes: [.targetedLetterCloze],
+            target: "lemmatize"
+        )
+
+        XCTAssertTrue(drafts.isEmpty)
+    }
+
     func testDecodeStructuredRecallDraftRejectsMismatchedBackValue() throws {
         let payload = """
         {
@@ -459,6 +518,35 @@ final class LLMServiceTests: XCTestCase {
         )
 
         XCTAssertTrue(drafts.isEmpty)
+    }
+
+    func testNormalizeRecallCardPlanAllowsForcedModeWithWholeWordGoal() throws {
+        let payload = """
+        {
+          "selectedMode": "targeted_letter_cloze",
+          "selectionReason": {
+            "primaryGoal": "whole_word_recall",
+            "evidence": ["The usage hint provides a clear learner cue."]
+          },
+          "cuePlan": {
+            "semanticSource": "accepted_usage_hint",
+            "normalizedCue": "找到一个词的原始形态"
+          }
+        }
+        """
+        let plan = try JSONDecoder().decode(RecallCardPlanPayload.self, from: Data(payload.utf8))
+
+        let normalized = try XCTUnwrap(
+            LLMService.normalizeRecallCardPlan(
+                plan,
+                allowedModes: [.targetedLetterCloze],
+                target: "lemmatize"
+            )
+        )
+
+        XCTAssertEqual(normalized.selectedMode, .targetedLetterCloze)
+        XCTAssertEqual(normalized.selectionReason.primaryGoal, "whole_word_recall")
+        XCTAssertEqual(normalized.cuePlan.normalizedCue, "找到一个词的原始形态")
     }
 
     func testRuleBasedRecallDraftBuildsTargetedLetterClozeFallbackForLongWord() throws {
@@ -763,6 +851,52 @@ final class LLMServiceTests: XCTestCase {
             LLMService.primaryResponseText(from: response),
             #"{"pitfalls":[],"mnemonics":[],"collocations":[]}"#
         )
+    }
+
+    func testStrictStructuredResponseTextRejectsReasoningOnlyTruncation() {
+        let response = ChatCompletionResponse(
+            choices: [
+                .init(
+                    message: ChatMessage(
+                        role: "assistant",
+                        content: nil,
+                        reasoning_content: """
+                        I need more tokens before I can emit the final JSON object.
+                        """
+                    ),
+                    finish_reason: "length"
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(
+            try LLMService.strictStructuredResponseText(
+                from: response,
+                operation: "Recall draft generation",
+                allowReasoningFallback: false
+            )
+        ) { error in
+            guard case LLMServiceError.invalidStructuredOutput(let message) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("Recall draft generation"))
+            XCTAssertTrue(message.contains("length"))
+        }
+    }
+
+    func testRecallDraftTokenBudgetAllowsReasoningModelsToEmitFinalJSON() {
+        XCTAssertEqual(LLMService.recallDraftMaxTokens, 1024)
+    }
+
+    func testStructuredJSONTokenBudgetsAreUniformForReasoningModels() {
+        XCTAssertEqual(LLMService.exampleArtifactMinTokens, 1024)
+        XCTAssertEqual(LLMService.usageHintMinTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidsMaxTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidJudgeMaxTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidCombinedJudgeMaxTokens, 1024)
+        XCTAssertEqual(LLMService.ipaMaxTokens, 1024)
+        XCTAssertEqual(LLMService.pronunciationEnhancementMaxTokens, 1024)
+        XCTAssertEqual(LLMService.recallPlanMaxTokens, 1024)
     }
 
     func testChatCompletionRequestRoundTripsCorrectly() throws {

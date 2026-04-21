@@ -223,12 +223,7 @@ struct CollectionsSidebarView: View {
     }
 
     private var shouldPulseServerStatus: Bool {
-        switch llmService.serverState {
-        case .starting, .running:
-            return true
-        case .stopped, .failed:
-            return false
-        }
+        llmService.serverState.shouldPulseStatusIndicator
     }
 
     private var syncStatusColor: Color {

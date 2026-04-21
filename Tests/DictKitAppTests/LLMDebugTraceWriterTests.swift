@@ -7,56 +7,59 @@ final class LLMDebugTraceWriterTests: XCTestCase {
     func testRequestResponseWritesStartAndFinishEventsToSingleJSONLFile() async throws {
         let fileURL = makeTemporaryFileURL()
         let writer = LLMDebugTraceWriter(fileURL: fileURL)
-        let params = GenerateParams(
-            prompt: "User prompt",
-            systemPrompt: "System prompt",
-            responseFormat: LLMResponseFormat(kind: .json),
-            maxTokens: 512,
-            temperature: 0.2
+        let request = ChatCompletionRequest(
+            model: "/test.gguf",
+            messages: [
+                ChatMessage(role: "system", content: "System prompt"),
+                ChatMessage(role: "user", content: "User prompt"),
+            ],
+            temperature: 0.2,
+            max_tokens: 512,
+            response_format: ChatResponseFormat(type: "json_object")
         )
 
-        let sessionID = try await writer.beginRequest(
+        let sessionID = try await writer.beginChatRequest(
             transport: "request-response",
-            rpcMethod: RPCMethod.generate,
-            params: params,
+            request: request,
             port: 8080
         )
-        try await writer.finishRequest(
-            sessionID,
-            response: GenerateResult(
-                text: "{\"ok\":true}",
-                tokensUsed: 42,
-                durationMs: 1234,
-                finishReason: "stop"
-            )
+        let response = ChatCompletionResponse(
+            choices: [
+                ChatCompletionResponse.Choice(
+                    message: ChatMessage(role: "assistant", content: "{\"ok\":true}"),
+                    finish_reason: "stop"
+                )
+            ],
+            usage: ChatCompletionResponse.Usage(completion_tokens: 42)
         )
+        try await writer.finishChatRequest(sessionID, response: response)
 
         let events = try loadEvents(from: fileURL)
         XCTAssertEqual(events.count, 2)
         XCTAssertEqual(events[0].event, "request_started")
-        XCTAssertEqual(events[0].params?.prompt, "User prompt")
-        XCTAssertEqual(events[0].params?.systemPrompt, "System prompt")
+        XCTAssertEqual(events[0].request?.model, "/test.gguf")
         XCTAssertEqual(events[1].event, "request_finished")
-        XCTAssertEqual(events[1].response?.text, "{\"ok\":true}")
-        XCTAssertEqual(events[1].response?.tokensUsed, 42)
-        XCTAssertEqual(events[1].response?.durationMs, 1234)
+        XCTAssertEqual(events[1].response?.choices.first?.message.content, "{\"ok\":true}")
+        XCTAssertEqual(events[1].response?.usage?.completion_tokens, 42)
         XCTAssertEqual(events[0].id, events[1].id)
     }
 
     func testStreamWritesDeltaEventsThatCanBeTailed() async throws {
         let fileURL = makeTemporaryFileURL()
         let writer = LLMDebugTraceWriter(fileURL: fileURL)
-        let params = GenerateParams(
-            prompt: "Stream user prompt",
-            systemPrompt: "Stream system prompt",
-            maxTokens: 256,
-            temperature: 0.7
+        let request = ChatCompletionRequest(
+            model: "/test.gguf",
+            messages: [
+                ChatMessage(role: "user", content: "Stream user prompt"),
+            ],
+            temperature: 0.7,
+            max_tokens: 256,
+            stream: true
         )
 
-        let sessionID = try await writer.beginRequest(
+        let sessionID = try await writer.beginChatRequest(
             transport: "stream",
-            rpcMethod: RPCMethod.generate,
-            params: params,
+            request: request,
             port: 9000
         )
         try await writer.appendStreamDelta("Hello", for: sessionID)

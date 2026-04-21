@@ -18,9 +18,9 @@ final class AgentPromptBuilderTests: XCTestCase {
 
         let systemPrompt = messages.first(where: { $0.role == .system })?.content ?? ""
 
-        XCTAssertTrue(systemPrompt.contains("You are an Anki learner editing your own card"))
+        XCTAssertTrue(systemPrompt.contains("study assistant for Anki vocabulary cards"))
         XCTAssertTrue(systemPrompt.contains("You can only edit card content"))
-        XCTAssertTrue(systemPrompt.contains("Do not modify layout, style, color, font size, section order, or template structure"))
+        XCTAssertTrue(systemPrompt.contains("Layout, style, fonts, colors, and template changes are not supported"))
         XCTAssertTrue(systemPrompt.contains("Respond in Simplified Chinese"))
     }
 

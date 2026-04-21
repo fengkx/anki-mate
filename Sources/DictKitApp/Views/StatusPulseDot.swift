@@ -4,25 +4,27 @@ struct StatusPulseDot: View {
     let color: Color
     var isPulsing: Bool = false
 
-    @State private var animated = false
+    @State private var pulsePhase = false
 
     var body: some View {
         Circle()
             .fill(color)
             .frame(width: 8, height: 8)
-            .scaleEffect(isPulsing && animated ? 1.22 : 0.9)
-            .opacity(isPulsing && animated ? 0.45 : 1.0)
-            .animation(
-                isPulsing
-                    ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
-                    : .default,
-                value: animated
-            )
-            .onAppear {
-                animated = true
-            }
-            .onChange(of: isPulsing) { _ in
-                animated = isPulsing
+            .scaleEffect(isPulsing && pulsePhase ? 1.22 : 0.9)
+            .opacity(isPulsing && pulsePhase ? 0.45 : 1.0)
+            .task(id: isPulsing) {
+                if !isPulsing {
+                    pulsePhase = false
+                    return
+                }
+
+                pulsePhase = false
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 0.9)) {
+                        pulsePhase.toggle()
+                    }
+                    try? await Task.sleep(for: .milliseconds(900))
+                }
             }
     }
 }

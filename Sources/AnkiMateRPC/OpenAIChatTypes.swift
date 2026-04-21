@@ -64,11 +64,13 @@ public struct ChatMessage: Codable, Sendable, Equatable {
 }
 
 public struct ChatToolCall: Codable, Sendable, Equatable {
+    public let index: Int?
     public let id: String?
     public let type: String?
     public let function: ChatToolCallFunction
 
-    public init(id: String? = nil, type: String? = "function", function: ChatToolCallFunction) {
+    public init(index: Int? = nil, id: String? = nil, type: String? = "function", function: ChatToolCallFunction) {
+        self.index = index
         self.id = id
         self.type = type
         self.function = function
@@ -82,6 +84,17 @@ public struct ChatToolCallFunction: Codable, Sendable, Equatable {
     public init(name: String, arguments: String) {
         self.name = name
         self.arguments = arguments
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case arguments
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        self.arguments = try container.decodeIfPresent(String.self, forKey: .arguments) ?? ""
     }
 }
 

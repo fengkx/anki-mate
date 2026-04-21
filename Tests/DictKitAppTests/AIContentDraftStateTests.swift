@@ -123,6 +123,64 @@ final class AIContentDraftStateTests: XCTestCase {
 
         XCTAssertNil(updated.hint)
     }
+
+    func testRecallDraftGenerationModeResolverPrefersSuggestedDraftMode() {
+        let suggestedRowID = UUID()
+        let acceptedRowID = UUID()
+        let suggestedState: AIDraftListState<RecallCardDraft, RecallCardDraft> = .init(
+            rowOrder: [suggestedRowID],
+            drafts: [:],
+            persistedByRowID: [
+                suggestedRowID: RecallCardDraft(
+                    mode: .targetedLetterCloze,
+                    front: "cue",
+                    back: "answer"
+                )
+            ]
+        )
+        let acceptedState: AIDraftListState<RecallCardDraft, RecallCardDraft> = .init(
+            rowOrder: [acceptedRowID],
+            drafts: [:],
+            persistedByRowID: [
+                acceptedRowID: RecallCardDraft(
+                    mode: .fullSpelling,
+                    front: "saved cue",
+                    back: "answer"
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            RecallDraftGenerationModeResolver.preferredMode(
+                suggestedState: suggestedState,
+                acceptedState: acceptedState
+            ),
+            .targetedLetterCloze
+        )
+    }
+
+    func testRecallDraftGenerationModeResolverFallsBackToAcceptedDraftMode() {
+        let acceptedRowID = UUID()
+        let acceptedState: AIDraftListState<RecallCardDraft, RecallCardDraft> = .init(
+            rowOrder: [acceptedRowID],
+            drafts: [
+                acceptedRowID: RecallCardDraft(
+                    mode: .phraseRecall,
+                    front: "saved cue",
+                    back: "answer"
+                )
+            ],
+            persistedByRowID: [:]
+        )
+
+        XCTAssertEqual(
+            RecallDraftGenerationModeResolver.preferredMode(
+                suggestedState: .init(),
+                acceptedState: acceptedState
+            ),
+            .phraseRecall
+        )
+    }
 }
 
 private extension Array {

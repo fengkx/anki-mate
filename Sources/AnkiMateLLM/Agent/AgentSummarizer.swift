@@ -79,7 +79,7 @@ public struct AgentSummarizer {
 
     private func renderedContent(for content: MessageContent) -> String {
         switch content {
-        case .text(let text):
+        case .text(let text, _):
             return text
         case .toolCall(let name, let argsJSON):
             return "[Tool call] \(name) \(argsJSON)"

@@ -19,6 +19,7 @@ struct ContentView: View {
         } detail: {
             if let selected = viewModel.selectedWord {
                 CardPreviewView(item: selected)
+                    .id(selected.id)
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "rectangle.on.rectangle.angled")

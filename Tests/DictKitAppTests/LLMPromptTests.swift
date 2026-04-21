@@ -162,7 +162,9 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("single-draft workspace contract"))
         XCTAssertTrue(prompt.user.contains("anchor is optional display metadata only"))
         XCTAssertTrue(prompt.user.contains("back must be the exact target word or phrase"))
-        XCTAssertTrue(prompt.user.contains("use exactly one continuous underscore gap of 2 or 3 characters"))
+        XCTAssertTrue(prompt.user.contains("use exactly one continuous underscore gap"))
+        XCTAssertTrue(prompt.user.contains("the number of underscores must exactly match the number of hidden letters"))
+        XCTAssertTrue(prompt.user.contains("prefer hiding at least two letters"))
         XCTAssertTrue(prompt.user.contains("Packaging scaffold:"))
         XCTAssertTrue(prompt.user.contains("\"起飞；脱掉\""))
         XCTAssertTrue(prompt.user.contains("\"verb · air travel\""))
@@ -286,6 +288,69 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("draft.front must be derived from normalizedCue, not independently rewritten from raw sources"))
         XCTAssertFalse(prompt.user.contains("Sense inventory"))
         XCTAssertFalse(prompt.user.contains("Accepted learning aids"))
+    }
+
+    func testRecallDraftFromPlanPromptDoesNotExposeRawDictionaryScaffoldCue() {
+        let prompt = LLMPrompt.recallCardDraftFromPlan(
+            word: "lemmatize",
+            selectedMode: .targetedLetterCloze,
+            primaryGoal: "local_spelling_calibration",
+            cuePlan: LLMRecallCuePlan(
+                semanticSource: "accepted_usage_hint",
+                normalizedCue: "找到一个词的原始形态"
+            ),
+            anchor: nil,
+            wordSignals: LLMRecallWordSignals(
+                isPhrase: false,
+                hasRepeatedLetters: true,
+                hasConfusableVowelCluster: false
+            ),
+            scaffold: RecallPromptScaffold(
+                learnerCue: "把…按屈折变化形式归类 bǎ… àn qūzhé biànhuà xíngshì guī",
+                hint: "transitive verb"
+            )
+        )
+
+        XCTAssertTrue(prompt.user.contains("normalizedCue: 找到一个词的原始形态"))
+        XCTAssertTrue(prompt.user.contains("- learner cue: \"找到一个词的原始形态\""))
+        XCTAssertFalse(prompt.user.contains("屈折"))
+        XCTAssertFalse(prompt.user.contains("qūzhé"))
+    }
+
+    func testRecallPlanPromptForForcedModeStillRequiresNormalizedCue() {
+        let prompt = LLMPrompt.recallCardPlan(
+            word: "lemmatize",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "transitive verb",
+                    definition: "把…按屈折变化形式归类 bǎ… àn qūzhé biànhuà xíngshì guīlèi"
+                )
+            ],
+            context: LLMRecallGenerationContext(
+                acceptedUsageHints: [
+                    "Find the base form of a word — 找到一个词的原始形态"
+                ]
+            ),
+            allowedModes: [.targetedLetterCloze],
+            modePrior: .targetedLetterCloze,
+            anchor: nil,
+            wordSignals: LLMRecallWordSignals(
+                isPhrase: false,
+                hasRepeatedLetters: false,
+                hasConfusableVowelCluster: false
+            ),
+            scaffold: RecallPromptScaffold(
+                learnerCue: "找到一个词的原始形态",
+                hint: "transitive verb · 找到一个词的原始形态"
+            )
+        )
+
+        XCTAssertTrue(prompt.user.contains("selectedMode must be one of the allowed modes"))
+        XCTAssertTrue(prompt.user.contains("normalizedCue must be a short learner-facing cue, not copied raw dictionary wording"))
+        XCTAssertTrue(prompt.user.contains("Prefer accepted usage hints over raw sense inventory when they provide a cleaner learner-facing cue"))
+        XCTAssertTrue(prompt.user.contains("Even when only one mode is allowed, still choose cuePlan first and normalize the semantic cue before packaging the draft"))
+        XCTAssertTrue(prompt.user.contains("Do not let a forced mode justify copying dictionary jargon, formal gloss wording, or bilingual fragments into normalizedCue"))
+        XCTAssertTrue(prompt.user.contains("If the forced mode is targeted_letter_cloze, keep the Chinese cue natural and conversational before adding the gap"))
     }
 
     func testLearningAidsPromptRequestsStructuredPitfallsMnemonicsAndCollocations() {

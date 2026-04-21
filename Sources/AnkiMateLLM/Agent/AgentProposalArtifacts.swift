@@ -274,19 +274,44 @@ enum AgentProposalArtifactsProjector {
         from payloadJSON: String
     ) throws -> T {
         guard let data = payloadJSON.data(using: .utf8) else {
-            throw AgentProposalArtifactsError.invalidPayload
+            throw AgentProposalArtifactsError.invalidPayload(reason: nil)
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw AgentProposalArtifactsError.invalidPayload(reason: decodeErrorDescription(error))
+        } catch {
+            throw AgentProposalArtifactsError.invalidPayload(reason: nil)
+        }
+    }
+
+    private static func decodeErrorDescription(_ error: DecodingError) -> String {
+        switch error {
+        case .keyNotFound(let key, _):
+            return "missing required field '\(key.stringValue)'"
+        case .typeMismatch(_, let context), .valueNotFound(_, let context):
+            if let key = context.codingPath.last?.stringValue, !key.isEmpty {
+                return "invalid value for field '\(key)'"
+            }
+            return "invalid payload structure"
+        case .dataCorrupted(let context):
+            return context.debugDescription.isEmpty ? "invalid payload structure" : context.debugDescription
+        @unknown default:
+            return "invalid payload structure"
+        }
     }
 }
 
 enum AgentProposalArtifactsError: LocalizedError {
-    case invalidPayload
+    case invalidPayload(reason: String?)
     case invalidDeleteOperation
 
     var errorDescription: String? {
         switch self {
-        case .invalidPayload:
+        case .invalidPayload(let reason):
+            if let reason, !reason.isEmpty {
+                return "Invalid proposal payload: \(reason)."
+            }
             return "Invalid proposal payload."
         case .invalidDeleteOperation:
             return "Delete-accepted proposals must use delete operations."

@@ -140,13 +140,26 @@ public struct AgentPromptBuilder {
         tools: [LLMToolDefinition]
     ) -> String {
         PromptText.join([
-            "You are an Anki learner editing your own card right before spaced-repetition review.",
-            "You are strict about review burden: prefer high-frequency distinctions, cut redundancy, and ask when uncertain.",
-            "For explanation requests, answer directly. For content-edit requests, explain why the current card will cause review friction, then what to change.",
-            "You can only edit card content: definitions, examples, recall drafts, pitfalls, mnemonics, collocations, and usage cues.",
-            "Do not modify layout, style, color, font size, section order, or template structure.",
-            "If the user asks for layout or style changes, refuse briefly and explain that this version only supports content edits.",
+            // Primary identity — what you are
+            "You are my study assistant for Anki vocabulary cards. I'm reviewing a card and may ask you questions or request edits.",
+
+            // Default behavior — just talk
+            """
+            Most of the time, just answer my question directly in the chat. Explain word usage, nuance, differences, etymology — whatever I ask. Keep it concise and useful for memorization.
+            """,
+
+            // When to use tools — only for card edits
+            tools.isEmpty ? nil : """
+            You also have tools to propose content edits to my card (examples, usage cues, pitfalls, mnemonics, collocations, recall drafts). Only use these tools when I explicitly ask you to change, add, or remove something on the card. If I'm just asking a question, answer in text — do not call any tool.
+            """,
+
+            // Scope limits
+            "You can only edit card content. Layout, style, fonts, colors, and template changes are not supported.",
+
+            // Language
             responseLanguage.directive,
+
+            // Tool list (if any)
             toolInstructionBlock(from: tools)
         ])
     }
@@ -219,7 +232,7 @@ public struct AgentPromptBuilder {
 
     private func renderedContent(for content: MessageContent) -> String {
         switch content {
-        case .text(let text):
+        case .text(let text, _):
             return text
         case .toolCall(let name, let argsJSON):
             return PromptText.join([
@@ -275,7 +288,7 @@ public struct AgentPromptBuilder {
             .sorted { $0.ordinal > $1.ordinal }
             .compactMap { message -> String? in
                 guard message.role == .user else { return nil }
-                guard case .text(let text) = message.content else { return nil }
+                guard case .text(let text, _) = message.content else { return nil }
                 return text
             }
             .prefix(3)

@@ -21,6 +21,11 @@ public final class ServerProcessManager: ObservableObject {
             if case .running(let p) = self { return p }
             return nil
         }
+
+        public var shouldPulseStatusIndicator: Bool {
+            if case .starting = self { return true }
+            return false
+        }
     }
 
     @Published public private(set) var state: State = .stopped

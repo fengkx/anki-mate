@@ -93,7 +93,7 @@ public struct AgentChatMessage: Codable, Equatable, Identifiable, Sendable {
 }
 
 public enum MessageContent: Codable, Equatable, Sendable {
-    case text(String)
+    case text(String, reasoning: String? = nil)
     case toolCall(name: String, argsJSON: String)
     case toolResult(name: String, resultJSON: String, truncated: Bool)
     case actionProposal(ProposalRecord)
@@ -112,6 +112,7 @@ public enum MessageContent: Codable, Equatable, Sendable {
         case supersededCount
         case message
         case recoverable
+        case reasoning
         case userText
         case detectedKind
     }
@@ -130,7 +131,10 @@ public enum MessageContent: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         switch try container.decode(Kind.self, forKey: .kind) {
         case .text:
-            self = .text(try container.decode(String.self, forKey: .text))
+            self = .text(
+                try container.decode(String.self, forKey: .text),
+                reasoning: try container.decodeIfPresent(String.self, forKey: .reasoning)
+            )
         case .toolCall:
             self = .toolCall(
                 name: try container.decode(String.self, forKey: .name),
@@ -165,9 +169,12 @@ public enum MessageContent: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .text(let text):
+        case .text(let text, let reasoning):
             try container.encode(Kind.text, forKey: .kind)
             try container.encode(text, forKey: .text)
+            if let reasoning {
+                try container.encode(reasoning, forKey: .reasoning)
+            }
         case .toolCall(let name, let argsJSON):
             try container.encode(Kind.toolCall, forKey: .kind)
             try container.encode(name, forKey: .name)

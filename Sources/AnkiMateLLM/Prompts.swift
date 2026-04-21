@@ -351,7 +351,9 @@ public enum LLMPrompt {
                     "back must be the exact target word or phrase, with original spacing preserved",
                     "For full_spelling, ask the learner to recall the complete target",
                     "For targeted_letter_cloze, choose the gap position yourself",
-                    "For targeted_letter_cloze, use exactly one continuous underscore gap of 2 or 3 characters, and keep a Chinese meaning cue in front",
+                    "For targeted_letter_cloze, use exactly one continuous underscore gap, and keep a Chinese meaning cue in front",
+                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
+                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
                     "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
                     "For targeted_letter_cloze, do not default to masking the first letter and do not make the card feel like a puzzle",
                     "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
@@ -469,7 +471,8 @@ public enum LLMPrompt {
                     "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
                     "For targeted_letter_cloze, choose the gap position yourself",
                     "For targeted_letter_cloze, use exactly one continuous underscore gap",
-                    "For targeted_letter_cloze, the gap should usually be 2 or 3 characters long",
+                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
+                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
                     "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
                     "For targeted_letter_cloze, do not default to masking the first letter",
                     "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
@@ -539,16 +542,20 @@ public enum LLMPrompt {
                     "Choose one main learning objective first, then choose the mode",
                     "selectedMode must be one of the allowed modes",
                     "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
+                    "Prefer accepted usage hints over raw sense inventory when they provide a cleaner learner-facing cue",
                     "When accepted usage hints provide a cleaner learner-facing meaning than the raw sense inventory, prefer the accepted usage hints as the semantic source",
                     "Treat raw sense inventory mainly as reference or disambiguation when it is more technical, more formal, or noisier than the accepted usage hints",
                     "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
                     "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
                     "cuePlan is required and must explain which semantic source you used",
+                    "Even when only one mode is allowed, still choose cuePlan first and normalize the semantic cue before packaging the draft",
                     "normalizedCue must be a short learner-facing cue, not copied raw dictionary wording",
                     "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
                     "If the sense inventory contains dictionary jargon, formal gloss wording, or bilingual fragments, rewrite the meaning into natural learner-facing Chinese instead of quoting it",
+                    "Do not let a forced mode justify copying dictionary jargon, formal gloss wording, or bilingual fragments into normalizedCue",
                     "Do not copy pinyin, romanization, or pronunciation respelling into normalizedCue",
                     "If any source line contains pinyin, romanization, or mixed bilingual gloss text, strip those parts and keep only the learner-facing Chinese meaning",
+                    "If the forced mode is targeted_letter_cloze, keep the Chinese cue natural and conversational before adding the gap",
                     "normalizedCue must not contain the exact target word or phrase",
                     "selectionReason is required and evidence must be short, concrete, and non-empty",
                     "Return exactly one plan only"
@@ -569,6 +576,10 @@ public enum LLMPrompt {
         scaffold: RecallPromptScaffold? = nil
     ) -> (system: String, user: String) {
         let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCueScaffold = RecallPromptScaffold(
+            learnerCue: cuePlan.normalizedCue,
+            hint: scaffold?.hint
+        )
 
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
@@ -588,7 +599,7 @@ public enum LLMPrompt {
             ].joined(separator: "\n")),
             PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
-            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: selectedMode)),
+            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(normalizedCueScaffold, requestedMode: selectedMode)),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -615,9 +626,11 @@ public enum LLMPrompt {
                     "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
                     "For targeted_letter_cloze, choose the gap position yourself",
                     "For targeted_letter_cloze, use exactly one continuous underscore gap",
-                    "For targeted_letter_cloze, the gap should usually be 2 or 3 characters long",
+                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
+                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
                     "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
                     "For targeted_letter_cloze, do not default to masking the first letter",
+                    "For targeted_letter_cloze, keep the front natural as a learner-facing Chinese cue first, then add the gap",
                     "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",

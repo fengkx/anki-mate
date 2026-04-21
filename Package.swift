@@ -167,22 +167,17 @@ let package = Package(
             name: "AnkiMateServer",
             dependencies: [
                 "AnkiMateRPC",
-                "CllmLibrary",
-                "CLlamaJSONSchemaBridge",
-                "CLlamaChatTemplateBridge",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
-            path: "Sources/AnkiMateServer",
-            linkerSettings: llamaRuntimeLinkerSettings
+            path: "Sources/AnkiMateServer"
         ),
         .testTarget(
             name: "AnkiMateServerTests",
             dependencies: [
                 "AnkiMateRPC",
                 "AnkiMateServer",
-                "CLlamaChatTemplateBridge"
             ],
             path: "Tests/AnkiMateServerTests"
         ),

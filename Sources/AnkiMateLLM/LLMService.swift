@@ -13,6 +13,15 @@ public final class LLMService: ObservableObject {
     private static let contextSizeEnvironmentKey = "DICTKIT_LLM_CONTEXT_SIZE"
     private static let gpuLayersEnvironmentKey = "DICTKIT_LLM_GPU_LAYERS"
     private static let recallDebugEnvironmentKey = "DICTKIT_LLM_RECALL_DEBUG"
+    static let exampleArtifactMinTokens = 1024
+    static let usageHintMinTokens = 1024
+    static let learningAidsMaxTokens = 1024
+    static let learningAidJudgeMaxTokens = 1024
+    static let learningAidCombinedJudgeMaxTokens = 1024
+    static let ipaMaxTokens = 1024
+    static let pronunciationEnhancementMaxTokens = 1024
+    static let recallPlanMaxTokens = 1024
+    static let recallDraftMaxTokens = 1024
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var loadedModelId: String?
@@ -33,7 +42,7 @@ public final class LLMService: ObservableObject {
     private var autoStartTask: Task<Void, Never>?
     private var loadedModelPath: String?
     /// Port of the llama-server child process for direct chat completion requests.
-    private var inferencePort: Int?
+    @Published public private(set) var llamaServerPort: Int?
 
     public convenience init(defaults: UserDefaults = .standard) {
         let client = RPCClient()
@@ -135,7 +144,7 @@ public final class LLMService: ObservableObject {
                 params: HealthParams(),
                 port: port
             )
-            inferencePort = healthResult.inferencePort
+            llamaServerPort = healthResult.inferencePort
 
             defaults.set(model.id, forKey: Self.lastSuccessfulModelIdDefaultsKey)
         }
@@ -146,7 +155,7 @@ public final class LLMService: ObservableObject {
         await serverManager.stop()
         loadedModelId = nil
         loadedModelPath = nil
-        inferencePort = nil
+        llamaServerPort = nil
     }
 
     /// Start the server without triggering model load.
@@ -308,7 +317,7 @@ public final class LLMService: ObservableObject {
         let response: ExampleSentenceEnvelope = try await generateStructuredOutput(
             type: ExampleSentenceEnvelope.self,
             prompt: prompt,
-            maxTokens: max(420, desiredCount * 150),
+            maxTokens: max(Self.exampleArtifactMinTokens, desiredCount * 256),
             temperature: adjustedTemperature(temperature),
             responseFormat: LLMResponseFormat(kind: .json)
         )
@@ -473,7 +482,7 @@ public final class LLMService: ObservableObject {
         let response: UsageHintEnvelope = try await generateStructuredOutput(
             type: UsageHintEnvelope.self,
             prompt: prompt,
-            maxTokens: max(320, desiredCount * 120),
+            maxTokens: max(Self.usageHintMinTokens, desiredCount * 192),
             temperature: adjustedTemperature(0.35),
             responseFormat: LLMResponseFormat(kind: .json)
         )
@@ -544,7 +553,7 @@ public final class LLMService: ObservableObject {
         let response: GeneratedIPAPayload = try await generateStructuredOutput(
             type: GeneratedIPAPayload.self,
             prompt: prompt,
-            maxTokens: 80,
+            maxTokens: Self.ipaMaxTokens,
             temperature: adjustedTemperature(0.2)
         )
 
@@ -603,7 +612,7 @@ public final class LLMService: ObservableObject {
         let response: GeneratedPronunciationEnhancementPayload = try await generateStructuredOutput(
             type: GeneratedPronunciationEnhancementPayload.self,
             prompt: prompt,
-            maxTokens: 120,
+            maxTokens: Self.pronunciationEnhancementMaxTokens,
             temperature: adjustedTemperature(strictSpellingRetry ? 0.1 : 0.2)
         )
 
@@ -616,6 +625,28 @@ public final class LLMService: ObservableObject {
         return LLMPronunciationEnhancement(
             ipa: normalizedIPA,
             stressSyllables: normalizedStress
+        )
+    }
+
+    public func generateRecallCardDraft(
+        word: String,
+        definition: String,
+        partOfSpeech: String,
+        context: LLMRecallGenerationContext,
+        mode: LLMRecallCardMode,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMRecallCardDraft {
+        try await generateRecallCardDraft(
+            word: word,
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: partOfSpeech,
+                    definition: definition
+                )
+            ],
+            context: context,
+            mode: mode,
+            anchor: anchor
         )
     }
 
@@ -688,6 +719,11 @@ public final class LLMService: ObservableObject {
         )
         let wordSignals = Self.recallWordSignals(for: normalizedWord)
 
+        let plan: (
+            selectedMode: LLMRecallCardMode,
+            selectionReason: LLMRecallSelectionReason,
+            cuePlan: LLMRecallCuePlan
+        )
         do {
             let planPrompt = LLMPrompt.recallCardPlan(
                 word: normalizedWord,
@@ -702,60 +738,21 @@ public final class LLMService: ObservableObject {
             let planResponse: RecallCardPlanPayload = try await generateStructuredOutput(
                 type: RecallCardPlanPayload.self,
                 prompt: planPrompt,
-                maxTokens: 220,
+                maxTokens: Self.recallPlanMaxTokens,
                 temperature: adjustedTemperature(0.25),
-                responseFormat: Self.recallPlanResponseFormat(allowedModes: normalizedAllowedModes)
+                responseFormat: Self.recallPlanResponseFormat(allowedModes: normalizedAllowedModes),
+                operation: "Recall plan generation"
             )
-            if let plan = Self.normalizeRecallCardPlan(
+            guard let normalizedPlan = Self.normalizeRecallCardPlan(
                 planResponse,
                 allowedModes: normalizedAllowedModes,
                 target: normalizedWord
-            ) {
-                let draftPrompt = LLMPrompt.recallCardDraftFromPlan(
-                    word: normalizedWord,
-                    selectedMode: plan.selectedMode,
-                    primaryGoal: plan.selectionReason.primaryGoal,
-                    cuePlan: plan.cuePlan,
-                    anchor: anchor,
-                    wordSignals: wordSignals,
-                    scaffold: scaffold
+            ) else {
+                throw LLMServiceError.invalidStructuredOutput(
+                    "Recall plan generation returned no valid plan JSON"
                 )
-                let draftResponse: RecallCardDecisionPayload = try await generateStructuredOutput(
-                    type: RecallCardDecisionPayload.self,
-                    prompt: draftPrompt,
-                    maxTokens: 220,
-                    temperature: adjustedTemperature(0.2),
-                    responseFormat: Self.recallDraftResponseFormat(mode: plan.selectedMode)
-                )
-                if let draftPayload = draftResponse.draft,
-                   let draft = Self.normalizeRecallCardDraft(
-                    draftPayload,
-                    allowedModes: [plan.selectedMode],
-                    target: normalizedWord
-                   ) {
-                    let enforcedDraft = Self.enforceRecallDraftContract(
-                        draft,
-                        fallbackAnchor: anchor
-                    )
-                    return RecallCardDraftDecisionEnvelope(
-                        draft: enforcedDraft,
-                        selectionReason: plan.selectionReason,
-                        cuePlan: plan.cuePlan
-                    )
-                }
-                if let fallback = Self.ruleBasedRecallCardDraft(
-                    word: normalizedWord,
-                    senses: normalizedSenses,
-                    mode: plan.selectedMode,
-                    anchor: anchor
-                ) {
-                    return RecallCardDraftDecisionEnvelope(
-                        draft: fallback,
-                        selectionReason: plan.selectionReason,
-                        cuePlan: plan.cuePlan
-                    )
-                }
             }
+            plan = normalizedPlan
         } catch {
             if let fallback = Self.ruleBasedRecallCardDraft(
                 word: normalizedWord,
@@ -772,22 +769,61 @@ public final class LLMService: ObservableObject {
             throw error
         }
 
-        if let fallback = Self.ruleBasedRecallCardDraft(
+        let draftPrompt = LLMPrompt.recallCardDraftFromPlan(
             word: normalizedWord,
-            senses: normalizedSenses,
-            mode: normalizedModePrior ?? normalizedAllowedModes.first ?? .fullSpelling,
-            anchor: anchor
-        ) {
-            return RecallCardDraftDecisionEnvelope(
-                draft: fallback,
-                selectionReason: Self.fallbackSelectionReason(for: fallback.mode),
-                cuePlan: Self.fallbackCuePlan(for: fallback, senses: normalizedSenses)
+            selectedMode: plan.selectedMode,
+            primaryGoal: plan.selectionReason.primaryGoal,
+            cuePlan: plan.cuePlan,
+            anchor: anchor,
+            wordSignals: wordSignals,
+            scaffold: scaffold
+        )
+        let draftResponse: RecallCardDecisionPayload = try await generateStructuredOutput(
+            type: RecallCardDecisionPayload.self,
+            prompt: draftPrompt,
+            maxTokens: Self.recallDraftMaxTokens,
+            temperature: adjustedTemperature(0.2),
+            responseFormat: Self.recallDraftResponseFormat(mode: plan.selectedMode),
+            allowReasoningFallback: false,
+            operation: "Recall draft generation"
+        )
+        guard let draftPayload = draftResponse.draft,
+              let draft = Self.normalizeRecallCardDraft(
+                draftPayload,
+                allowedModes: [plan.selectedMode],
+                target: normalizedWord
+              ) else {
+            throw LLMServiceError.invalidStructuredOutput(
+                "Recall draft generation returned no valid draft JSON"
             )
         }
-
-        throw LLMServiceError.invalidStructuredOutput(
-            "Expected one valid recall decision envelope"
+        let enforcedDraft = Self.enforceRecallDraftContract(
+            draft,
+            fallbackAnchor: anchor
         )
+        return RecallCardDraftDecisionEnvelope(
+            draft: enforcedDraft,
+            selectionReason: plan.selectionReason,
+            cuePlan: plan.cuePlan
+        )
+    }
+
+    public func generateRecallCardDraft(
+        word: String,
+        senses: [LLMSensePromptInput],
+        context: LLMRecallGenerationContext,
+        mode: LLMRecallCardMode,
+        anchor: LLMAnchorSnapshot? = nil
+    ) async throws -> LLMRecallCardDraft {
+        let decision = try await generateRecallCardDraftDecision(
+            word: word,
+            senses: senses,
+            context: context,
+            allowedModes: [mode],
+            modePrior: mode,
+            anchor: anchor
+        )
+        return decision.draft
     }
 
     public func generateRecallCardDraft(
@@ -796,15 +832,13 @@ public final class LLMService: ObservableObject {
         mode: LLMRecallCardMode,
         anchor: LLMAnchorSnapshot? = nil
     ) async throws -> LLMRecallCardDraft {
-        let decision = try await generateRecallCardDraftDecision(
+        try await generateRecallCardDraft(
             word: word,
             senses: senses,
             context: .init(),
-            allowedModes: [mode],
-            modePrior: mode,
+            mode: mode,
             anchor: anchor
         )
-        return decision.draft
     }
 
     public func generateLearningAids(
@@ -843,7 +877,7 @@ public final class LLMService: ObservableObject {
         let response: LearningAidsEnvelope = try await generateStructuredOutput(
             type: LearningAidsEnvelope.self,
             prompt: prompt,
-            maxTokens: 560,
+            maxTokens: Self.learningAidsMaxTokens,
             temperature: adjustedTemperature(0.4),
             responseFormat: LLMResponseFormat(kind: .json)
         )
@@ -1277,7 +1311,9 @@ public final class LLMService: ObservableObject {
         prompt: (system: String, user: String),
         maxTokens: Int,
         temperature: Float,
-        responseFormat: LLMResponseFormat? = nil
+        responseFormat: LLMResponseFormat? = nil,
+        allowReasoningFallback: Bool = true,
+        operation: String = "Structured generation"
     ) async throws -> T {
         try await ensureReady()
         let port = try requireInferencePort()
@@ -1296,7 +1332,12 @@ public final class LLMService: ObservableObject {
             port: port
         )
 
-        return try Self.decodeStructuredOutput(type, from: Self.primaryResponseText(from: response))
+        let responseText = try Self.strictStructuredResponseText(
+            from: response,
+            operation: operation,
+            allowReasoningFallback: allowReasoningFallback
+        )
+        return try Self.decodeStructuredOutput(type, from: responseText)
     }
 
     /// OpenAI-style chat generation entry point.
@@ -1311,7 +1352,7 @@ public final class LLMService: ObservableObject {
         toolChoice: String? = nil,
         parallelToolCalls: Bool = false,
         responseFormat: LLMResponseFormat? = nil,
-        maxTokens: Int = 512,
+        maxTokens: Int? = nil,
         temperature: Float = 0.2
     ) async throws -> GenerateResult {
         try await ensureReady()
@@ -1363,7 +1404,7 @@ public final class LLMService: ObservableObject {
         tools: [LLMToolDefinition]? = nil,
         toolChoice: String? = nil,
         parallelToolCalls: Bool = false,
-        maxTokens: Int = 512,
+        maxTokens: Int? = nil,
         temperature: Float = 0.2,
         onDelta: @escaping @Sendable (String) -> Void,
         onReasoningDelta: (@Sendable (String) -> Void)? = nil
@@ -1416,7 +1457,7 @@ public final class LLMService: ObservableObject {
     /// Returns the llama-server child port for direct chat completion requests.
     /// Call `ensureReady()` first — this throws if the port is not available.
     private func requireInferencePort() throws -> Int {
-        guard let port = inferencePort else {
+        guard let port = llamaServerPort else {
             throw LLMServiceError.serverNotAvailable
         }
         return port
@@ -2300,9 +2341,10 @@ extension LLMService {
             )
         }?.nilIfEmpty
 
-        if mode == .targetedLetterCloze,
-           !isValidTargetedLetterClozeSurface(front, hint: hint) {
-            return nil
+        if mode == .targetedLetterCloze {
+            guard isValidTargetedLetterClozeSurface(front, hint: hint, target: target) else {
+                return nil
+            }
         }
         let anchor = normalizeAnchor(payload.anchor)
         return LLMRecallCardDraft(
@@ -2385,7 +2427,7 @@ extension LLMService {
         guard let payload else { return nil }
         let primaryGoal = normalizeGeneratedLine(payload.primaryGoal, stripFieldLabels: true)
         guard !primaryGoal.isEmpty,
-              isExpectedPrimaryGoal(primaryGoal, for: selectedMode) else {
+              isAllowedRecallPrimaryGoal(primaryGoal) else {
             return nil
         }
 
@@ -2479,30 +2521,91 @@ extension LLMService {
         )
     }
 
-    private static func isExpectedPrimaryGoal(
-        _ primaryGoal: String,
-        for mode: LLMRecallCardMode
-    ) -> Bool {
-        switch mode {
-        case .fullSpelling:
-            return primaryGoal == "whole_word_recall"
-        case .targetedLetterCloze:
-            return primaryGoal == "local_spelling_calibration"
-        case .phraseRecall:
-            return primaryGoal == "phrase_chunk_retrieval"
-        }
+    private static func isAllowedRecallPrimaryGoal(_ primaryGoal: String) -> Bool {
+        [
+            "whole_word_recall",
+            "local_spelling_calibration",
+            "phrase_chunk_retrieval"
+        ].contains(primaryGoal)
     }
 
     private static func isValidTargetedLetterClozeSurface(
         _ front: String,
-        hint: String?
+        hint: String?,
+        target: String
     ) -> Bool {
         let combined = [front, hint ?? ""].joined(separator: " ")
+        guard front.contains("_") else { return false }
         guard combined.contains("_") else { return false }
         guard underscoreGroupCount(in: combined) == 1 else { return false }
-        let gapLength = longestUnderscoreRun(in: combined)
-        guard (2...3).contains(gapLength) else { return false }
-        return !combined.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_")
+        guard !combined.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_") else { return false }
+        return clozeGapMatchesTarget(front, target: target)
+    }
+
+    private static func clozeGapMatchesTarget(_ front: String, target: String) -> Bool {
+        let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedTarget.isEmpty else { return false }
+
+        for candidate in clozeTokenCandidates(in: front) where underscoreGroupCount(in: candidate) == 1 {
+            let gapLength = longestUnderscoreRun(in: candidate)
+            guard gapLength > 0 else { continue }
+            let parts = splitClozeToken(candidate)
+            let prefix = parts.prefix.lowercased()
+            let suffix = parts.suffix.lowercased()
+            guard !prefix.isEmpty || !suffix.isEmpty else { continue }
+            guard normalizedTarget.hasPrefix(prefix),
+                  normalizedTarget.hasSuffix(suffix),
+                  prefix.count + suffix.count < normalizedTarget.count else {
+                continue
+            }
+
+            let missingLetterCount = normalizedTarget.count - prefix.count - suffix.count
+            if missingLetterCount == gapLength {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func clozeTokenCandidates(in text: String) -> [String] {
+        var candidates: [String] = []
+        var current = ""
+
+        func flushCurrent() {
+            if current.contains("_") {
+                candidates.append(current)
+            }
+            current.removeAll(keepingCapacity: true)
+        }
+
+        for character in text {
+            if isClozeTokenCharacter(character) {
+                current.append(character)
+            } else {
+                flushCurrent()
+            }
+        }
+        flushCurrent()
+
+        return candidates
+    }
+
+    private static func isClozeTokenCharacter(_ character: Character) -> Bool {
+        if character == "_" { return true }
+        return character.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && CharacterSet.alphanumerics.contains(scalar)
+        }
+    }
+
+    private static func splitClozeToken(_ token: String) -> (prefix: String, suffix: String) {
+        guard let firstGap = token.firstIndex(of: "_"),
+              let lastGap = token.lastIndex(of: "_") else {
+            return (token, "")
+        }
+        return (
+            String(token[..<firstGap]),
+            String(token[token.index(after: lastGap)...])
+        )
     }
 
     private static func underscoreGroupCount(in text: String) -> Int {
@@ -3081,7 +3184,7 @@ extension LLMService {
             let judge: LearningAidJudgeEnvelope = try await generateStructuredOutput(
                 type: LearningAidJudgeEnvelope.self,
                 prompt: prompt,
-                maxTokens: 260,
+                maxTokens: Self.learningAidJudgeMaxTokens,
                 temperature: adjustedTemperature(0.2),
                 responseFormat: LLMResponseFormat(kind: .json)
             )
@@ -3130,7 +3233,7 @@ extension LLMService {
             let judge: LearningAidCombinedJudgeEnvelope = try await generateStructuredOutput(
                 type: LearningAidCombinedJudgeEnvelope.self,
                 prompt: prompt,
-                maxTokens: 420,
+                maxTokens: Self.learningAidCombinedJudgeMaxTokens,
                 temperature: adjustedTemperature(0.2),
                 responseFormat: LLMResponseFormat(kind: .json)
             )
@@ -3522,6 +3625,28 @@ extension LLMService {
         let content = choice?.message.content ?? ""
         let reasoning = choice?.message.reasoning_content ?? ""
         return (content.isEmpty ? reasoning : content).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func strictStructuredResponseText(
+        from response: ChatCompletionResponse,
+        operation: String,
+        allowReasoningFallback: Bool
+    ) throws -> String {
+        let choice = response.choices.first
+        let content = choice?.message.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !content.isEmpty {
+            return content
+        }
+
+        let reasoning = choice?.message.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if allowReasoningFallback, !reasoning.isEmpty {
+            return reasoning
+        }
+
+        let finishReason = choice?.finish_reason ?? "unknown"
+        throw LLMServiceError.invalidStructuredOutput(
+            "\(operation) returned no structured content (finish_reason: \(finishReason))"
+        )
     }
 
     static func mapToGenerateResult(_ response: ChatCompletionResponse) -> GenerateResult {

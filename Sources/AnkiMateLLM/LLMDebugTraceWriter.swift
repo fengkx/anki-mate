@@ -14,20 +14,17 @@ actor LLMDebugTraceWriter {
         let timestamp: String
         let event: String
         let transport: String
-        let rpcMethod: String
         let port: Int
-        let params: GenerateParams?
+        let request: ChatCompletionRequest?
         let delta: String?
-        let response: GenerateResult?
+        let response: ChatCompletionResponse?
         let error: ErrorPayload?
     }
 
     struct Session {
         let id: UUID
         let transport: String
-        let rpcMethod: String
         let port: Int
-        let params: GenerateParams
     }
 
     static let defaultFileURL = URL(fileURLWithPath: "/tmp/anki-mate-llm-debug.jsonl")
@@ -51,18 +48,15 @@ actor LLMDebugTraceWriter {
         self.fileManager = fileManager
     }
 
-    func beginRequest(
+    func beginChatRequest(
         transport: String,
-        rpcMethod: String,
-        params: GenerateParams,
+        request: ChatCompletionRequest,
         port: Int
     ) throws -> UUID {
         let session = Session(
             id: UUID(),
             transport: transport,
-            rpcMethod: rpcMethod,
-            port: port,
-            params: params
+            port: port
         )
         sessions[session.id] = session
         try append(
@@ -71,9 +65,8 @@ actor LLMDebugTraceWriter {
                 timestamp: Self.dateFormatter.string(from: Date()),
                 event: "request_started",
                 transport: transport,
-                rpcMethod: rpcMethod,
                 port: port,
-                params: params,
+                request: request,
                 delta: nil,
                 response: nil,
                 error: nil
@@ -90,9 +83,8 @@ actor LLMDebugTraceWriter {
                 timestamp: Self.dateFormatter.string(from: Date()),
                 event: "stream_delta",
                 transport: session.transport,
-                rpcMethod: session.rpcMethod,
                 port: session.port,
-                params: nil,
+                request: nil,
                 delta: delta,
                 response: nil,
                 error: nil
@@ -100,7 +92,7 @@ actor LLMDebugTraceWriter {
         )
     }
 
-    func finishRequest(_ sessionID: UUID, response: GenerateResult) throws {
+    func finishChatRequest(_ sessionID: UUID, response: ChatCompletionResponse) throws {
         guard let session = sessions.removeValue(forKey: sessionID) else { return }
         try append(
             Event(
@@ -108,9 +100,8 @@ actor LLMDebugTraceWriter {
                 timestamp: Self.dateFormatter.string(from: Date()),
                 event: "request_finished",
                 transport: session.transport,
-                rpcMethod: session.rpcMethod,
                 port: session.port,
-                params: nil,
+                request: nil,
                 delta: nil,
                 response: response,
                 error: nil
@@ -126,9 +117,8 @@ actor LLMDebugTraceWriter {
                 timestamp: Self.dateFormatter.string(from: Date()),
                 event: "request_failed",
                 transport: session.transport,
-                rpcMethod: session.rpcMethod,
                 port: session.port,
-                params: nil,
+                request: nil,
                 delta: nil,
                 response: nil,
                 error: Self.makeErrorPayload(from: error)
@@ -175,6 +165,8 @@ actor LLMDebugTraceWriter {
                 return ErrorPayload(type: "RPCClientError", message: "HTTP error: \(statusCode)", detail: nil, stack: nil)
             case .decodingError(let message):
                 return ErrorPayload(type: "RPCClientError", message: "Failed to decode response", detail: message, stack: nil)
+            case .upstreamError(let message):
+                return ErrorPayload(type: "RPCClientError", message: "Upstream error", detail: message, stack: nil)
             }
         }
 

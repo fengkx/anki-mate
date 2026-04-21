@@ -186,7 +186,7 @@ private extension LLMRuntimeReadinessTests {
 
         if let rpcError = error as? RPCClientError {
             switch rpcError {
-            case .rpcError, .serverNotRunning, .httpError:
+            case .rpcError, .serverNotRunning, .httpError, .upstreamError:
                 return
             case .decodingError:
                 break
