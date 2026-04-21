@@ -1,0 +1,105 @@
+name: LLM Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      matrix:
+        description: Benchmark matrix name
+        required: false
+        default: default
+        type: choice
+        options:
+          - default
+      rounds:
+        description: Benchmark rounds per model
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: llm-benchmark-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-benchmark:
+    runs-on: macos-26
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      DICTKIT_LLM_CONTEXT_SIZE: 4096
+      DICTKIT_LLM_GPU_LAYERS: 0
+      DICTKIT_LLM_E2E_MATRIX: ${{ inputs.matrix || 'default' }}
+      DICTKIT_LLM_E2E_BENCHMARK_ROUNDS: ${{ inputs.rounds || '1' }}
+      DICTKIT_LLM_E2E_REPORT_DIR: .build/llm-benchmark-report
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Resolve llama cache key
+        id: llama-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          llama_ref="$(git ls-tree HEAD vendor/llama.cpp | awk '{print $3}')"
+          echo "ref=${llama_ref:-missing}" >> "$GITHUB_OUTPUT"
+
+      - name: Install CI tools
+        run: brew install just cmake openssl@3
+
+      - name: Restore llama build cache
+        id: llama-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: llama-build-${{ runner.os }}-${{ steps.llama-cache-key.outputs.ref }}-${{ hashFiles('scripts/build-llama.sh', 'scripts/patch-llama-openssl.sh') }}
+
+      - name: Build llama.cpp
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        run: just build-llama
+
+      - name: Save llama build cache
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vendor/llama-build
+            vendor/llama-install
+          key: ${{ steps.llama-cache.outputs.cache-primary-key }}
+
+      - name: Prepare benchmark models
+        run: just prepare-llm-benchmark-models
+
+      - name: Run benchmark suite
+        run: just test-llm-benchmark
+
+      - name: Publish benchmark summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          summary_path="${DICTKIT_LLM_E2E_REPORT_DIR}/step-summary.md"
+          if [ -f "$summary_path" ]; then
+            cat "$summary_path" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## LLM Benchmark Summary"
+              echo
+              echo "No benchmark summary was generated."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: llm-benchmark-${{ github.ref_name }}-${{ github.run_number }}
+          path: .build/llm-benchmark-report/**
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

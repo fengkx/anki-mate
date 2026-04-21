@@ -67,6 +67,24 @@ just test-speech
 The pinned CI model is defined in `ci/llm-e2e-model.lock.json`.
 Keep it to a single GGUF by default. GitHub Actions cache is limited and large model churn will evict unrelated caches.
 
+### Multi-model benchmark and downloadable reports
+
+- use this when you want a comparative report across multiple model families and quantizations rather than a single-model gate
+- first-time local setup:
+  - `just prepare-llm-benchmark-models`
+- run the benchmark locally:
+  - `just test-llm-benchmark`
+- optional env:
+  - `DICTKIT_LLM_E2E_REPORT_DIR=/tmp/llm-benchmark-report`
+  - `DICTKIT_LLM_E2E_BENCHMARK_ROUNDS=1`
+- default report output:
+  - `.build/llm-benchmark-report/summary.md`
+  - `.build/llm-benchmark-report/results.json`
+  - `.build/llm-benchmark-report/environment.json`
+
+GitHub Actions benchmark runs live in `.github/workflows/llm-benchmark.yml`.
+It is a manual `workflow_dispatch` job and uploads the generated report directory as an artifact so you can download it after the run completes.
+
 ### App persistence / sync / UI state
 
 - `just test-filter WordList`
