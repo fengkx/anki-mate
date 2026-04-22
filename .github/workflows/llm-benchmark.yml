@@ -94,11 +94,22 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Resolve artifact name
+        if: always()
+        id: artifact-name
+        shell: bash
+        run: |
+          set -euo pipefail
+          safe_ref_name="$(printf '%s' "${GITHUB_REF_NAME}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+          if [ -z "$safe_ref_name" ]; then
+            safe_ref_name="ref"
+          fi
+          echo "name=llm-benchmark-${safe_ref_name}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: llm-benchmark-${{ github.ref_name }}-${{ github.run_number }}
+          name: ${{ steps.artifact-name.outputs.name }}
           path: .build/llm-benchmark-report/**
           if-no-files-found: error
           retention-days: 14
