@@ -164,6 +164,31 @@ private extension LLMModelBenchmarkE2ETests {
                 ],
                 expectedCount: 3,
                 requiredSenseCoverage: [1, 2, 3]
+            ),
+            .init(
+                word: "believe",
+                senses: [
+                    .init(partOfSpeech: "verb", definition: "accept as true or real")
+                ],
+                expectedCount: 3,
+                requiredSenseCoverage: [1]
+            ),
+            .init(
+                word: "accommodate",
+                senses: [
+                    .init(partOfSpeech: "verb", definition: "provide space, lodging, or enough room for"),
+                    .init(partOfSpeech: "verb", definition: "fit in with the wishes or needs of")
+                ],
+                expectedCount: 2,
+                requiredSenseCoverage: [1, 2]
+            ),
+            .init(
+                word: "conscientious",
+                senses: [
+                    .init(partOfSpeech: "adjective", definition: "careful to do everything correctly and responsibly")
+                ],
+                expectedCount: 3,
+                requiredSenseCoverage: [1]
             )
         ]
     }
@@ -184,6 +209,12 @@ private extension LLMModelBenchmarkE2ETests {
                     .init(partOfSpeech: "noun", definition: "illumination"),
                     .init(partOfSpeech: "adjective", definition: "not heavy"),
                     .init(partOfSpeech: "verb", definition: "ignite")
+                ]
+            ),
+            .init(
+                word: "believe",
+                senses: [
+                    .init(partOfSpeech: "verb", definition: "accept as true or real")
                 ]
             )
         ]
@@ -206,6 +237,36 @@ private extension LLMModelBenchmarkE2ETests {
                 senses: [.init(partOfSpeech: "verb", definition: "收到；接收", semanticHint: "收到")],
                 acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
                 acceptedDefinitionNote: nil,
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .targetedLetterCloze
+            ),
+            .init(
+                word: "believe",
+                senses: [.init(partOfSpeech: "verb", definition: "相信；认为属实", semanticHint: "相信")],
+                acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
+                acceptedDefinitionNote: "表示相信某件事是真的，或者相信某个人的话",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .targetedLetterCloze
+            ),
+            .init(
+                word: "accommodate",
+                senses: [.init(partOfSpeech: "verb", definition: "容纳；提供住处；满足需要", semanticHint: "容纳；提供住处")],
+                acceptedPitfalls: ["双写的 cc 和 mm 容易漏掉", "中间的 o 和 a 顺序容易写乱"],
+                acceptedDefinitionNote: "表示提供足够空间、住处，或使安排适应需要",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .targetedLetterCloze
+            ),
+            .init(
+                word: "conscientious",
+                senses: [.init(partOfSpeech: "adjective", definition: "认真负责的；一丝不苟的", semanticHint: "认真负责的")],
+                acceptedPitfalls: ["中间的 sci 容易写错", "后半段 tious 容易漏字母或顺序写乱"],
+                acceptedDefinitionNote: "表示做事认真、细致，愿意把事情做好",
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
