@@ -172,7 +172,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Output JSON only"))
     }
 
-    func testRecallDecisionPromptIncludesLearningAidsAllowedModesAndSelectionReason() {
+    func testRecallDecisionPromptIncludesLearningAidsAllowedModesAndFrontBackContract() {
         let prompt = LLMPrompt.recallCardDecision(
             word: "collocation",
             senses: [
@@ -206,8 +206,13 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Accepted learning aids"))
         XCTAssertTrue(prompt.user.contains("Allowed modes"))
         XCTAssertTrue(prompt.user.contains("Mode prior"))
-        XCTAssertTrue(prompt.user.contains("selectionReason"))
         XCTAssertTrue(prompt.user.contains("cuePlan"))
+        XCTAssertTrue(prompt.user.contains("English target: collocation"))
+        XCTAssertTrue(prompt.user.contains("Chinese learner cue: 常见词语搭配"))
+        XCTAssertTrue(prompt.user.contains("front is the learner-facing Chinese prompt"))
+        XCTAssertTrue(prompt.user.contains("back must be the exact English target"))
+        XCTAssertTrue(prompt.user.contains("Never translate back into Chinese"))
+        XCTAssertTrue(prompt.user.contains("apply underscores only to the English target"))
         XCTAssertTrue(prompt.user.contains("choose the gap position yourself"))
         XCTAssertTrue(prompt.user.contains("Do not choose targeted_letter_cloze only because the word is long"))
         XCTAssertTrue(prompt.user.contains("Do not copy pinyin, romanization, or pronunciation respelling into front or hint"))
@@ -255,6 +260,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Accepted learning aids"))
         XCTAssertTrue(prompt.user.contains("\"selectedMode\""))
         XCTAssertTrue(prompt.user.contains("\"cuePlan\""))
+        XCTAssertFalse(prompt.user.contains("\"selectionReason\""))
         XCTAssertFalse(prompt.user.contains("\"draft\": {"))
         XCTAssertTrue(prompt.user.contains("normalizedCue must not contain the exact target word or phrase"))
     }
@@ -283,9 +289,13 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Chosen mode"))
         XCTAssertTrue(prompt.user.contains("Primary goal"))
         XCTAssertTrue(prompt.user.contains("Cue plan"))
+        XCTAssertTrue(prompt.user.contains("English target: lemmatize"))
+        XCTAssertTrue(prompt.user.contains("Chinese learner cue: 找到一个词的原始形态"))
         XCTAssertTrue(prompt.user.contains("normalizedCue: 找到一个词的原始形态"))
         XCTAssertTrue(prompt.user.contains("Use cuePlan.normalizedCue as the semantic source of truth for draft.front"))
         XCTAssertTrue(prompt.user.contains("draft.front must be derived from normalizedCue, not independently rewritten from raw sources"))
+        XCTAssertTrue(prompt.user.contains("front is the learner-facing Chinese prompt"))
+        XCTAssertTrue(prompt.user.contains("back must be the exact English target"))
         XCTAssertFalse(prompt.user.contains("Sense inventory"))
         XCTAssertFalse(prompt.user.contains("Accepted learning aids"))
     }
@@ -348,7 +358,8 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("selectedMode must be one of the allowed modes"))
         XCTAssertTrue(prompt.user.contains("normalizedCue must be a short learner-facing cue, not copied raw dictionary wording"))
         XCTAssertTrue(prompt.user.contains("Prefer accepted usage hints over raw sense inventory when they provide a cleaner learner-facing cue"))
-        XCTAssertTrue(prompt.user.contains("Even when only one mode is allowed, still choose cuePlan first and normalize the semantic cue before packaging the draft"))
+        XCTAssertTrue(prompt.user.contains("selectedMode must be targeted_letter_cloze"))
+        XCTAssertTrue(prompt.user.contains("Do not consider any other mode"))
         XCTAssertTrue(prompt.user.contains("Do not let a forced mode justify copying dictionary jargon, formal gloss wording, or bilingual fragments into normalizedCue"))
         XCTAssertTrue(prompt.user.contains("If the forced mode is targeted_letter_cloze, keep the Chinese cue natural and conversational before adding the gap"))
     }
@@ -386,6 +397,10 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("recallRelevant should be true only when the item directly helps active recall"))
         XCTAssertFalse(prompt.user.contains("It is acceptable to return an empty array for any section"))
         XCTAssertTrue(prompt.user.contains("Each section may be empty; weak filler is worse than no item"))
+        XCTAssertTrue(prompt.user.contains("Return a raw JSON object only. No markdown fences."))
+        XCTAssertTrue(prompt.user.contains("Empty arrays are better than weak items"))
+        XCTAssertTrue(prompt.user.contains("A collocation must teach a reusable phrase pattern, not restate the definition"))
+        XCTAssertTrue(prompt.user.contains("A mnemonic must still work when the headword is hidden"))
         XCTAssertTrue(prompt.user.contains("Use accepted learning material as already-taught points; the same learning point in different wording or language still counts as overlap"))
         XCTAssertTrue(prompt.user.contains("If accepted material says this word has a double-letter spelling trap, an English rewording of that same trap is still duplicate"))
         XCTAssertTrue(prompt.user.contains("If accepted material already covers the clearest point for a section, return an empty array instead of rewording it"))
@@ -405,11 +420,26 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Good mnemonic: reluctant -> \"dragging feet at the doorway\""))
         XCTAssertTrue(prompt.user.contains("Bad mnemonic: reluctant -> \"Think of a person who is hesitant to agree\""))
         XCTAssertTrue(prompt.user.contains("Bad collocation: principal -> \"principal of the school\""))
-        XCTAssertTrue(prompt.user.contains("Bad collocation: dismantle -> \"dismantle a machine\""))
+        XCTAssertTrue(prompt.user.contains("Why bad: this just restates the dictionary sense instead of teaching a reusable pattern"))
         XCTAssertTrue(prompt.user.contains("If accepted pitfalls already include \"easy to miss the double l\", return an empty pitfall unless you have a genuinely different risk"))
-        XCTAssertTrue(prompt.user.contains("If accepted collocations already include \"strong collocation\", do not output it again"))
         XCTAssertTrue(prompt.user.contains("\"charge\" [note: keep raw]"))
         XCTAssertTrue(prompt.user.contains("do not invent source offsets or remap anchors"))
+    }
+
+    func testStructuredExamplePromptAllowsFewerStrongerSingleSenseExamples() {
+        let prompt = LLMPrompt.exampleSentenceArtifacts(
+            word: "perpetual",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "adjective",
+                    definition: "never ending or changing"
+                )
+            ]
+        )
+
+        XCTAssertTrue(prompt.user.contains("Return 1 to 3 items in \"examples\""))
+        XCTAssertTrue(prompt.user.contains("If only one sense is listed, you may return 1 to 3 distinct contexts for that single sense"))
+        XCTAssertTrue(prompt.user.contains("Two strong contexts are better than three repetitive ones"))
     }
 
     func testLearningAidJudgePromptRequestsRecommendationAndOverlapJSON() {

@@ -1,19 +1,60 @@
 import Foundation
 
+struct LLMBenchmarkTaskTimeouts: Codable, Equatable {
+    private static let defaultSeconds = 120
+
+    let values: [String: Int]
+
+    init(values: [String: Int] = [:]) {
+        self.values = values
+    }
+
+    func seconds(for taskType: String) -> Int {
+        values[taskType] ?? values["default"] ?? Self.defaultSeconds
+    }
+
+    var maximumSeconds: Int {
+        values.values.max() ?? Self.defaultSeconds
+    }
+
+    func merging(_ overrides: LLMBenchmarkTaskTimeouts?) -> LLMBenchmarkTaskTimeouts {
+        guard let overrides else { return self }
+        var merged = values
+        for (key, value) in overrides.values {
+            merged[key] = value
+        }
+        return .init(values: merged)
+    }
+}
+
 struct LLMBenchmarkMatrix: Codable, Equatable {
+    struct Defaults: Codable, Equatable {
+        let taskTimeoutSeconds: [String: Int]?
+    }
+
     struct ModelSelection: Codable, Equatable {
         let modelId: String
         let family: String
         let variant: String
         let quantization: String
+        let taskTimeoutSeconds: [String: Int]?
     }
 
     let name: String
+    let defaults: Defaults?
     let models: [ModelSelection]
 
     static func load(from url: URL) throws -> LLMBenchmarkMatrix {
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(LLMBenchmarkMatrix.self, from: data)
+    }
+
+    func effectiveTaskTimeouts(forModelID modelID: String) -> LLMBenchmarkTaskTimeouts {
+        let defaultTimeouts = LLMBenchmarkTaskTimeouts(values: defaults?.taskTimeoutSeconds ?? [:])
+        let modelTimeouts = LLMBenchmarkTaskTimeouts(
+            values: models.first(where: { $0.modelId == modelID })?.taskTimeoutSeconds ?? [:]
+        )
+        return defaultTimeouts.merging(modelTimeouts)
     }
 }
 
@@ -67,17 +108,24 @@ struct LLMBenchmarkReport: Codable, Equatable {
     struct ModelResult: Codable, Equatable {
         enum Status: String, Codable, Equatable {
             case passed
+            case passedWithIssues = "passed_with_issues"
             case failed
             case skipped
         }
 
         struct Summary: Codable, Equatable {
             let totalTasks: Int
-            let passedTasks: Int
+            let executionPassedTasks: Int
+            let cleanPassedTasks: Int
+            let issueTasks: Int
             let failedTasks: Int
             let warningCount: Int
             let totalLatencyMilliseconds: Int
             let averageLatencyMilliseconds: Int
+            let executionPassRate: Double
+            let cleanPassRate: Double
+
+            var passedTasks: Int { cleanPassedTasks }
         }
 
         struct TaskResult: Codable, Equatable {
@@ -87,9 +135,12 @@ struct LLMBenchmarkReport: Codable, Equatable {
             let status: Status
             let latencyMilliseconds: Int
             let hardFailures: [String]
+            let qualityIssues: [String]
             let warnings: [String]
             let metrics: [String: JSONValue]
             let output: [String: JSONValue]
+            let traceFile: String?
+            let traceSessionIDs: [String]
         }
 
         let modelID: String
@@ -193,7 +244,11 @@ struct LLMBenchmarkReportWriter {
         self.encoder.dateEncodingStrategy = .iso8601
     }
 
-    func write(report: LLMBenchmarkReport, to directoryURL: URL) throws {
+    func write(
+        report: LLMBenchmarkReport,
+        to directoryURL: URL,
+        debugTraceFileURL: URL? = nil
+    ) throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         try encoder.encode(report).write(to: directoryURL.appendingPathComponent("results.json"))
         try encoder.encode(report.run).write(to: directoryURL.appendingPathComponent("environment.json"))
@@ -207,6 +262,13 @@ struct LLMBenchmarkReportWriter {
             atomically: true,
             encoding: .utf8
         )
+        if let debugTraceFileURL, fileManager.fileExists(atPath: debugTraceFileURL.path) {
+            let destination = directoryURL.appendingPathComponent("debug-trace.jsonl")
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+            try fileManager.copyItem(at: debugTraceFileURL, to: destination)
+        }
     }
 
     func summaryMarkdown(for report: LLMBenchmarkReport) -> String {
@@ -241,11 +303,11 @@ struct LLMBenchmarkReportWriter {
         lines.append("")
         lines.append("## Model Summary")
         lines.append("")
-        lines.append("| Model | Quant | Pass Rate | Avg Latency (ms) | Warnings |")
-        lines.append("| --- | --- | --- | ---: | ---: |")
+        lines.append("| Model | Quant | Status | Execution Pass Rate | Clean Pass Rate | Failed | Issues | Avg Latency (ms) | Warnings |")
+        lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for model in report.models {
             lines.append(
-                "| \(model.displayName) | `\(model.quantization)` | \(model.summary.passedTasks)/\(model.summary.totalTasks) | \(model.summary.averageLatencyMilliseconds) | \(model.summary.warningCount) |"
+                "| \(model.displayName) | `\(model.quantization)` | `\(model.status.rawValue)` | \(percentage(model.summary.executionPassRate)) | \(percentage(model.summary.cleanPassRate)) | \(model.summary.failedTasks) | \(model.summary.issueTasks) | \(model.summary.averageLatencyMilliseconds) | \(model.summary.warningCount) |"
             )
         }
         lines.append("")
@@ -258,15 +320,35 @@ struct LLMBenchmarkReportWriter {
                 guard models.count > 1 else { continue }
                 lines.append("### \(variant)")
                 lines.append("")
-                lines.append("| Quant | Avg Latency (ms) | Failed Tasks | Warnings |")
-                lines.append("| --- | ---: | ---: | ---: |")
+                lines.append("| Quant | Avg Latency (ms) | Failed Tasks | Issue Tasks | Warnings |")
+                lines.append("| --- | ---: | ---: | ---: | ---: |")
                 for model in models {
                     lines.append(
-                        "| `\(model.quantization)` | \(model.summary.averageLatencyMilliseconds) | \(model.summary.failedTasks) | \(model.summary.warningCount) |"
+                        "| `\(model.quantization)` | \(model.summary.averageLatencyMilliseconds) | \(model.summary.failedTasks) | \(model.summary.issueTasks) | \(model.summary.warningCount) |"
                     )
                 }
                 lines.append("")
             }
+        }
+        lines.append("## Issue Summary")
+        lines.append("")
+        for model in report.models where model.summary.issueTasks > 0 {
+            let counts = Dictionary(
+                model.tasks
+                    .flatMap(\.qualityIssues)
+                    .map { ($0, 1) },
+                uniquingKeysWith: +
+            )
+            let summary = counts
+                .sorted { lhs, rhs in
+                    if lhs.value == rhs.value {
+                        return lhs.key < rhs.key
+                    }
+                    return lhs.value > rhs.value
+                }
+                .map { "\($0.key) x\($0.value)" }
+                .joined(separator: ", ")
+            lines.append("- \(model.displayName): \(summary)")
         }
         lines.append("")
         lines.append("## Task Samples")
@@ -279,6 +361,9 @@ struct LLMBenchmarkReportWriter {
                 lines.append("- `\(task.taskType)` / `\(task.word)`: \(sample)")
                 if task.status == .failed, !task.hardFailures.isEmpty {
                     lines.append("  - failures: \(task.hardFailures.joined(separator: "; "))")
+                }
+                if !task.qualityIssues.isEmpty {
+                    lines.append("  - quality issues: \(task.qualityIssues.joined(separator: "; "))")
                 }
             }
             lines.append("")
@@ -298,12 +383,25 @@ struct LLMBenchmarkReportWriter {
         }
         lines.append("")
         for model in report.models {
-            lines.append("- \(model.displayName) (`\(model.modelID)`): \(model.summary.passedTasks)/\(model.summary.totalTasks) tasks passed, avg \(model.summary.averageLatencyMilliseconds) ms")
+            lines.append(
+                "- \(model.displayName) (`\(model.modelID)`): passed=\(model.summary.cleanPassedTasks), passed_with_issues=\(model.summary.issueTasks), failed=\(model.summary.failedTasks), avg \(model.summary.averageLatencyMilliseconds) ms"
+            )
             for task in model.tasks where task.status == .failed {
                 let failures = task.hardFailures.isEmpty ? "no hard failure details" : task.hardFailures.joined(separator: "; ")
                 lines.append("  - failed `\(task.taskType)` / `\(task.word)`: \(failures)")
             }
+            let issueTasks = model.tasks.filter { !$0.qualityIssues.isEmpty }
+            if !issueTasks.isEmpty {
+                lines.append("  - quality issues:")
+                for task in issueTasks {
+                    lines.append("    - `\(task.taskType)` / `\(task.word)`: \(task.qualityIssues.joined(separator: "; "))")
+                }
+            }
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func percentage(_ value: Double) -> String {
+        String(format: "%.0f%%", value * 100)
     }
 }

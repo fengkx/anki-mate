@@ -8,6 +8,7 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
     private let reportDirectoryFlag = "DICTKIT_LLM_E2E_REPORT_DIR"
     private let roundsFlag = "DICTKIT_LLM_E2E_BENCHMARK_ROUNDS"
     private let matrixFlag = "DICTKIT_LLM_E2E_MATRIX"
+    private let benchmarkTraceFileName = "debug-trace.jsonl"
 
     func testBenchmarkAcrossConfiguredModelsWritesReportWhenEnabled() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -20,10 +21,15 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
         let matrix = try LLMBenchmarkMatrix.load(from: matrixURL)
         let reportDirectoryURL = reportDirectoryURL()
         let rounds = max(1, Int(environment[roundsFlag] ?? "1") ?? 1)
-        let service = LLMService()
-        defer { Task { await service.stopServer() } }
+        let traceFileURL = LLMDebugTraceWriter.defaultFileURL
+        try? FileManager.default.removeItem(at: traceFileURL)
+        let previousTraceSetting = LLMDebugSettings.isStreamDebugEnabled
+        LLMDebugSettings.setStreamDebugEnabled(true)
+        defer { LLMDebugSettings.setStreamDebugEnabled(previousTraceSetting) }
 
-        let registryByID = Dictionary(uniqueKeysWithValues: service.registry.models.map { ($0.id, $0) })
+        let registry = ModelRegistry()
+        let downloadManager = ModelDownloadManager()
+        let registryByID = Dictionary(uniqueKeysWithValues: registry.models.map { ($0.id, $0) })
         let selectedModelIDs = matrix.models.map(\.modelId)
         var executedModelIDs: [String] = []
         var skippedModels: [LLMBenchmarkReport.MatrixStatus.SkippedModel] = []
@@ -34,19 +40,22 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
                 skippedModels.append(.init(modelID: selection.modelId, reason: "missing_from_registry"))
                 continue
             }
-            guard service.downloadManager.isDownloaded(model) else {
+            guard downloadManager.isDownloaded(model) else {
                 skippedModels.append(.init(modelID: selection.modelId, reason: "model_not_downloaded"))
                 continue
             }
 
             executedModelIDs.append(selection.modelId)
+            let taskTimeouts = matrix.effectiveTaskTimeouts(forModelID: selection.modelId)
+            let service = makeBenchmarkService(requestTimeoutSeconds: taskTimeouts.maximumSeconds)
             service.selectedModelId = selection.modelId
-            let tasks = try await runBenchmarkTasks(service: service, rounds: rounds)
-            let failedTasks = tasks.filter { $0.status == .failed }.count
-            let passedTasks = tasks.filter { $0.status == .passed }.count
-            let warningCount = tasks.reduce(0) { $0 + $1.warnings.count }
-            let totalLatency = tasks.reduce(0) { $0 + $1.latencyMilliseconds }
-            let averageLatency = tasks.isEmpty ? 0 : totalLatency / tasks.count
+            let tasks = try await runBenchmarkTasks(
+                service: service,
+                rounds: rounds,
+                taskTimeouts: taskTimeouts,
+                traceFileURL: traceFileURL
+            )
+            let summary = summarize(tasks: tasks)
 
             modelResults.append(
                 .init(
@@ -57,15 +66,8 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
                     quantization: selection.quantization,
                     sizeBytes: model.sizeBytes,
                     contextSize: model.contextSize,
-                    status: failedTasks == 0 ? .passed : .failed,
-                    summary: .init(
-                        totalTasks: tasks.count,
-                        passedTasks: passedTasks,
-                        failedTasks: failedTasks,
-                        warningCount: warningCount,
-                        totalLatencyMilliseconds: totalLatency,
-                        averageLatencyMilliseconds: averageLatency
-                    ),
+                    status: modelStatus(for: tasks),
+                    summary: summary,
                     tasks: tasks
                 )
             )
@@ -87,7 +89,11 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
             ),
             models: modelResults
         )
-        try LLMBenchmarkReportWriter().write(report: report, to: reportDirectoryURL)
+        try LLMBenchmarkReportWriter().write(
+            report: report,
+            to: reportDirectoryURL,
+            debugTraceFileURL: traceFileURL
+        )
 
         if executedModelIDs.isEmpty {
             throw XCTSkip("No benchmark models are downloaded. Run `just prepare-llm-benchmark-models` first.")
@@ -269,21 +275,51 @@ private extension LLMModelBenchmarkE2ETests {
 
     func runBenchmarkTasks(
         service: LLMService,
-        rounds: Int
+        rounds: Int,
+        taskTimeouts: LLMBenchmarkTaskTimeouts,
+        traceFileURL: URL
     ) async throws -> [LLMBenchmarkReport.ModelResult.TaskResult] {
         var tasks: [LLMBenchmarkReport.ModelResult.TaskResult] = []
         for _ in 0..<rounds {
             for testCase in exampleCases {
-                tasks.append(await runExampleTask(service: service, testCase: testCase))
+                tasks.append(
+                    await runExampleTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "example_sentences"),
+                        traceFileURL: traceFileURL
+                    )
+                )
             }
             for testCase in usageCases {
-                tasks.append(await runUsageTask(service: service, testCase: testCase))
+                tasks.append(
+                    await runUsageTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "usage_hints"),
+                        traceFileURL: traceFileURL
+                    )
+                )
             }
             for testCase in recallCases {
-                tasks.append(await runRecallTask(service: service, testCase: testCase))
+                tasks.append(
+                    await runRecallTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "recall_draft_decision"),
+                        traceFileURL: traceFileURL
+                    )
+                )
             }
             for testCase in learningAidsCases {
-                tasks.append(await runLearningAidsTask(service: service, testCase: testCase))
+                tasks.append(
+                    await runLearningAidsTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "learning_aids"),
+                        traceFileURL: traceFileURL
+                    )
+                )
             }
         }
         return tasks
@@ -291,37 +327,45 @@ private extension LLMModelBenchmarkE2ETests {
 
     func runExampleTask(
         service: LLMService,
-        testCase: ExampleCase
+        testCase: ExampleCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
     ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
-        await measureTask(taskType: "example_sentences", caseID: testCase.word, word: testCase.word) {
+        await measureTask(
+            taskType: "example_sentences",
+            caseID: testCase.word,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
             let examples = try await service.generateExampleSentenceArtifacts(
                 word: testCase.word,
                 senses: testCase.senses
             )
-            var failures: [String] = []
+            var qualityIssues: [String] = []
             let coveredSenseIndexes = Set(examples.compactMap(\.senseIndex))
             if examples.count != testCase.expectedCount {
-                failures.append("expected_count_mismatch")
+                qualityIssues.append("expected_count_mismatch")
             }
             if Set(examples.map(\.english)).count != examples.count {
-                failures.append("duplicate_examples")
+                qualityIssues.append("duplicate_examples")
             }
             if !testCase.requiredSenseCoverage.isSubset(of: coveredSenseIndexes) {
-                failures.append("missing_sense_coverage")
+                qualityIssues.append("missing_sense_coverage")
             }
-            if !examples.allSatisfy({ isPlainText($0.english) && isPlainText($0.translation) }) {
-                failures.append("formatting_noise")
+            if !examples.allSatisfy({ self.isPlainText($0.english) && self.isPlainText($0.translation) }) {
+                qualityIssues.append("formatting_noise")
             }
             let duplicateRate = examples.isEmpty ? 0.0 : Double(examples.count - Set(examples.map(\.english)).count) / Double(examples.count)
             return .init(
-                status: failures.isEmpty ? .passed : .failed,
-                hardFailures: failures,
-                warnings: duplicateRate > 0 ? ["duplicate_examples"] : [],
+                qualityIssues: qualityIssues,
+                warnings: [],
                 metrics: [
                     "expected_count": .int(testCase.expectedCount),
                     "actual_count": .int(examples.count),
                     "sense_coverage": .double(Double(coveredSenseIndexes.count) / Double(max(1, testCase.requiredSenseCoverage.count))),
-                    "duplicate_rate": .double(duplicateRate)
+                    "duplicate_rate": .double(duplicateRate),
+                    "timeout_seconds": .int(timeoutSeconds)
                 ],
                 output: [
                     "examples": .array(
@@ -340,44 +384,54 @@ private extension LLMModelBenchmarkE2ETests {
 
     func runUsageTask(
         service: LLMService,
-        testCase: UsageCase
+        testCase: UsageCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
     ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
-        await measureTask(taskType: "usage_hints", caseID: testCase.word, word: testCase.word) {
-            let hint = try await service.optimizeDefinition(word: testCase.word, senses: testCase.senses)
-            let lines = normalizedNonEmptyLines(from: hint)
-            var failures: [String] = []
-            if lines.count != testCase.senses.count {
-                failures.append("line_count_mismatch")
-            }
-            if !lines.allSatisfy(isPlainBilingualLine(_:)) {
-                failures.append("formatting_noise")
-            }
-            let repetitionFlag = Set(lines).count != lines.count
+        await measureTask(
+            taskType: "usage_hints",
+            caseID: testCase.word,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
+            let hint = try await service.optimizeDefinitionStreaming(
+                word: testCase.word,
+                senses: testCase.senses,
+                onDelta: { _ in }
+            )
+            let lines = self.normalizedNonEmptyLines(from: hint)
+            let evaluation = LLMBenchmarkUsageEvaluation.assess(
+                lines: lines,
+                expectedCount: LLMBenchmarkUsageEvaluation.expectedLineCount(for: testCase.senses),
+                isPlainBilingualLine: self.isPlainBilingualLine(_:)
+            )
             return .init(
-                status: failures.isEmpty ? .passed : .failed,
-                hardFailures: failures,
-                warnings: repetitionFlag ? ["repetition_detected"] : [],
-                metrics: [
-                    "expected_count": .int(testCase.senses.count),
-                    "actual_count": .int(lines.count),
-                    "plain_text": .bool(lines.allSatisfy(isPlainBilingualLine(_:)))
-                ],
-                output: [
-                    "lines": .array(lines.map(JSONValue.string))
-                ]
+                qualityIssues: evaluation.qualityIssues,
+                warnings: evaluation.warnings,
+                metrics: evaluation.metrics,
+                output: evaluation.output
             )
         }
     }
 
     func runRecallTask(
         service: LLMService,
-        testCase: RecallCase
+        testCase: RecallCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
     ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
-        await measureTask(taskType: "recall_draft_decision", caseID: testCase.word, word: testCase.word) {
+        await measureTask(
+            taskType: "recall_draft_decision",
+            caseID: testCase.word,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
             let context = LLMService.normalizeRecallGenerationContext(
                 .init(
                     acceptedPitfalls: testCase.acceptedPitfalls,
-                    acceptedUsageHints: acceptedUsageHints(from: testCase.acceptedDefinitionNote),
+                    acceptedUsageHints: self.acceptedUsageHints(from: testCase.acceptedDefinitionNote),
                     acceptedMnemonics: testCase.acceptedMnemonics,
                     acceptedCollocations: testCase.acceptedCollocations
                 )
@@ -393,41 +447,44 @@ private extension LLMModelBenchmarkE2ETests {
                 anchor: testCase.previewAnchor
             )
 
-            var failures: [String] = []
+            var qualityIssues: [String] = []
             if decision.draft.front.isEmpty || decision.draft.back.isEmpty {
-                failures.append("empty_card_side")
+                qualityIssues.append("empty_card_side")
             }
             if decision.draft.back != testCase.word {
-                failures.append("back_side_changed")
+                qualityIssues.append("back_side_changed")
             }
             if !allowedModes.contains(decision.draft.mode) {
-                failures.append("disallowed_mode")
+                qualityIssues.append("disallowed_mode")
             }
-            if !isPlainText(decision.draft.front) || !isPlainText(decision.draft.back) {
-                failures.append("formatting_noise")
+            if !self.isPlainText(decision.draft.front) || !self.isPlainText(decision.draft.back) {
+                qualityIssues.append("formatting_noise")
             }
-            if cuePlanContainsTarget(decision.draft.front, target: testCase.word) {
-                failures.append("target_leak")
+            if self.cuePlanContainsTarget(decision.draft.front, target: testCase.word) {
+                qualityIssues.append("target_leak")
             }
             if decision.draft.mode == .targetedLetterCloze {
-                if underscoreGroupCount(in: decision.draft.front) != 1 {
-                    failures.append("invalid_cloze_shape")
+                if self.underscoreGroupCount(in: decision.draft.front) != 1 {
+                    qualityIssues.append("invalid_cloze_shape")
                 }
-                let gapLength = longestUnderscoreRun(in: decision.draft.front)
+                let gapLength = self.longestUnderscoreRun(in: decision.draft.front)
                 if !(2...3).contains(gapLength) {
-                    failures.append("invalid_cloze_gap_length")
+                    qualityIssues.append("invalid_cloze_gap_length")
                 }
+            }
+            if decision.draft.mode != testCase.expectedMode {
+                qualityIssues.append("mode_differs_from_baseline")
             }
 
             return .init(
-                status: failures.isEmpty ? .passed : .failed,
-                hardFailures: failures,
-                warnings: decision.draft.mode != testCase.expectedMode ? ["mode_differs_from_baseline"] : [],
+                qualityIssues: qualityIssues,
+                warnings: [],
                 metrics: [
                     "mode": .string(decision.draft.mode.rawValue),
                     "expected_mode": .string(testCase.expectedMode.rawValue),
-                    "front_clean": .bool(isPlainText(decision.draft.front)),
-                    "target_leak": .bool(cuePlanContainsTarget(decision.draft.front, target: testCase.word))
+                    "front_clean": .bool(self.isPlainText(decision.draft.front)),
+                    "target_leak": .bool(self.cuePlanContainsTarget(decision.draft.front, target: testCase.word)),
+                    "timeout_seconds": .int(timeoutSeconds)
                 ],
                 output: [
                     "front": .string(decision.draft.front),
@@ -442,9 +499,17 @@ private extension LLMModelBenchmarkE2ETests {
 
     func runLearningAidsTask(
         service: LLMService,
-        testCase: LearningAidsCase
+        testCase: LearningAidsCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
     ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
-        await measureTask(taskType: "learning_aids", caseID: testCase.word, word: testCase.word) {
+        await measureTask(
+            taskType: "learning_aids",
+            caseID: testCase.word,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
             let ranked = try await service.generateRankedLearningAids(
                 word: testCase.word,
                 senses: testCase.senses,
@@ -457,49 +522,52 @@ private extension LLMModelBenchmarkE2ETests {
                 anchor: testCase.anchor
             )
             let aids = ranked.aids
-            var failures: [String] = []
-            if !isLearningAidResultWellFormed(ranked) {
-                failures.append("invalid_section_selection")
+            var qualityIssues: [String] = []
+            if !self.isLearningAidResultWellFormed(ranked) {
+                qualityIssues.append("invalid_section_selection")
             }
-            if !aids.pitfalls.allSatisfy({ isPlainText($0.summary) && !startsWithListMarker($0.summary) }) {
-                failures.append("pitfall_formatting_noise")
+            if !aids.pitfalls.allSatisfy({ self.isPlainText($0.summary) && !self.startsWithListMarker($0.summary) }) {
+                qualityIssues.append("pitfall_formatting_noise")
             }
-            if !aids.mnemonics.allSatisfy({ isPlainText($0.clue) && $0.clue.count <= 80 }) {
-                failures.append("mnemonic_formatting_noise")
+            if !aids.mnemonics.allSatisfy({ self.isPlainText($0.clue) && $0.clue.count <= 80 }) {
+                qualityIssues.append("mnemonic_formatting_noise")
             }
             if !aids.collocations.allSatisfy({
-                isPlainText($0.phrase)
+                self.isPlainText($0.phrase)
                     && !$0.phrase.contains("\n")
                     && !$0.phrase.hasSuffix(".")
                     && !$0.phrase.hasSuffix("!")
                     && !$0.phrase.hasSuffix("?")
             }) {
-                failures.append("collocation_formatting_noise")
+                qualityIssues.append("collocation_formatting_noise")
             }
 
             let overlapScores = [
-                ranked.selections.pitfalls.flatMap { sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.pitfalls.map { ($0.id, $0.summary) }), senses: testCase.senses) },
-                ranked.selections.mnemonics.flatMap { sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.mnemonics.map { ($0.id, $0.clue) }), senses: testCase.senses) },
-                ranked.selections.collocations.flatMap { sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.collocations.map { ($0.id, $0.phrase) }), senses: testCase.senses) }
+                ranked.selections.pitfalls.flatMap { self.sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.pitfalls.map { ($0.id, $0.summary) }), senses: testCase.senses) },
+                ranked.selections.mnemonics.flatMap { self.sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.mnemonics.map { ($0.id, $0.clue) }), senses: testCase.senses) },
+                ranked.selections.collocations.flatMap { self.sectionSummary(selection: $0, textByID: Dictionary(uniqueKeysWithValues: aids.collocations.map { ($0.id, $0.phrase) }), senses: testCase.senses) }
             ].compactMap { $0?.overlap }
 
             let averageOverlap = overlapScores.isEmpty ? 0.0 : overlapScores.reduce(0, +) / Double(overlapScores.count)
+            if averageOverlap > 0.5 {
+                qualityIssues.append("high_definition_overlap")
+            }
 
             return .init(
-                status: failures.isEmpty ? .passed : .failed,
-                hardFailures: failures,
-                warnings: averageOverlap > 0.5 ? ["high_definition_overlap"] : [],
+                qualityIssues: qualityIssues,
+                warnings: [],
                 metrics: [
                     "pitfalls_count": .int(aids.pitfalls.count),
                     "mnemonics_count": .int(aids.mnemonics.count),
                     "collocations_count": .int(aids.collocations.count),
                     "definition_overlap": .double(averageOverlap),
-                    "selection_complete": .bool(isLearningAidResultWellFormed(ranked))
+                    "selection_complete": .bool(self.isLearningAidResultWellFormed(ranked)),
+                    "timeout_seconds": .int(timeoutSeconds)
                 ],
                 output: [
-                    "pitfall": .string(sectionSummary(selection: ranked.selections.pitfalls, textByID: Dictionary(uniqueKeysWithValues: aids.pitfalls.map { ($0.id, $0.summary) }), senses: testCase.senses)?.text ?? ""),
-                    "mnemonic": .string(sectionSummary(selection: ranked.selections.mnemonics, textByID: Dictionary(uniqueKeysWithValues: aids.mnemonics.map { ($0.id, $0.clue) }), senses: testCase.senses)?.text ?? ""),
-                    "collocation": .string(sectionSummary(selection: ranked.selections.collocations, textByID: Dictionary(uniqueKeysWithValues: aids.collocations.map { ($0.id, $0.phrase) }), senses: testCase.senses)?.text ?? "")
+                    "pitfall": .string(self.sectionSummary(selection: ranked.selections.pitfalls, textByID: Dictionary(uniqueKeysWithValues: aids.pitfalls.map { ($0.id, $0.summary) }), senses: testCase.senses)?.text ?? ""),
+                    "mnemonic": .string(self.sectionSummary(selection: ranked.selections.mnemonics, textByID: Dictionary(uniqueKeysWithValues: aids.mnemonics.map { ($0.id, $0.clue) }), senses: testCase.senses)?.text ?? ""),
+                    "collocation": .string(self.sectionSummary(selection: ranked.selections.collocations, textByID: Dictionary(uniqueKeysWithValues: aids.collocations.map { ($0.id, $0.phrase) }), senses: testCase.senses)?.text ?? "")
                 ]
             )
         }
@@ -509,46 +577,60 @@ private extension LLMModelBenchmarkE2ETests {
         taskType: String,
         caseID: String,
         word: String,
-        operation: () async throws -> MeasuredTaskOutcome
+        timeoutSeconds: Int,
+        traceFileURL: URL,
+        operation: @escaping @MainActor () async throws -> MeasuredTaskOutcome
     ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
         let clock = ContinuousClock()
         let start = clock.now
+        let traceEventStartIndex = traceEventCount(in: traceFileURL)
         do {
-            let outcome = try await operation()
+            let outcome = try await withTaskTimeout(seconds: timeoutSeconds, operation: operation)
             let elapsed = start.duration(to: clock.now)
+            let traceSessionIDs = traceSessionIDs(in: traceFileURL, startingAt: traceEventStartIndex)
             return .init(
                 taskType: taskType,
                 caseID: caseID,
                 word: word,
                 status: outcome.status,
                 latencyMilliseconds: elapsed.milliseconds,
-                hardFailures: outcome.hardFailures,
+                hardFailures: [],
+                qualityIssues: outcome.qualityIssues,
                 warnings: outcome.warnings,
-                metrics: outcome.metrics,
-                output: outcome.output
+                metrics: mergedMetrics(outcome.metrics, timeoutSeconds: timeoutSeconds),
+                output: outcome.output,
+                traceFile: benchmarkTraceFileName,
+                traceSessionIDs: traceSessionIDs
             )
         } catch {
             let elapsed = start.duration(to: clock.now)
+            let traceSessionIDs = traceSessionIDs(in: traceFileURL, startingAt: traceEventStartIndex)
             return .init(
                 taskType: taskType,
                 caseID: caseID,
                 word: word,
                 status: .failed,
                 latencyMilliseconds: elapsed.milliseconds,
-                hardFailures: [String(reflecting: error)],
+                hardFailures: executionFailures(from: error),
+                qualityIssues: [],
                 warnings: [],
-                metrics: [:],
-                output: [:]
+                metrics: ["timeout_seconds": .int(timeoutSeconds)],
+                output: [:],
+                traceFile: benchmarkTraceFileName,
+                traceSessionIDs: traceSessionIDs
             )
         }
     }
 
     struct MeasuredTaskOutcome {
-        let status: LLMBenchmarkReport.ModelResult.Status
-        let hardFailures: [String]
+        let qualityIssues: [String]
         let warnings: [String]
         let metrics: [String: JSONValue]
         let output: [String: JSONValue]
+
+        var status: LLMBenchmarkReport.ModelResult.Status {
+            qualityIssues.isEmpty ? .passed : .passedWithIssues
+        }
     }
 
     struct SectionSummary {
@@ -758,6 +840,113 @@ private extension LLMModelBenchmarkE2ETests {
             return nil
         }
     }
+
+    func makeBenchmarkService(requestTimeoutSeconds: Int) -> LLMService {
+        let defaults = UserDefaults(suiteName: "LLMModelBenchmarkE2ETests-\(UUID().uuidString)") ?? .standard
+        return LLMService(
+            defaults: defaults,
+            rpcClientConfiguration: .init(requestTimeoutSeconds: TimeInterval(requestTimeoutSeconds))
+        )
+    }
+
+    func summarize(tasks: [LLMBenchmarkReport.ModelResult.TaskResult]) -> LLMBenchmarkReport.ModelResult.Summary {
+        let totalTasks = tasks.count
+        let failedTasks = tasks.filter { $0.status == .failed }.count
+        let issueTasks = tasks.filter { $0.status == .passedWithIssues }.count
+        let cleanPassedTasks = tasks.filter { $0.status == .passed }.count
+        let executionPassedTasks = cleanPassedTasks + issueTasks
+        let warningCount = tasks.reduce(0) { $0 + $1.warnings.count }
+        let totalLatency = tasks.reduce(0) { $0 + $1.latencyMilliseconds }
+        let averageLatency = totalTasks == 0 ? 0 : totalLatency / totalTasks
+        let executionPassRate = totalTasks == 0 ? 0.0 : Double(executionPassedTasks) / Double(totalTasks)
+        let cleanPassRate = totalTasks == 0 ? 0.0 : Double(cleanPassedTasks) / Double(totalTasks)
+        return .init(
+            totalTasks: totalTasks,
+            executionPassedTasks: executionPassedTasks,
+            cleanPassedTasks: cleanPassedTasks,
+            issueTasks: issueTasks,
+            failedTasks: failedTasks,
+            warningCount: warningCount,
+            totalLatencyMilliseconds: totalLatency,
+            averageLatencyMilliseconds: averageLatency,
+            executionPassRate: executionPassRate,
+            cleanPassRate: cleanPassRate
+        )
+    }
+
+    func modelStatus(for tasks: [LLMBenchmarkReport.ModelResult.TaskResult]) -> LLMBenchmarkReport.ModelResult.Status {
+        if tasks.contains(where: { $0.status == .failed }) {
+            return .failed
+        }
+        if tasks.contains(where: { $0.status == .passedWithIssues }) {
+            return .passedWithIssues
+        }
+        return .passed
+    }
+
+    func mergedMetrics(_ metrics: [String: JSONValue], timeoutSeconds: Int) -> [String: JSONValue] {
+        var merged = metrics
+        merged["timeout_seconds"] = .int(timeoutSeconds)
+        return merged
+    }
+
+    func executionFailures(from error: Error) -> [String] {
+        if error is BenchmarkTimeoutError {
+            return ["benchmark_timeout"]
+        }
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return ["rpc_timeout"]
+        }
+        let reflected = String(reflecting: error)
+        if reflected.localizedCaseInsensitiveContains("timed out") {
+            return ["rpc_timeout: \(reflected)"]
+        }
+        return [reflected]
+    }
+
+    func withTaskTimeout<T: Sendable>(
+        seconds: Int,
+        operation: @escaping @MainActor () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { @MainActor in
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw BenchmarkTimeoutError(seconds: seconds)
+            }
+
+            let value = try await group.next()!
+            group.cancelAll()
+            return value
+        }
+    }
+
+    func traceEventCount(in fileURL: URL) -> Int {
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            return 0
+        }
+        return content.split(whereSeparator: \.isNewline).count
+    }
+
+    func traceSessionIDs(in fileURL: URL, startingAt startIndex: Int) -> [String] {
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        let ids = content
+            .split(whereSeparator: \.isNewline)
+            .dropFirst(startIndex)
+            .compactMap { line -> String? in
+                guard let data = String(line).data(using: .utf8),
+                      let event = try? decoder.decode(LLMDebugTraceWriter.Event.self, from: data) else {
+                    return nil
+                }
+                return event.id
+            }
+        return Array(Set(ids)).sorted()
+    }
 }
 
 private extension Duration {
@@ -766,5 +955,13 @@ private extension Duration {
             Double(components.seconds) * 1_000
                 + Double(components.attoseconds) / 1_000_000_000_000_000
         )
+    }
+}
+
+private struct BenchmarkTimeoutError: Error, CustomStringConvertible {
+    let seconds: Int
+
+    var description: String {
+        "BenchmarkTimeoutError(seconds: \(seconds))"
     }
 }

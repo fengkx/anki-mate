@@ -1,5 +1,10 @@
 {
   "name": "default",
+  "defaults": {
+    "taskTimeoutSeconds": {
+      "default": 120
+    }
+  },
   "models": [
     {
       "modelId": "gemma-4-e2b-it-q4km",
@@ -35,7 +40,10 @@
       "modelId": "qwen35-4b-q6k",
       "family": "qwen35",
       "variant": "qwen35-4b",
-      "quantization": "Q6_K"
+      "quantization": "Q6_K",
+      "taskTimeoutSeconds": {
+        "learning_aids": 180
+      }
     }
   ]
 }

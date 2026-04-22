@@ -72,6 +72,8 @@
   - Learning Aids 的 generator / judge / local guardrails 流程，以及 SQLite 承载 JSON 的持久化方案
 - [43-inference-performance-hotspots-and-optimization.md](./43-inference-performance-hotspots-and-optimization.md)
   - 基于真实采样的 inference 热点分析、优化方向、并发验证策略与验收标准
+- [46-failure-case-driven-prompt-optimization.md](./46-failure-case-driven-prompt-optimization.md)
+  - 基于 benchmark 失败样本与 tracing 的 prompt 收敛方案，强调先修稳定性与字段歧义，再做质量细化
 
 ## 当前拍板结论
 

@@ -44,8 +44,11 @@ public final class LLMService: ObservableObject {
     /// Port of the llama-server child process for direct chat completion requests.
     @Published public private(set) var llamaServerPort: Int?
 
-    public convenience init(defaults: UserDefaults = .standard) {
-        let client = RPCClient()
+    public convenience init(
+        defaults: UserDefaults = .standard,
+        rpcClientConfiguration: RPCClient.Configuration = .init()
+    ) {
+        let client = RPCClient(configuration: rpcClientConfiguration)
         self.init(
             defaults: defaults,
             registry: ModelRegistry(),
@@ -1963,17 +1966,17 @@ extension LLMService {
     ) -> (selectedMode: LLMRecallCardMode, selectionReason: LLMRecallSelectionReason, cuePlan: LLMRecallCuePlan)? {
         guard let selectedMode = normalizedRecallCardMode(from: payload.selectedMode),
               allowedModes.contains(selectedMode),
-              let selectionReason = normalizeRecallSelectionReason(
-                  payload.selectionReason,
-                  selectedMode: selectedMode
-              ),
               let cuePlan = normalizeRecallCuePlan(
                   payload.cuePlan,
                   target: target
               ) else {
             return nil
         }
-        return (selectedMode, selectionReason, cuePlan)
+        return (
+            selectedMode,
+            fallbackSelectionReason(for: selectedMode),
+            cuePlan
+        )
     }
 
     static func normalizeLearningAids(_ payload: LearningAidsEnvelope) -> LLMLearningAids {
@@ -2173,35 +2176,11 @@ extension LLMService {
         .object([
             "type": .string("object"),
             "additionalProperties": .bool(false),
-            "required": .array([.string("selectedMode"), .string("selectionReason"), .string("cuePlan")]),
+            "required": .array([.string("selectedMode"), .string("cuePlan")]),
             "properties": .object([
                 "selectedMode": .object([
                     "type": .string("string"),
                     "enum": .array(allowedModes.map { .string($0.rawValue) })
-                ]),
-                "selectionReason": .object([
-                    "type": .string("object"),
-                    "additionalProperties": .bool(false),
-                    "required": .array([.string("primaryGoal"), .string("evidence")]),
-                    "properties": .object([
-                        "primaryGoal": .object([
-                            "type": .string("string"),
-                            "enum": .array([
-                                .string("whole_word_recall"),
-                                .string("local_spelling_calibration"),
-                                .string("phrase_chunk_retrieval")
-                            ])
-                        ]),
-                        "evidence": .object([
-                            "type": .string("array"),
-                            "items": .object([
-                                "type": .string("string"),
-                                "maxLength": .number(120)
-                            ]),
-                            "minItems": .number(1),
-                            "maxItems": .number(3)
-                        ])
-                    ])
                 ]),
                 "cuePlan": .object([
                     "type": .string("object"),

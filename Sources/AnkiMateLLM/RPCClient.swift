@@ -26,17 +26,32 @@ public enum RPCClientError: Error, LocalizedError {
 }
 
 public actor RPCClient {
+    public struct Configuration: Sendable, Equatable {
+        public let requestTimeoutSeconds: TimeInterval
+        public let resourceTimeoutSeconds: TimeInterval
+
+        public init(
+            requestTimeoutSeconds: TimeInterval = 120,
+            resourceTimeoutSeconds: TimeInterval? = nil
+        ) {
+            self.requestTimeoutSeconds = requestTimeoutSeconds
+            self.resourceTimeoutSeconds = resourceTimeoutSeconds ?? max(requestTimeoutSeconds + 60, requestTimeoutSeconds)
+        }
+    }
+
     private let session: URLSession
     private var nextId = 1
     private let logger = Logger(subsystem: "AnkiMateLLM", category: "RPCClient")
     private let debugTraceWriter: LLMDebugTraceWriter
+    public let configuration: Configuration
 
-    public init() {
+    public init(configuration: Configuration = .init()) {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 120
-        config.timeoutIntervalForResource = 300
+        config.timeoutIntervalForRequest = configuration.requestTimeoutSeconds
+        config.timeoutIntervalForResource = configuration.resourceTimeoutSeconds
         self.session = URLSession(configuration: config)
         self.debugTraceWriter = LLMDebugTraceWriter.shared
+        self.configuration = configuration
     }
 
     static func mergeStreamToolCalls(

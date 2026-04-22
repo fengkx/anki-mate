@@ -520,14 +520,10 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertTrue(drafts.isEmpty)
     }
 
-    func testNormalizeRecallCardPlanAllowsForcedModeWithWholeWordGoal() throws {
+    func testNormalizeRecallCardPlanDerivesSelectionReasonFromSelectedMode() throws {
         let payload = """
         {
           "selectedMode": "targeted_letter_cloze",
-          "selectionReason": {
-            "primaryGoal": "whole_word_recall",
-            "evidence": ["The usage hint provides a clear learner cue."]
-          },
           "cuePlan": {
             "semanticSource": "accepted_usage_hint",
             "normalizedCue": "找到一个词的原始形态"
@@ -545,7 +541,11 @@ final class LLMServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(normalized.selectedMode, .targetedLetterCloze)
-        XCTAssertEqual(normalized.selectionReason.primaryGoal, "whole_word_recall")
+        XCTAssertEqual(normalized.selectionReason.primaryGoal, "local_spelling_calibration")
+        XCTAssertEqual(
+            normalized.selectionReason.evidence,
+            ["fallback selected a local spelling calibration card"]
+        )
         XCTAssertEqual(normalized.cuePlan.normalizedCue, "找到一个词的原始形态")
     }
 
