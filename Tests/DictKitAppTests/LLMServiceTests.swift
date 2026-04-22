@@ -520,6 +520,31 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertTrue(drafts.isEmpty)
     }
 
+    func testNormalizeRecallDraftRejectsFrontTargetLeak() throws {
+        let payload = """
+        {
+          "draft": {
+            "mode": "full_spelling",
+            "front": "常见词语搭配 · collocation",
+            "back": "collocation",
+            "hint": "noun · 常见词语搭配"
+          }
+        }
+        """
+
+        let decoded = try LLMService.decodeStructuredOutput(
+            RecallCardDraftEnvelope.self,
+            from: payload
+        )
+        let drafts = LLMService.normalizeRecallCardDrafts(
+            [decoded.primaryDraft].compactMap { $0 },
+            requestedModes: [.fullSpelling],
+            target: "collocation"
+        )
+
+        XCTAssertTrue(drafts.isEmpty)
+    }
+
     func testNormalizeRecallCardPlanDerivesSelectionReasonFromSelectedMode() throws {
         let payload = """
         {

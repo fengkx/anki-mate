@@ -330,6 +330,20 @@ public enum LLMPrompt {
             PromptText.labeledBlock("Requested mode", value: "- \(requestedMode.rawValue)"),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
             PromptText.labeledBlock("Packaging scaffold", value: scaffoldBlock),
+            PromptText.labeledBlock(
+                "Card contract",
+                value: recallCardContractText(target: trimmedWord)
+            ),
+            requestedMode == .targetedLetterCloze
+                ? PromptText.labeledBlock(
+                    "Cloze rendering contract",
+                    value: recallClozeRenderingContractText()
+                )
+                : nil,
+            PromptText.labeledBlock(
+                "Draft examples",
+                value: recallDraftExamplesText(for: requestedMode)
+            ),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -348,22 +362,11 @@ public enum LLMPrompt {
                     "Output JSON only",
                     "Return exactly one draft under \"draft\"; do not return a \"drafts\" array unless you are forced into legacy compatibility",
                     "mode must exactly match the requested mode",
-                    "front should be a recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
-                    "back must be the exact target word or phrase, with original spacing preserved",
-                    "For full_spelling, ask the learner to recall the complete target",
-                    "For targeted_letter_cloze, choose the gap position yourself",
-                    "For targeted_letter_cloze, use exactly one continuous underscore gap, and keep a Chinese meaning cue in front",
-                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
-                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
-                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
-                    "For targeted_letter_cloze, do not default to masking the first letter and do not make the card feel like a puzzle",
-                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
                     "If a learner cue is provided above, use it as the semantic basis of the front instead of drifting to another explanation",
                     "If a short hint is provided above, prefer reusing or lightly polishing it rather than inventing a long hint",
                     "hint is optional and should stay short",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
-                    "This is a single-draft workspace contract, not a multi-mode batch response",
                     "Do not emit alternative modes, numbered options, explanations, or extra fields"
                 ])
             )
@@ -422,8 +425,22 @@ public enum LLMPrompt {
             PromptText.labeledBlock("Mode prior", value: recallModePriorText(modePrior)),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
             PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: nil)),
-            PromptText.labeledBlock("Card contract", value: recallCardContractText(target: trimmedWord, learnerCue: learnerCue)),
-            PromptText.labeledBlock("Mode examples", value: recallModeExamplesText()),
+            PromptText.labeledBlock(
+                "Card contract",
+                value: recallCardContractText(target: trimmedWord, learnerCue: learnerCue)
+            ),
+            PromptText.labeledBlock(
+                "Mode selection contract",
+                value: recallModeSelectionContractText()
+            ),
+            PromptText.labeledBlock(
+                "normalizedCue contract",
+                value: recallNormalizedCueContractText()
+            ),
+            PromptText.labeledBlock(
+                "Plan examples",
+                value: recallPlanExamplesText()
+            ),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -444,45 +461,11 @@ public enum LLMPrompt {
                 "Rules",
                 value: PromptText.bulletList([
                     "Output JSON only",
-                    "Before writing front, choose one semantic source and rewrite it into a learner-facing cue",
-                    "Write cuePlan first, then write draft.front as the final rendered version of cuePlan.normalizedCue",
-                    "draft.front must be derived from cuePlan.normalizedCue, not independently rewritten from raw sources",
                     "mode must be one of the allowed modes",
-                    "Choose one main learning objective first, then choose the mode",
-                    "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
-                    "When accepted usage hints provide a cleaner learner-facing meaning than the raw sense inventory, prefer the accepted usage hints as the semantic source for front and hint",
-                    "Treat raw sense inventory mainly as reference or disambiguation when it is more technical, more formal, or noisier than the accepted usage hints",
-                    "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
-                    "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
-                    "front should be a concise recall cue, usually grounded in Chinese meaning, semantic hint, or learner instruction",
-                    "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
-                    "If the sense inventory contains dictionary jargon, formal gloss wording, or bilingual fragments, rewrite the meaning into natural learner-facing Chinese instead of quoting it",
-                    "Do not copy pinyin, romanization, or pronunciation respelling into front or hint",
-                    "If any source line contains pinyin, romanization, or mixed bilingual gloss text, strip those parts and keep only the learner-facing Chinese meaning",
-                    "front is the learner-facing Chinese prompt",
-                    "back must be the exact English target",
-                    "Never translate back into Chinese",
-                    "Use accepted usage hints to sharpen the Chinese cue, not to write a long explanation",
-                    "Use mnemonics only for a very short hint when useful",
-                    "Do not dump pitfalls, usage hints, and collocations into the front",
+                    "Choose selectedMode first, then generate cuePlan.normalizedCue",
+                    "Use accepted learning aids, word signals, and the sense inventory as evidence",
+                    "Use cuePlan.normalizedCue as the semantic basis of draft.front",
                     "hint is optional and should stay short",
-                    "cuePlan is required and must explain which semantic source you used before writing the final front",
-                    "normalizedCue must be a short learner-facing cue, not copied raw dictionary wording",
-                    "After cuePlan is chosen, do not introduce new dictionary jargon, romanization, or technical wording that is absent from normalizedCue",
-                    "For full_spelling, ask the learner to recall the complete target",
-                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
-                    "For targeted_letter_cloze, choose the gap position yourself",
-                    "For targeted_letter_cloze, use exactly one continuous underscore gap",
-                    "For targeted_letter_cloze, apply underscores only to the English target",
-                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
-                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
-                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
-                    "For targeted_letter_cloze, do not default to masking the first letter",
-                    "For targeted_letter_cloze, never hide characters inside the Chinese cue",
-                    "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
-                    "If accepted pitfalls point to a local spelling risk, align the gap with that risk when possible",
-                    "Never copy XML tags, labels, or example metadata into draft.front",
-                    "draft.front must not contain back:, answer:, target:, or the exact English target",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Return exactly one draft only"
@@ -528,7 +511,18 @@ public enum LLMPrompt {
             PromptText.labeledBlock("Mode prior", value: recallModePriorText(modePrior)),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
             PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: nil)),
-            PromptText.labeledBlock("Mode examples", value: recallModeExamplesText()),
+            PromptText.labeledBlock(
+                "Mode selection contract",
+                value: recallModeSelectionContractText()
+            ),
+            PromptText.labeledBlock(
+                "normalizedCue contract",
+                value: recallNormalizedCueContractText()
+            ),
+            PromptText.labeledBlock(
+                "Plan examples",
+                value: recallPlanExamplesText()
+            ),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -543,23 +537,9 @@ public enum LLMPrompt {
                 "Rules",
                 value: PromptText.bulletList([
                     "Output JSON only",
-                    "Choose one main learning objective first, then choose the mode",
                     "selectedMode must be one of the allowed modes",
-                    "Use accepted pitfalls, accepted usage hints, and sense inventory as the primary basis for mode selection",
-                    "Prefer accepted usage hints over raw sense inventory when they provide a cleaner learner-facing cue",
-                    "When accepted usage hints provide a cleaner learner-facing meaning than the raw sense inventory, prefer the accepted usage hints as the semantic source",
-                    "Treat raw sense inventory mainly as reference or disambiguation when it is more technical, more formal, or noisier than the accepted usage hints",
-                    "Use word signals only as supporting evidence, not as a replacement for semantic judgment",
-                    "Do not choose targeted_letter_cloze only because the word is long or has a maskable segment",
                     "cuePlan is required and must explain which semantic source you used",
-                    "normalizedCue must be a short learner-facing cue, not copied raw dictionary wording",
-                    "Prefer plain learner-friendly Chinese over copied dictionary jargon when a simpler paraphrase is available",
-                    "If the sense inventory contains dictionary jargon, formal gloss wording, or bilingual fragments, rewrite the meaning into natural learner-facing Chinese instead of quoting it",
-                    "Do not let a forced mode justify copying dictionary jargon, formal gloss wording, or bilingual fragments into normalizedCue",
-                    "Do not copy pinyin, romanization, or pronunciation respelling into normalizedCue",
-                    "If any source line contains pinyin, romanization, or mixed bilingual gloss text, strip those parts and keep only the learner-facing Chinese meaning",
-                    "If the forced mode is targeted_letter_cloze, keep the Chinese cue natural and conversational before adding the gap",
-                    "normalizedCue must not contain the exact target word or phrase",
+                    "Use accepted learning aids, word signals, and the sense inventory as evidence",
                     "Return exactly one plan only"
                 ] + modeConstraintRules)
             )
@@ -582,9 +562,6 @@ public enum LLMPrompt {
             learnerCue: cuePlan.normalizedCue,
             hint: scaffold?.hint
         )
-        let modeSpecificContract = selectedMode == .targetedLetterCloze
-            ? "For targeted_letter_cloze, apply underscores only to the English target and never hide characters inside the Chinese cue."
-            : "Use the Chinese cue to trigger recall, then keep the English target unchanged on the back."
 
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
@@ -602,14 +579,20 @@ public enum LLMPrompt {
                 "semanticSource: \(cuePlan.semanticSource)",
                 "normalizedCue: \(cuePlan.normalizedCue)"
             ].joined(separator: "\n")),
-            PromptText.labeledBlock("Card contract", value: PromptText.join([
-                "English target: \(trimmedWord)",
-                "Chinese learner cue: \(cuePlan.normalizedCue)",
-                "front is the learner-facing Chinese prompt",
-                "back must be the exact English target",
-                modeSpecificContract
-            ])),
-            PromptText.labeledBlock("Mode examples", value: recallModeExamplesText()),
+            PromptText.labeledBlock(
+                "Card contract",
+                value: recallCardContractText(target: trimmedWord, learnerCue: cuePlan.normalizedCue)
+            ),
+            selectedMode == .targetedLetterCloze
+                ? PromptText.labeledBlock(
+                    "Cloze rendering contract",
+                    value: recallClozeRenderingContractText()
+                )
+                : nil,
+            PromptText.labeledBlock(
+                "Draft examples",
+                value: recallDraftExamplesText(for: selectedMode)
+            ),
             PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
             PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
             PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(normalizedCueScaffold, requestedMode: selectedMode)),
@@ -630,27 +613,8 @@ public enum LLMPrompt {
                 value: PromptText.bulletList([
                     "Output JSON only",
                     "Use cuePlan.normalizedCue as the semantic source of truth for draft.front",
-                    "draft.front must be derived from normalizedCue, not independently rewritten from raw sources",
-                    "Do not introduce new dictionary jargon, romanization, or technical wording that is absent from normalizedCue",
-                    "Do not copy pinyin, romanization, or pronunciation respelling into front or hint",
-                    "front is the learner-facing Chinese prompt",
-                    "back must be the exact English target",
-                    "Never translate back into Chinese",
+                    "draft.front must be derived from normalizedCue",
                     "hint is optional and should stay short",
-                    "For full_spelling, ask the learner to recall the complete target",
-                    "For phrase_recall, focus on recalling the whole phrase or key phrase chunk naturally",
-                    "For targeted_letter_cloze, choose the gap position yourself",
-                    "For targeted_letter_cloze, use exactly one continuous underscore gap",
-                    "For targeted_letter_cloze, apply underscores only to the English target",
-                    "For targeted_letter_cloze, the number of underscores must exactly match the number of hidden letters, for example lemma_ize hides one letter and le__atize hides two",
-                    "For targeted_letter_cloze, prefer hiding at least two letters when that still forms a natural spelling hotspot; use one underscore only when one hidden letter is the best target",
-                    "For targeted_letter_cloze, prefer internal spelling hotspots such as repeated consonants, confusable vowel clusters, or unstable suffix fragments",
-                    "For targeted_letter_cloze, do not default to masking the first letter",
-                    "For targeted_letter_cloze, never hide characters inside the Chinese cue",
-                    "For targeted_letter_cloze, keep the front natural as a learner-facing Chinese cue first, then add the gap",
-                    "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
-                    "Never copy XML tags, labels, or example metadata into draft.front",
-                    "draft.front must not contain back:, answer:, target:, or the exact English target",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Return exactly one draft only"
@@ -1145,39 +1109,148 @@ public enum LLMPrompt {
         return "- suggested primary mode: \(modePrior.rawValue)"
     }
 
-    private static func recallCardContractText(target: String, learnerCue: String) -> String {
-        [
-            "English target: \(target)",
-            "Chinese learner cue: \(learnerCue)",
-            "front is the learner-facing Chinese prompt",
-            "back must be the exact English target"
-        ].joined(separator: "\n")
+    private static func recallCardContractText(target: String, learnerCue: String? = nil) -> String {
+        var lines = ["English target: \(target)"]
+        if let learnerCue, !learnerCue.isEmpty {
+            lines.append("Chinese learner cue: \(learnerCue)")
+        }
+        lines.append(contentsOf: [
+            "front is the recall prompt",
+            "back is the exact target answer",
+            "front must not reveal the full back",
+            "back must remain unchanged"
+        ])
+        return lines.joined(separator: "\n")
     }
 
-    private static func recallModeExamplesText() -> String {
+    private static func recallModeSelectionContractText() -> String {
+        PromptText.bulletList([
+            "Choose the mode from the main learning bottleneck",
+            "If the target is a phrase, choose phrase_recall",
+            "If accepted pitfalls or word signals point to a local spelling hotspot, choose targeted_letter_cloze",
+            "Otherwise choose full_spelling",
+            "Treat repeated letters, confusing letter order, and confusable vowel clusters as local spelling hotspots",
+            "If evidence is mixed, follow modePrior"
+        ])
+    }
+
+    private static func recallNormalizedCueContractText() -> String {
+        PromptText.bulletList([
+            "normalizedCue must be semantic-only Chinese",
+            "normalizedCue must stay short and learner-facing",
+            "normalizedCue must not contain packaging text",
+            "normalizedCue must not contain the English target",
+            "normalizedCue must not contain underscores",
+            "normalizedCue must not contain terms such as 拼出, 补全, 回忆, 完整英文单词, 完整英文词组"
+        ])
+    }
+
+    private static func recallClozeRenderingContractText() -> String {
+        PromptText.bulletList([
+            "Hide exactly one internal spelling hotspot",
+            "Use exactly one underscore group",
+            "That group must contain 2 or 3 underscores",
+            "Prefer a repeated-letter pair or confusable vowel cluster when available",
+            "front = normalizedCue + maskedTarget",
+            "Put maskedTarget in front, never in back"
+        ])
+    }
+
+    private static func recallPlanExamplesText() -> String {
         """
-        <examples_do_not_copy>
-          <example mode="full_spelling">
+        <plan_examples_do_not_copy>
+          <example>
             <target>receive</target>
-            <front>收到 · 拼出完整英文单词</front>
-            <back>receive</back>
+            <selectedMode>targeted_letter_cloze</selectedMode>
+            <normalizedCue>收到</normalizedCue>
           </example>
-          <example mode="targeted_letter_cloze">
-            <target>collocation</target>
-            <front>常见词语搭配 · co__ocation</front>
-            <back>collocation</back>
-          </example>
-          <example mode="phrase_recall">
+          <example>
             <target>take off</target>
-            <front>飞机起飞 · 回忆完整英文词组</front>
-            <back>take off</back>
+            <selectedMode>phrase_recall</selectedMode>
+            <normalizedCue>飞机起飞</normalizedCue>
           </example>
-          <bad_front>
-            <front>常见词语搭配 · co__ocation | back: collocation</front>
-            <reason>front leaks the answer and copies example metadata</reason>
-          </bad_front>
-        </examples_do_not_copy>
+          <example>
+            <target>book</target>
+            <selectedMode>full_spelling</selectedMode>
+            <normalizedCue>书</normalizedCue>
+          </example>
+          <bad_cue>
+            <normalizedCue>收到 · 拼出完整英文单词</normalizedCue>
+            <reason>normalizedCue must be semantic only, not packaging text</reason>
+          </bad_cue>
+          <bad_cue>
+            <normalizedCue>常见词语搭配 · co__ocation</normalizedCue>
+            <reason>normalizedCue must not contain English target text or underscores</reason>
+          </bad_cue>
+        </plan_examples_do_not_copy>
         """
+    }
+
+    private static func recallDraftExamplesText(for mode: LLMRecallCardMode) -> String {
+        switch mode {
+        case .fullSpelling:
+            return """
+            <draft_examples_do_not_copy>
+              <example mode="full_spelling">
+                <target>receive</target>
+                <normalizedCue>收到</normalizedCue>
+                <front>收到 · 拼出完整英文单词</front>
+                <back>receive</back>
+              </example>
+              <bad_front>
+                <front>收到 · receive</front>
+                <reason>front reveals the full back</reason>
+              </bad_front>
+            </draft_examples_do_not_copy>
+            """
+        case .targetedLetterCloze:
+            return """
+            <draft_examples_do_not_copy>
+              <example mode="targeted_letter_cloze">
+                <target>receive</target>
+                <normalizedCue>收到</normalizedCue>
+                <maskedTarget>rec__ve</maskedTarget>
+                <front>收到 · rec__ve</front>
+                <back>receive</back>
+              </example>
+              <example mode="targeted_letter_cloze">
+                <target>collocation</target>
+                <normalizedCue>常见词语搭配</normalizedCue>
+                <maskedTarget>co__ocation</maskedTarget>
+                <front>常见词语搭配 · co__ocation</front>
+                <back>collocation</back>
+              </example>
+              <bad_front>
+                <front>词语组合 · collocation</front>
+                <reason>front reveals the full back</reason>
+              </bad_front>
+              <bad_draft>
+                <front>i/e 顺序容易写反 · 拼出单词</front>
+                <back>recei_ve</back>
+                <reason>back must stay unmasked</reason>
+              </bad_draft>
+              <bad_front>
+                <front>动词 · rece_ve</front>
+                <reason>a one-underscore mask is invalid; use 2 or 3 underscores for the hotspot</reason>
+              </bad_front>
+            </draft_examples_do_not_copy>
+            """
+        case .phraseRecall:
+            return """
+            <draft_examples_do_not_copy>
+              <example mode="phrase_recall">
+                <target>take off</target>
+                <normalizedCue>飞机起飞</normalizedCue>
+                <front>飞机起飞 · 回忆完整英文词组</front>
+                <back>take off</back>
+              </example>
+              <bad_front>
+                <front>飞机起飞 · take off</front>
+                <reason>front reveals the full back</reason>
+              </bad_front>
+            </draft_examples_do_not_copy>
+            """
+        }
     }
 
     private static func recallModeConstraintRules(_ modes: [LLMRecallCardMode]) -> [String] {

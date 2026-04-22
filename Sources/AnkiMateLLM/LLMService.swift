@@ -790,24 +790,72 @@ public final class LLMService: ObservableObject {
             allowReasoningFallback: false,
             operation: "Recall draft generation"
         )
-        guard let draftPayload = draftResponse.draft,
-              let draft = Self.normalizeRecallCardDraft(
-                draftPayload,
+        let draft = draftResponse.draft.flatMap {
+            Self.normalizeRecallCardDraft(
+                $0,
                 allowedModes: [plan.selectedMode],
                 target: normalizedWord
-              ) else {
-            throw LLMServiceError.invalidStructuredOutput(
-                "Recall draft generation returned no valid draft JSON"
             )
         }
+        let normalizedDraft: LLMRecallCardDraft
+        if let draft {
+            normalizedDraft = draft
+        } else {
+            let retryResponse: RecallCardDecisionPayload = try await generateStructuredOutput(
+                type: RecallCardDecisionPayload.self,
+                prompt: Self.recallDraftRetryPrompt(
+                    base: draftPrompt,
+                    target: normalizedWord,
+                    selectedMode: plan.selectedMode
+                ),
+                maxTokens: Self.recallDraftMaxTokens,
+                temperature: adjustedTemperature(0.1),
+                responseFormat: Self.recallDraftResponseFormat(mode: plan.selectedMode),
+                allowReasoningFallback: false,
+                operation: "Recall draft retry generation"
+            )
+            guard let retryDraft = retryResponse.draft.flatMap({
+                Self.normalizeRecallCardDraft(
+                    $0,
+                    allowedModes: [plan.selectedMode],
+                    target: normalizedWord
+                )
+            }) else {
+                throw LLMServiceError.invalidStructuredOutput(
+                    "Recall draft generation returned no valid draft JSON"
+                )
+            }
+            normalizedDraft = retryDraft
+        }
         let enforcedDraft = Self.enforceRecallDraftContract(
-            draft,
+            normalizedDraft,
             fallbackAnchor: anchor
         )
         return RecallCardDraftDecisionEnvelope(
             draft: enforcedDraft,
             selectionReason: plan.selectionReason,
             cuePlan: plan.cuePlan
+        )
+    }
+
+    private static func recallDraftRetryPrompt(
+        base: (system: String, user: String),
+        target: String,
+        selectedMode: LLMRecallCardMode
+    ) -> (system: String, user: String) {
+        let correction = [
+            "Retry correction:",
+            "The previous draft failed internal validation.",
+            "Return JSON only and keep the same mode: \(selectedMode.rawValue).",
+            "The exact target is: \(target).",
+            "draft.back must equal the exact target with no underscores.",
+            "draft.front must not contain the exact unmasked target.",
+            "For targeted_letter_cloze, put the masked target surface in draft.front, not in draft.back."
+        ].joined(separator: "\n")
+
+        return (
+            system: base.system,
+            user: [base.user, correction].joined(separator: "\n\n")
         )
     }
 
@@ -2312,6 +2360,7 @@ extension LLMService {
         )
         guard !front.isEmpty, !back.isEmpty else { return nil }
         guard back == target.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        guard !recallCueContainsTarget(front, target: target) else { return nil }
 
         let hint = payload.hint.map {
             normalizeGeneratedLine(
