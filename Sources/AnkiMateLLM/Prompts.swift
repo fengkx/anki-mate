@@ -481,6 +481,8 @@ public enum LLMPrompt {
                     "For targeted_letter_cloze, never hide characters inside the Chinese cue",
                     "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
                     "If accepted pitfalls point to a local spelling risk, align the gap with that risk when possible",
+                    "Never copy XML tags, labels, or example metadata into draft.front",
+                    "draft.front must not contain back:, answer:, target:, or the exact English target",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Return exactly one draft only"
@@ -647,6 +649,8 @@ public enum LLMPrompt {
                     "For targeted_letter_cloze, never hide characters inside the Chinese cue",
                     "For targeted_letter_cloze, keep the front natural as a learner-facing Chinese cue first, then add the gap",
                     "For targeted_letter_cloze, keep a clear Chinese cue on the front and do not make the card feel like a puzzle",
+                    "Never copy XML tags, labels, or example metadata into draft.front",
+                    "draft.front must not contain back:, answer:, target:, or the exact English target",
                     "anchor is optional display metadata only; do not invent source offsets or remap anchors",
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Return exactly one draft only"
@@ -1151,11 +1155,29 @@ public enum LLMPrompt {
     }
 
     private static func recallModeExamplesText() -> String {
-        [
-            "- full_spelling -> front: 收到 · 拼出完整英文单词 | back: receive",
-            "- targeted_letter_cloze -> front: 收到 · rec__ve | back: receive",
-            "- phrase_recall -> front: 飞机起飞 · 回忆完整英文词组 | back: take off"
-        ].joined(separator: "\n")
+        """
+        <examples_do_not_copy>
+          <example mode="full_spelling">
+            <target>receive</target>
+            <front>收到 · 拼出完整英文单词</front>
+            <back>receive</back>
+          </example>
+          <example mode="targeted_letter_cloze">
+            <target>collocation</target>
+            <front>常见词语搭配 · co__ocation</front>
+            <back>collocation</back>
+          </example>
+          <example mode="phrase_recall">
+            <target>take off</target>
+            <front>飞机起飞 · 回忆完整英文词组</front>
+            <back>take off</back>
+          </example>
+          <bad_front>
+            <front>常见词语搭配 · co__ocation | back: collocation</front>
+            <reason>front leaks the answer and copies example metadata</reason>
+          </bad_front>
+        </examples_do_not_copy>
+        """
     }
 
     private static func recallModeConstraintRules(_ modes: [LLMRecallCardMode]) -> [String] {
