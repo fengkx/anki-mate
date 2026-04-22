@@ -193,7 +193,7 @@ back: take off
 - plan 阶段只保留：
   - `selectedMode`
   - `normalizedCue`
-- `selectionReason` 由服务端本地生成默认值
+- `selectionReason` 仍可保留给调试与回显使用，但不应继续扩成更重的中间推理负担
 - `semanticSource` 如无必要，也可由服务端按输入来源推断
 
 这可以显著降低 recall plan 阶段的失败面。

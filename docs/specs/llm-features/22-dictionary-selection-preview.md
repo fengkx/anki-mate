@@ -569,12 +569,11 @@ struct DictionaryPreviewComparison: Equatable, Sendable {
     let sampleWord: String
     let current: DictionaryPreviewPane
     let candidate: DictionaryPreviewPane
-    let summary: [String]
 }
 
 struct DictionaryPreviewPane: Equatable, Sendable {
     let title: String
-    let sourceDescription: String?
+    let dictionaryName: String
     let sections: [DictionaryPreviewSection]
     let state: DictionaryPreviewPaneState
 }
@@ -642,7 +641,6 @@ struct DictionaryPreviewRow: Equatable, Sendable, Identifiable {
 - `DictionaryPreviewPane`
 - `DictionaryPreviewSectionView`
 - `DictionaryComparisonView`
-- `DictionaryDiffSummaryView`
 
 状态归属建议：
 
@@ -714,12 +712,19 @@ struct DictionaryPreviewRow: Equatable, Sendable, Identifiable {
 9. 预览失败不影响 `Save / Create`
 10. `Automatic` 能解析为合理的预览来源
 
-## 16. 与当前实现的收敛方向
+## 16. 当前实现状态
 
-当前实现收敛目标明确为：
+当前代码已经完成首版落地：
 
-- 从 `Picker("Dictionary", selection: ...)` 收敛为可比较的双栏选择器
-- 从“纯表单字段”收敛为“配置 + 验证”一体化工作区
-- 从“只有名称”收敛为“名称 + 内容预期 + 示例词预览 + 动态原始数据浏览”
+- collection editor 中已存在可搜索的词典列表，而不是只有 `Picker`
+- 右侧已支持 `Sample word` 双栏预览
+- 预览数据已由专门的 `DictionarySelectionPreviewModel` 从 `LookupResult` 动态投影
+- 失败、空结果、partial failure 都已有独立状态
 
-这次改造的核心价值不在视觉润色，而在于把词典选择从盲选变成可验证选择。
+当前仍未继续扩展的点：
+
+- 不做规则化 `Diff summary`
+- 不做更复杂的 metadata 分组 / 最近使用
+- 不把词典选择继续扩成更重的“推荐系统”或解释层
+
+因此本文后半部分应按“当前行为说明 + 可选后续方向”理解，而不是仍把它当作纯计划稿。

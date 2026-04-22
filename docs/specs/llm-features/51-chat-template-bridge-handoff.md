@@ -90,7 +90,7 @@ Agent 对话功能（见 `50-agent-chat.md`）需要原生的 OpenAI 风格 func
 2. **文档**：
    - `docs/agents/project-map.md`：如有必要更新「generate 入口 = `LLMService.generate`，tools 可选」的描述。
    - `docs/specs/llm-features/50-agent-chat.md` §4 工具集与 Phase 计划可在 Phase 2b 完成后把「bridge 统一」勾掉。
-3. **特定 function 的 `toolChoice`**：`InferenceEngine+ToolCalls.swift` 的 `normalizedToolChoice` 对于 `{"type":"function","function":{"name":"foo"}}` 目前降级为 `"auto"`，TODO 未跟进。Agent chat 当前需求用不到指定函数，可放到 Phase 3。
+3. **特定 function 的 `toolChoice`**：当前实现已经切到 `LLMService.generate` / `RPCClient.chatCompletion` 这条 OpenAI-compatible 请求链路，但 `toolChoice` 仍只按 string 透传；`{"type":"function","function":{"name":"foo"}}` 这类 named-function 强制调用还未支持。Agent chat 当前需求用不到指定函数，可放到 Phase 3。
 4. **`parallelToolCalls`**：已贯通到 bridge，但还没有端到端回归测。需要一个 dual-call 用例（e.g. 同时调 `get_card` + `list_senses`）验证。
 
 ## 4. 架构速查

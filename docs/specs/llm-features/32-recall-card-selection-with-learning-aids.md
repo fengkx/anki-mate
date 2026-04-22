@@ -512,6 +512,8 @@ Rules
 - do not hide too much of the word
 - do not make the card feel like a puzzle
 - keep a clear Chinese cue on the front
+- put the masked target surface on the front, not on the back
+- keep `back` equal to the exact target with no underscores
 - if accepted pitfalls point to a local spelling risk, align the gap with that risk when possible
 
 ## 11. 本地 post-check 与 repair
@@ -537,11 +539,12 @@ structured output 不是质量保证的终点，Recall 仍然需要本地 post-c
 
 必须满足：
 
-- `front` 或 `hint` 中存在 `_`
+- `front` 中存在 `_`
 - 挖空应为单一连续片段
 - 缺口长度优先 `2` 或 `3`
 - 不应默认优先挖首字母
 - front 仍应保留清晰中文 cue
+- `back` 必须保持完整原词，不能带 `_`
 
 若模型输出 drift：
 

@@ -553,6 +553,7 @@ SwiftUI view 拆分：
   - proposal card
   - composer
   - `Clear Chat`
+- proposal card 已提供 `Preview` / `Apply` / `Dismiss`
 - `CardPreviewView` 已订阅 `AgentSession.previewOverrideArtifacts`，并在 preview override 生效时显示 `Reviewing Agent proposal` 横幅
 - `AgentChatSupport.swift` 已把 `WordItem` / `WordListViewModel` / `LLMService` 桥接为 `AgentSession` 所需依赖
 
@@ -575,7 +576,7 @@ SwiftUI view 拆分：
 
 ### 7.5 当前实现偏差与后续收口
 
-- `search_dictionary` 这个读 tool 还没接；当前只实现了 `read_card_snapshot` 与 `list_accepted_artifacts`
+- `search_dictionary` 这个读 tool 还没接；当前读 tool 只有 `read_card_snapshot`、`list_accepted_artifacts`、`read_recall_card`
 - `layout_request_declined` 目前由本地启发式分类短路，不是完全依赖模型语义判断，与 §4.8 的目标实现仍有偏差
 - 会话层当前没有使用函数级 `toolChoice=function` 强制某个 tool 出场；如果后续引入强制读 tool 预取，需要先补底层支持
 - `AIContentView` 目前在 `!llmService.hasModel` 时直接显示 no-model 面板，导致用户无法在无模型状态下查看既有聊天记录或处理 pending proposal

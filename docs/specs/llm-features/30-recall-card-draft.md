@@ -182,7 +182,7 @@ front: emba__ass + 使尴尬
 back: embarrass
 
 perpetual
-front: perpe__al + 持续不断的
+front: 持续不断的 · perpe__al
 back: perpetual
 ```
 

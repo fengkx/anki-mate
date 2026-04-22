@@ -192,7 +192,7 @@ Hint:
 示例：
 
 ```text
-Front: perpe__al + 持续不断的
+Front: 持续不断的 · perpe__al
 Back: perpetual
 Hint: Focus on the middle "tu" segment.
 ```
@@ -286,14 +286,10 @@ Recall Card 不要求用户先采纳 `Learning Aids` 才能生成，但如果已
 ```json
 {
   "variant": "targeted_letter_cloze",
-  "front": "perpe__al + 持续不断的",
+  "front": "持续不断的 · perpe__al",
   "back": "perpetual",
   "hint": "Focus on the middle \"tu\" segment.",
-  "senseIndex": 1,
-  "maskedRange": {
-    "start": 5,
-    "length": 2
-  }
+  "senseIndex": 1
 }
 ```
 

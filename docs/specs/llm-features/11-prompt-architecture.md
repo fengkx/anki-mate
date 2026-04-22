@@ -274,7 +274,7 @@ Recall 类任务是高度受约束的生成。
 {
   "draft": {
     "mode": "targeted_letter_cloze",
-    "front": "perpe__al + 持续不断的",
+    "front": "持续不断的 · perpe__al",
     "back": "perpetual",
     "hint": "Focus on the middle tu segment.",
     "anchor": null
