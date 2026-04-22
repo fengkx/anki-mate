@@ -22,6 +22,7 @@ public final class LLMService: ObservableObject {
     static let pronunciationEnhancementMaxTokens = 1024
     static let recallPlanMaxTokens = 1024
     static let recallDraftMaxTokens = 1024
+    static let recallMaskPlanMaxTokens = 512
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var loadedModelId: String?
@@ -770,6 +771,79 @@ public final class LLMService: ObservableObject {
                 )
             }
             throw error
+        }
+
+        if plan.selectedMode == .targetedLetterCloze {
+            let maskPrompt = LLMPrompt.recallMaskPlanFromPlan(
+                word: normalizedWord,
+                senses: normalizedSenses,
+                context: normalizedContext,
+                cuePlan: plan.cuePlan
+            )
+            let maskPlan: LLMRecallMaskPlan
+            var maskPlanRepaired = false
+            var maskPlanFallback = false
+
+            do {
+                let maskResponse: RecallMaskPlanPayload = try await generateStructuredOutput(
+                    type: RecallMaskPlanPayload.self,
+                    prompt: maskPrompt,
+                    maxTokens: Self.recallMaskPlanMaxTokens,
+                    temperature: adjustedTemperature(0.2),
+                    responseFormat: Self.recallMaskPlanResponseFormat(),
+                    allowReasoningFallback: false,
+                    operation: "Recall mask plan generation"
+                )
+                maskPlan = try Self.validateRecallMaskPlan(maskResponse, target: normalizedWord)
+            } catch LLMServiceError.invalidStructuredOutput(let validationError) {
+                let repairPrompt = LLMPrompt.recallMaskPlanRepair(
+                    word: normalizedWord,
+                    cuePlan: plan.cuePlan,
+                    validationError: validationError,
+                    candidateList: Self.recallMaskPlanCandidateList(for: normalizedWord)
+                )
+                do {
+                    let repairResponse: RecallMaskPlanPayload = try await generateStructuredOutput(
+                        type: RecallMaskPlanPayload.self,
+                        prompt: repairPrompt,
+                        maxTokens: Self.recallMaskPlanMaxTokens,
+                        temperature: adjustedTemperature(0.1),
+                        responseFormat: Self.recallMaskPlanResponseFormat(),
+                        allowReasoningFallback: false,
+                        operation: "Recall mask plan repair generation"
+                    )
+                    maskPlan = try Self.validateRecallMaskPlan(repairResponse, target: normalizedWord)
+                    maskPlanRepaired = true
+                } catch LLMServiceError.invalidStructuredOutput {
+                    guard let fallbackMaskPlan = Self.ruleBasedMaskPlan(for: normalizedWord) else {
+                        throw LLMServiceError.invalidStructuredOutput(
+                            "Recall mask plan generation returned no valid mask plan JSON"
+                        )
+                    }
+                    maskPlan = fallbackMaskPlan
+                    maskPlanFallback = true
+                }
+            }
+
+            guard let localDraft = Self.locallyRenderedTargetedLetterClozeDraft(
+                word: normalizedWord,
+                cuePlan: plan.cuePlan,
+                maskPlan: maskPlan,
+                scaffold: scaffold,
+                anchor: anchor
+            ) else {
+                throw LLMServiceError.invalidStructuredOutput(
+                    "Recall mask plan rendered no valid targeted cloze draft"
+                )
+            }
+            return RecallCardDraftDecisionEnvelope(
+                draft: localDraft,
+                selectionReason: plan.selectionReason,
+                cuePlan: plan.cuePlan,
+                maskPlan: maskPlan,
+                maskPlanRepaired: maskPlanRepaired,
+                maskPlanFallback: maskPlanFallback
+            )
         }
 
         let draftPrompt = LLMPrompt.recallCardDraftFromPlan(
@@ -1716,6 +1790,26 @@ struct RecallCardDecisionPayload: Decodable {
     }
 }
 
+struct RecallMaskPlanPayload: Decodable {
+    let maskPlan: RecallMaskPlanPayloadItem?
+
+    private enum CodingKeys: String, CodingKey {
+        case maskPlan
+    }
+}
+
+struct RecallMaskPlanPayloadItem: Decodable {
+    let startIndex: Int
+    let hiddenText: String
+    let teachingReason: String
+
+    private enum CodingKeys: String, CodingKey {
+        case startIndex
+        case hiddenText
+        case teachingReason
+    }
+}
+
 private struct GeneratedIPAPayload: Decodable {
     let ipa: String
 }
@@ -2218,6 +2312,14 @@ extension LLMService {
         )
     }
 
+    private static func recallMaskPlanResponseFormat() -> LLMResponseFormat {
+        LLMResponseFormat(
+            kind: .jsonSchema,
+            schema: recallMaskPlanSchema(),
+            strict: true
+        )
+    }
+
     private static func recallPlanSchema(
         allowedModes: [LLMRecallCardMode]
     ) -> JSONValue {
@@ -2309,6 +2411,38 @@ extension LLMService {
         ])
     }
 
+    private static func recallMaskPlanSchema() -> JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "required": .array([.string("maskPlan")]),
+            "properties": .object([
+                "maskPlan": .object([
+                    "type": .string("object"),
+                    "additionalProperties": .bool(false),
+                    "required": .array([
+                        .string("startIndex"),
+                        .string("hiddenText"),
+                        .string("teachingReason")
+                    ]),
+                    "properties": .object([
+                        "startIndex": .object([
+                            "type": .string("integer")
+                        ]),
+                        "hiddenText": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(3)
+                        ]),
+                        "teachingReason": .object([
+                            "type": .string("string"),
+                            "maxLength": .number(160)
+                        ])
+                    ])
+                ])
+            ])
+        ])
+    }
+
     private static func normalizedRecallCardMode(from rawValue: String) -> LLMRecallCardMode? {
         let normalized = rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2382,6 +2516,118 @@ extension LLMService {
             hint: hint,
             anchor: anchor
         )
+    }
+
+    static func normalizeRecallMaskPlan(
+        _ payload: RecallMaskPlanPayload,
+        target: String
+    ) -> LLMRecallMaskPlan? {
+        try? validateRecallMaskPlan(payload, target: target)
+    }
+
+    private static func validateRecallMaskPlan(
+        _ payload: RecallMaskPlanPayload,
+        target: String
+    ) throws -> LLMRecallMaskPlan {
+        guard let maskPlan = payload.maskPlan else {
+            throw LLMServiceError.invalidStructuredOutput("maskPlan is missing")
+        }
+        return try validateRecallMaskPlan(maskPlan, target: target)
+    }
+
+    private static func validateRecallMaskPlan(
+        _ payload: RecallMaskPlanPayloadItem,
+        target: String
+    ) throws -> LLMRecallMaskPlan {
+        let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetCharacters = Array(normalizedTarget)
+        let hiddenText = payload.hiddenText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hiddenCharacters = Array(hiddenText)
+
+        guard !targetCharacters.isEmpty else {
+            throw LLMServiceError.invalidStructuredOutput("target is empty")
+        }
+        guard (2...3).contains(hiddenCharacters.count) else {
+            throw LLMServiceError.invalidStructuredOutput("hiddenText must be 2 or 3 characters")
+        }
+
+        let zeroBasedStart = payload.startIndex - 1
+        let end = zeroBasedStart + hiddenCharacters.count
+        guard zeroBasedStart >= 0, end <= targetCharacters.count else {
+            throw LLMServiceError.invalidStructuredOutput("startIndex is outside the target")
+        }
+        guard zeroBasedStart > 0, end < targetCharacters.count else {
+            throw LLMServiceError.invalidStructuredOutput("mask span must not include the first or last character")
+        }
+
+        let actualHiddenText = String(targetCharacters[zeroBasedStart..<end])
+        guard actualHiddenText == hiddenText else {
+            throw LLMServiceError.invalidStructuredOutput(
+                "hiddenText does not match target at startIndex \(payload.startIndex)"
+            )
+        }
+        guard let maskedSurface = applyMask(
+            word: normalizedTarget,
+            startIndex: payload.startIndex,
+            hiddenText: hiddenText
+        ), clozeGapMatchesTarget(maskedSurface, target: normalizedTarget) else {
+            throw LLMServiceError.invalidStructuredOutput("rendered mask does not match target")
+        }
+
+        let teachingReason = normalizeGeneratedLine(
+            payload.teachingReason,
+            stripFieldLabels: true
+        )
+        return LLMRecallMaskPlan(
+            startIndex: payload.startIndex,
+            hiddenText: hiddenText,
+            teachingReason: teachingReason
+        )
+    }
+
+    static func applyMask(
+        word: String,
+        startIndex: Int,
+        hiddenText: String
+    ) -> String? {
+        let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let characters = Array(normalizedWord)
+        let hiddenCharacters = Array(hiddenText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let zeroBasedStart = startIndex - 1
+        let end = zeroBasedStart + hiddenCharacters.count
+        guard zeroBasedStart >= 0, end <= characters.count else { return nil }
+        guard String(characters[zeroBasedStart..<end]) == String(hiddenCharacters) else { return nil }
+        return applyingMask(range: zeroBasedStart..<end, to: characters)
+    }
+
+    static func locallyRenderedTargetedLetterClozeDraft(
+        word: String,
+        cuePlan: LLMRecallCuePlan,
+        maskPlan: LLMRecallMaskPlan,
+        scaffold: RecallPromptScaffold,
+        anchor: LLMAnchorSnapshot?
+    ) -> LLMRecallCardDraft? {
+        let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let maskedTarget = applyMask(
+            word: normalizedWord,
+            startIndex: maskPlan.startIndex,
+            hiddenText: maskPlan.hiddenText
+        ) else {
+            return nil
+        }
+        let cue = cuePlan.normalizedCue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let front = cue.nilIfEmpty.map { "\($0) · \(maskedTarget)" } ?? maskedTarget
+        let draft = LLMRecallCardDraft(
+            mode: .targetedLetterCloze,
+            front: front,
+            back: normalizedWord,
+            hint: scaffold.hint,
+            anchor: normalizeAnchor(anchor)
+        )
+        guard isValidTargetedLetterClozeSurface(draft.front, hint: draft.hint, target: normalizedWord) else {
+            return nil
+        }
+        return draft
     }
 
     static func enforceRecallDraftContract(
@@ -2786,19 +3032,52 @@ extension LLMService {
     }
 
     private static func ruleBasedMaskedSurface(for word: String) -> String? {
+        guard let plan = ruleBasedMaskPlan(for: word) else { return nil }
+        return applyMask(
+            word: word,
+            startIndex: plan.startIndex,
+            hiddenText: plan.hiddenText
+        )
+    }
+
+    private static func ruleBasedMaskPlan(for word: String) -> LLMRecallMaskPlan? {
         let characters = Array(word)
         guard characters.count >= 4 else { return nil }
 
         let lowercased = characters.map { Character(String($0).lowercased()) }
 
         if let range = preferredMaskRange(in: lowercased) {
-            return applyingMask(range: range, to: characters)
+            return LLMRecallMaskPlan(
+                startIndex: range.lowerBound + 1,
+                hiddenText: String(characters[range]),
+                teachingReason: "Rule-based fallback selected a local spelling hotspot."
+            )
         }
 
         let fallbackStart = max(1, min(characters.count - 3, (characters.count / 2) - 1))
         let fallbackLength = min(2, characters.count - fallbackStart - 1)
         guard fallbackLength >= 2 else { return nil }
-        return applyingMask(range: fallbackStart..<(fallbackStart + fallbackLength), to: characters)
+        let range = fallbackStart..<(fallbackStart + fallbackLength)
+        return LLMRecallMaskPlan(
+            startIndex: range.lowerBound + 1,
+            hiddenText: String(characters[range]),
+            teachingReason: "Rule-based fallback selected an internal spelling hotspot."
+        )
+    }
+
+    private static func recallMaskPlanCandidateList(for word: String) -> String {
+        let characters = Array(word.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard characters.count >= 4 else { return "none" }
+
+        var lines: [String] = []
+        for length in 2...3 {
+            guard characters.count > length + 1 else { continue }
+            for zeroBasedStart in 1...(characters.count - length - 1) {
+                let range = zeroBasedStart..<(zeroBasedStart + length)
+                lines.append(#"\#(zeroBasedStart + 1): "\#(String(characters[range]))""#)
+            }
+        }
+        return lines.isEmpty ? "none" : lines.joined(separator: "\n")
     }
 
     private static func preferredMaskRange(in characters: [Character]) -> Range<Int>? {

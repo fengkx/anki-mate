@@ -123,6 +123,7 @@ private extension LLMModelBenchmarkE2ETests {
         let acceptedCollocations: [String]
         let previewAnchor: LLMAnchorSnapshot?
         let expectedMode: LLMRecallCardMode
+        let expectedMaskHotspots: [String]
     }
 
     struct LearningAidsCase {
@@ -230,7 +231,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .phraseRecall
+                expectedMode: .phraseRecall,
+                expectedMaskHotspots: []
             ),
             .init(
                 word: "receive",
@@ -240,7 +242,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .targetedLetterCloze
+                expectedMode: .targetedLetterCloze,
+                expectedMaskHotspots: ["ei"]
             ),
             .init(
                 word: "believe",
@@ -250,7 +253,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .targetedLetterCloze
+                expectedMode: .targetedLetterCloze,
+                expectedMaskHotspots: ["ie"]
             ),
             .init(
                 word: "accommodate",
@@ -260,7 +264,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .targetedLetterCloze
+                expectedMode: .targetedLetterCloze,
+                expectedMaskHotspots: ["cc", "mm"]
             ),
             .init(
                 word: "conscientious",
@@ -270,7 +275,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .targetedLetterCloze
+                expectedMode: .targetedLetterCloze,
+                expectedMaskHotspots: ["sci", "tio", "ous"]
             ),
             .init(
                 word: "collocation",
@@ -280,7 +286,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: ["strong collocation"],
                 previewAnchor: nil,
-                expectedMode: .targetedLetterCloze
+                expectedMode: .targetedLetterCloze,
+                expectedMaskHotspots: ["ll"]
             ),
             .init(
                 word: "perpetual",
@@ -290,7 +297,8 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
                 previewAnchor: nil,
-                expectedMode: .fullSpelling
+                expectedMode: .fullSpelling,
+                expectedMaskHotspots: []
             )
         ]
     }
@@ -532,27 +540,46 @@ private extension LLMModelBenchmarkE2ETests {
                 if !(2...3).contains(gapLength) {
                     qualityIssues.append("invalid_cloze_gap_length")
                 }
+                if !testCase.expectedMaskHotspots.isEmpty {
+                    let hiddenText = decision.maskPlan?.hiddenText.lowercased() ?? ""
+                    let matchesExpectedHotspot = testCase.expectedMaskHotspots.contains {
+                        hiddenText.contains($0.lowercased())
+                    }
+                    if !matchesExpectedHotspot {
+                        qualityIssues.append("mask_plan_missed_expected_hotspot")
+                    }
+                }
             }
             if decision.draft.mode != testCase.expectedMode {
                 qualityIssues.append("mode_differs_from_baseline")
             }
 
+            var metrics: [String: JSONValue] = [
+                "mode": .string(decision.draft.mode.rawValue),
+                "expected_mode": .string(testCase.expectedMode.rawValue),
+                "front_clean": .bool(self.isPlainText(decision.draft.front)),
+                "target_leak": .bool(self.cuePlanContainsTarget(decision.draft.front, target: testCase.word)),
+                "timeout_seconds": .int(timeoutSeconds)
+            ]
+            if decision.draft.mode == .targetedLetterCloze {
+                metrics["mask_plan_start_index"] = decision.maskPlan.map { .int($0.startIndex) } ?? .null
+                metrics["mask_plan_hidden_text"] = decision.maskPlan.map { .string($0.hiddenText) } ?? .null
+                metrics["mask_plan_repaired"] = .bool(decision.maskPlanRepaired)
+                metrics["mask_plan_fallback"] = .bool(decision.maskPlanFallback)
+                metrics["expected_mask_hotspots"] = .string(testCase.expectedMaskHotspots.joined(separator: ","))
+            }
+
             return .init(
                 qualityIssues: qualityIssues,
                 warnings: [],
-                metrics: [
-                    "mode": .string(decision.draft.mode.rawValue),
-                    "expected_mode": .string(testCase.expectedMode.rawValue),
-                    "front_clean": .bool(self.isPlainText(decision.draft.front)),
-                    "target_leak": .bool(self.cuePlanContainsTarget(decision.draft.front, target: testCase.word)),
-                    "timeout_seconds": .int(timeoutSeconds)
-                ],
+                metrics: metrics,
                 output: [
                     "front": .string(decision.draft.front),
                     "back": .string(decision.draft.back),
                     "hint": decision.draft.hint.map(JSONValue.string) ?? .null,
                     "selection_reason": .string(decision.selectionReason?.primaryGoal ?? ""),
-                    "cue_plan": .string(decision.cuePlan?.normalizedCue ?? "")
+                    "cue_plan": .string(decision.cuePlan?.normalizedCue ?? ""),
+                    "mask_plan_reason": decision.maskPlan.map { .string($0.teachingReason) } ?? .null
                 ]
             )
         }

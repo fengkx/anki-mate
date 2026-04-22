@@ -625,6 +625,126 @@ public enum LLMPrompt {
         return (system, user)
     }
 
+    public static func recallMaskPlanFromPlan(
+        word: String,
+        senses: [LLMSensePromptInput],
+        context: LLMRecallGenerationContext,
+        cuePlan: LLMRecallCuePlan
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSenses = senses.isEmpty
+            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
+            : senses
+
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Choose one useful spelling hotspot for a recall cloze card.",
+            "You are choosing what to hide, not rendering the final card.",
+            "Do not output underscores or a masked word.",
+            "Use the target character list to choose an exact substring.",
+            "Never add markdown fences, commentary, or extra fields."
+        ])
+
+        let user = PromptText.join([
+            #"Choose exactly one spelling hotspot to hide for the target "\#(trimmedWord)"."#,
+            "",
+            "The learner will see the Chinese cue plus a masked version of the English target.",
+            "Your job is to choose the hidden English characters that create the most useful recall challenge.",
+            PromptText.labeledBlock("Chosen mode", value: LLMRecallCardMode.targetedLetterCloze.rawValue),
+            PromptText.labeledBlock("Cue plan", value: [
+                "semanticSource: \(cuePlan.semanticSource)",
+                "normalizedCue: \(cuePlan.normalizedCue)"
+            ].joined(separator: "\n")),
+            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+            PromptText.labeledBlock("Accepted learning aids", value: recallLearningAidsText(context)),
+            PromptText.labeledBlock("Target characters", value: targetCharacterListText(for: trimmedWord)),
+            PromptText.labeledBlock(
+                "Selection guidance",
+                value: PromptText.bulletList([
+                    "Choose a small internal substring that best matches the learner's likely spelling difficulty.",
+                    "Use accepted pitfalls when they reveal a meaningful spelling problem.",
+                    "Prefer a useful learning hotspot over a mechanically centered substring.",
+                    "Do not choose the first or last character.",
+                    "Do not output the final masked word."
+                ])
+            ),
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"maskPlan\": {",
+                "    \"startIndex\": 4,",
+                "    \"hiddenText\": \"ie\",",
+                "    \"teachingReason\": \"This hides the vowel order that learners may reverse.\"",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "startIndex is 1-based",
+                    "hiddenText must be copied exactly from the target characters",
+                    "hiddenText must be one continuous substring",
+                    "hiddenText must be 2 or 3 characters"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
+    public static func recallMaskPlanRepair(
+        word: String,
+        cuePlan: LLMRecallCuePlan,
+        validationError: String,
+        candidateList: String
+    ) -> (system: String, user: String) {
+        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let system = PromptText.join([
+            "You are a bilingual language learning assistant.",
+            "Repair one invalid spelling hotspot plan for a recall cloze card.",
+            "Choose from the valid internal substrings only.",
+            "Do not output underscores or a masked word.",
+            "Never add markdown fences, commentary, or extra fields."
+        ])
+
+        let user = PromptText.join([
+            "The previous maskPlan failed validation.",
+            PromptText.labeledBlock("Target", value: trimmedWord),
+            PromptText.labeledBlock("Target characters", value: targetCharacterListText(for: trimmedWord)),
+            PromptText.labeledBlock("Cue plan", value: [
+                "semanticSource: \(cuePlan.semanticSource)",
+                "normalizedCue: \(cuePlan.normalizedCue)"
+            ].joined(separator: "\n")),
+            PromptText.labeledBlock("Validation error", value: validationError),
+            PromptText.labeledBlock("Valid internal substrings", value: candidateList),
+            "Choose the best valid substring for the learner's spelling difficulty.",
+            "Keep the same meaning and learning goal.",
+            PromptText.jsonBlock([
+                "Return a single JSON object with this shape:",
+                "{",
+                "  \"maskPlan\": {",
+                "    \"startIndex\": 4,",
+                "    \"hiddenText\": \"ie\",",
+                "    \"teachingReason\": \"This hides the vowel order that learners may reverse.\"",
+                "  }",
+                "}"
+            ]),
+            PromptText.labeledBlock(
+                "Rules",
+                value: PromptText.bulletList([
+                    "Output JSON only",
+                    "startIndex is 1-based",
+                    "hiddenText must be copied exactly from Valid internal substrings",
+                    "hiddenText must be one continuous substring",
+                    "hiddenText must be 2 or 3 characters"
+                ])
+            )
+        ])
+
+        return (system, user)
+    }
+
     public static func learningAids(
         word: String,
         senses: [LLMSensePromptInput],
@@ -1071,6 +1191,15 @@ public enum LLMPrompt {
         }
 
         return rendered.isEmpty ? "none" : rendered.joined(separator: "\n")
+    }
+
+    private static func targetCharacterListText(for word: String) -> String {
+        let characters = Array(word)
+        guard !characters.isEmpty else { return "none" }
+        return characters.enumerated().map { index, character in
+            "\(index + 1): \(character)"
+        }
+        .joined(separator: "\n")
     }
 
     private static func learningAidAcceptedContextText(_ context: LLMLearningAidAcceptedContext) -> String {

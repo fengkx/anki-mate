@@ -104,19 +104,40 @@ public struct LLMRecallCuePlan: Codable, Equatable, Sendable {
     }
 }
 
+public struct LLMRecallMaskPlan: Codable, Equatable, Sendable {
+    public let startIndex: Int
+    public let hiddenText: String
+    public let teachingReason: String
+
+    public init(startIndex: Int, hiddenText: String, teachingReason: String) {
+        self.startIndex = startIndex
+        self.hiddenText = hiddenText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.teachingReason = teachingReason.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 public struct RecallCardDraftDecisionEnvelope: Codable, Equatable, Sendable {
     public let draft: LLMRecallCardDraft
     public let selectionReason: LLMRecallSelectionReason?
     public let cuePlan: LLMRecallCuePlan?
+    public let maskPlan: LLMRecallMaskPlan?
+    public let maskPlanRepaired: Bool
+    public let maskPlanFallback: Bool
 
     public init(
         draft: LLMRecallCardDraft,
         selectionReason: LLMRecallSelectionReason? = nil,
-        cuePlan: LLMRecallCuePlan? = nil
+        cuePlan: LLMRecallCuePlan? = nil,
+        maskPlan: LLMRecallMaskPlan? = nil,
+        maskPlanRepaired: Bool = false,
+        maskPlanFallback: Bool = false
     ) {
         self.draft = draft
         self.selectionReason = selectionReason
         self.cuePlan = cuePlan
+        self.maskPlan = maskPlan
+        self.maskPlanRepaired = maskPlanRepaired
+        self.maskPlanFallback = maskPlanFallback
     }
 }
 

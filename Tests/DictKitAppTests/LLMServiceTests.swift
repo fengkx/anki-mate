@@ -596,6 +596,45 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertTrue(draft.front.contains("habitual juxtaposition"))
     }
 
+    func testApplyMaskUsesOneBasedStartIndexAndExactHiddenText() throws {
+        XCTAssertEqual(
+            LLMService.applyMask(word: "believe", startIndex: 4, hiddenText: "ie"),
+            "bel__ve"
+        )
+        XCTAssertEqual(
+            LLMService.applyMask(word: "receive", startIndex: 4, hiddenText: "ei"),
+            "rec__ve"
+        )
+        XCTAssertEqual(
+            LLMService.applyMask(word: "collocation", startIndex: 3, hiddenText: "ll"),
+            "co__ocation"
+        )
+        XCTAssertEqual(
+            LLMService.applyMask(word: "conscientious", startIndex: 4, hiddenText: "sci"),
+            "con___entious"
+        )
+        XCTAssertNil(
+            LLMService.applyMask(word: "believe", startIndex: 4, hiddenText: "ei")
+        )
+    }
+
+    func testNormalizeRecallMaskPlanRejectsHiddenTextThatDoesNotMatchTarget() throws {
+        let payload = """
+        {
+          "maskPlan": {
+            "startIndex": 4,
+            "hiddenText": "ei",
+            "teachingReason": "This tries to hide the wrong vowel order."
+          }
+        }
+        """
+        let decoded = try JSONDecoder().decode(RecallMaskPlanPayload.self, from: Data(payload.utf8))
+
+        XCTAssertNil(
+            LLMService.normalizeRecallMaskPlan(decoded, target: "believe")
+        )
+    }
+
     func testRecallPromptScaffoldBuildsCueAndHintWithoutPresetMask() {
         let scaffold = LLMService.recallPromptScaffold(
             word: "collocation",

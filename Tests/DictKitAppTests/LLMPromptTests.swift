@@ -348,6 +348,34 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertFalse(prompt.user.contains("qūzhé"))
     }
 
+    func testRecallMaskPlanPromptChoosesSubstringWithoutRenderingMask() {
+        let prompt = LLMPrompt.recallMaskPlanFromPlan(
+            word: "believe",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "verb", definition: "相信；认为属实", semanticHint: "相信")
+            ],
+            context: LLMRecallGenerationContext(
+                acceptedPitfalls: ["i 和 e 的顺序很容易写反"]
+            ),
+            cuePlan: LLMRecallCuePlan(
+                semanticSource: "sense_semantic_hint",
+                normalizedCue: "相信"
+            )
+        )
+
+        XCTAssertTrue(prompt.system.contains("You are choosing what to hide, not rendering the final card."))
+        XCTAssertTrue(prompt.system.contains("Do not output underscores or a masked word."))
+        XCTAssertTrue(prompt.user.contains("Target characters"))
+        XCTAssertTrue(prompt.user.contains("1: b"))
+        XCTAssertTrue(prompt.user.contains("4: i"))
+        XCTAssertTrue(prompt.user.contains("hiddenText"))
+        XCTAssertTrue(prompt.user.contains("startIndex is 1-based"))
+        XCTAssertFalse(prompt.user.contains("\"focus\""))
+        XCTAssertFalse(prompt.user.contains("\"source\""))
+        XCTAssertFalse(prompt.user.contains("Valid internal substrings"))
+        XCTAssertFalse(prompt.user.contains(#"2: "el""#))
+    }
+
     func testRecallPlanPromptForForcedModeStillRequiresNormalizedCue() {
         let prompt = LLMPrompt.recallCardPlan(
             word: "lemmatize",
