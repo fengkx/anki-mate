@@ -13,22 +13,10 @@
       "quantization": "Q4_K_M"
     },
     {
-      "modelId": "gemma-4-e2b-it-q6k",
-      "family": "gemma-4",
-      "variant": "gemma-4-e2b-it",
-      "quantization": "Q6_K"
-    },
-    {
       "modelId": "gemma-3n-e4b-it-q4km",
       "family": "gemma-3n",
       "variant": "gemma-3n-e4b-it",
       "quantization": "Q4_K_M"
-    },
-    {
-      "modelId": "gemma-3n-e4b-it-q6k",
-      "family": "gemma-3n",
-      "variant": "gemma-3n-e4b-it",
-      "quantization": "Q6_K"
     },
     {
       "modelId": "qwen35-4b-q4km",

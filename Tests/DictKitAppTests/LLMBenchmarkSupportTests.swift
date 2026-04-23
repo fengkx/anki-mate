@@ -3,6 +3,32 @@ import XCTest
 @testable import AnkiMateLLM
 
 final class LLMBenchmarkSupportTests: XCTestCase {
+    func testBundledModelRegistryOmitsRemovedGemmaQ6Models() {
+        let registry = ModelRegistry()
+        let modelIDs = Set(registry.models.map(\.id))
+
+        XCTAssertFalse(modelIDs.contains("gemma-4-e2b-it-q6k"))
+        XCTAssertFalse(modelIDs.contains("gemma-3n-e4b-it-q6k"))
+    }
+
+    func testPinnedLLME2EModelAndJustDefaultUseGemma4Q4KM() throws {
+        let lockfileURL = repositoryRootURL()
+            .appendingPathComponent("ci", isDirectory: true)
+            .appendingPathComponent("llm-e2e-model.lock.json")
+        let justfileURL = repositoryRootURL().appendingPathComponent("justfile")
+
+        struct LockedModel: Decodable {
+            let modelId: String
+        }
+
+        let decoder = JSONDecoder()
+        let lockedModel = try decoder.decode(LockedModel.self, from: Data(contentsOf: lockfileURL))
+        let justfile = try String(contentsOf: justfileURL)
+
+        XCTAssertEqual(lockedModel.modelId, "gemma-4-e2b-it-q4km")
+        XCTAssertTrue(justfile.contains(#"default_llm_e2e_model_id := "gemma-4-e2b-it-q4km""#))
+    }
+
     func testDefaultBenchmarkMatrixLoadsExpectedModelsAndTimeoutBudgets() throws {
         let matrix = try LLMBenchmarkMatrix.load(from: benchmarkMatrixURL())
 
@@ -11,9 +37,7 @@ final class LLMBenchmarkSupportTests: XCTestCase {
             matrix.models.map(\.modelId),
             [
                 "gemma-4-e2b-it-q4km",
-                "gemma-4-e2b-it-q6k",
                 "gemma-3n-e4b-it-q4km",
-                "gemma-3n-e4b-it-q6k",
                 "qwen35-4b-q4km",
                 "qwen35-4b-q6k"
             ]
@@ -63,16 +87,16 @@ final class LLMBenchmarkSupportTests: XCTestCase {
                 name: "default",
                 selectedModelIDs: [
                     "gemma-4-e2b-it-q4km",
-                    "gemma-4-e2b-it-q6k",
-                    "qwen35-4b-q4km"
+                    "gemma-3n-e4b-it-q4km",
+                    "qwen35-4b-q6k"
                 ],
                 executedModelIDs: [
                     "gemma-4-e2b-it-q4km",
-                    "gemma-4-e2b-it-q6k",
-                    "qwen35-4b-q4km"
+                    "gemma-3n-e4b-it-q4km",
+                    "qwen35-4b-q6k"
                 ],
                 skipped: [
-                    .init(modelID: "gemma-3n-e4b-it-q4km", reason: "model_not_downloaded")
+                    .init(modelID: "qwen35-4b-q4km", reason: "model_not_downloaded")
                 ]
             ),
             models: [
@@ -129,13 +153,13 @@ final class LLMBenchmarkSupportTests: XCTestCase {
                     ]
                 ),
                 .init(
-                    modelID: "gemma-4-e2b-it-q6k",
-                    displayName: "Gemma 4 E2B Instruct (Q6_K)",
-                    family: "gemma-4",
-                    variant: "gemma-4-e2b-it",
-                    quantization: "Q6_K",
-                    sizeBytes: 4_501_718_688,
-                    contextSize: 131_072,
+                    modelID: "gemma-3n-e4b-it-q4km",
+                    displayName: "Gemma 3n E4B Instruct (Q4_K_M)",
+                    family: "gemma-3n",
+                    variant: "gemma-3n-e4b-it",
+                    quantization: "Q4_K_M",
+                    sizeBytes: 4_539_054_208,
+                    contextSize: 32_768,
                     status: .passed,
                     summary: .init(
                         totalTasks: 2,
@@ -160,7 +184,7 @@ final class LLMBenchmarkSupportTests: XCTestCase {
                             qualityIssues: [],
                             warnings: [],
                             metrics: ["sense_coverage": .double(1.0)],
-                            output: ["sample": .string("Morning light poured through the window. — 晨光洒进窗户。")],
+                            output: ["sample": .string("The room was filled with soft light from the lamps. — 房间里充满了灯光。")],
                             traceFile: "debug-trace.jsonl",
                             traceSessionIDs: ["trace-3"]
                         ),
@@ -253,7 +277,7 @@ final class LLMBenchmarkSupportTests: XCTestCase {
         let decodedResults = try decoder.decode(LLMBenchmarkReport.self, from: resultsData)
         XCTAssertEqual(decodedEnvironment.gitCommit, "abcdef1")
         XCTAssertEqual(decodedResults.models.count, 3)
-        XCTAssertEqual(decodedResults.matrix.skipped.first?.modelID, "gemma-3n-e4b-it-q4km")
+        XCTAssertEqual(decodedResults.matrix.skipped.first?.modelID, "qwen35-4b-q4km")
         XCTAssertEqual(decodedResults.models.last?.status, .failed)
         XCTAssertEqual(decodedResults.models.first?.status, .passedWithIssues)
         XCTAssertEqual(decodedResults.models.first?.tasks.first?.qualityIssues, ["expected_count_mismatch"])
@@ -265,14 +289,16 @@ final class LLMBenchmarkSupportTests: XCTestCase {
     }
 
     private func benchmarkMatrixURL(file: StaticString = #filePath) -> URL {
-        let testsDirectoryURL = URL(fileURLWithPath: "\(file)")
-            .deletingLastPathComponent()
-        let repositoryRootURL = testsDirectoryURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-
-        return repositoryRootURL
+        repositoryRootURL(file: file)
             .appendingPathComponent("ci", isDirectory: true)
             .appendingPathComponent("llm-benchmark-matrix.json")
+    }
+
+    private func repositoryRootURL(file: StaticString = #filePath) -> URL {
+        let testsDirectoryURL = URL(fileURLWithPath: "\(file)")
+            .deletingLastPathComponent()
+        return testsDirectoryURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

@@ -1,15 +1,5 @@
 [
   {
-    "id": "gemma-4-e2b-it-q6k",
-    "displayName": "Gemma 4 E2B Instruct (Q6_K)",
-    "fileName": "gemma-4-E2B-it-Q6_K.gguf",
-    "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q6_K.gguf",
-    "sizeBytes": 4501718688,
-    "quantization": "Q6_K",
-    "contextSize": 131072,
-    "recommended": true
-  },
-  {
     "id": "qwen35-4b-q6k",
     "displayName": "Qwen3.5 4B (Q6_K)",
     "fileName": "Qwen3.5-4B-Q6_K.gguf",
@@ -57,7 +47,7 @@
     "sizeBytes": 3106735776,
     "quantization": "Q4_K_M",
     "contextSize": 131072,
-    "recommended": false
+    "recommended": true
   },
   {
     "id": "qwen35-4b-q4km",
@@ -77,16 +67,6 @@
     "sizeBytes": 7074927296,
     "quantization": "Q6_K",
     "contextSize": 131072,
-    "recommended": false
-  },
-  {
-    "id": "gemma-3n-e4b-it-q6k",
-    "displayName": "Gemma 3n E4B Instruct (Q6_K)",
-    "fileName": "gemma-3n-E4B-it-Q6_K.gguf",
-    "url": "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q6_K.gguf",
-    "sizeBytes": 6272219264,
-    "quantization": "Q6_K",
-    "contextSize": 32768,
     "recommended": false
   },
   {

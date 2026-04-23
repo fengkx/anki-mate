@@ -9,7 +9,7 @@ cert_name := "AnkiMateDev"
 cert_dir := ".build/certs"
 llm_e2e_lockfile := "ci/llm-e2e-model.lock.json"
 llm_benchmark_matrix_file := "ci/llm-benchmark-matrix.json"
-default_llm_e2e_model_id := "gemma-4-e2b-it-q6k"
+default_llm_e2e_model_id := "gemma-4-e2b-it-q4km"
 
 # List available recipes
 default:

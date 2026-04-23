@@ -1,9 +1,9 @@
 {
-  "modelId": "gemma-4-e2b-it-q6k",
-  "displayName": "Gemma 4 E2B Instruct (Q6_K)",
-  "fileName": "gemma-4-E2B-it-Q6_K.gguf",
-  "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q6_K.gguf",
-  "sizeBytes": 4501718688,
+  "modelId": "gemma-4-e2b-it-q4km",
+  "displayName": "Gemma 4 E2B Instruct (Q4_K_M)",
+  "fileName": "gemma-4-E2B-it-Q4_K_M.gguf",
+  "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
+  "sizeBytes": 3106735776,
   "sha256": null,
   "cacheVersion": 1
 }
