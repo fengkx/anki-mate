@@ -235,6 +235,15 @@ struct WordRowView: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 6) {
+                if item.hasAcceptedRecallCard {
+                    Image(systemName: "rectangle.stack.fill")
+                        .font(.caption2)
+                        .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
+                        .symbolRenderingMode(.hierarchical)
+                        .help("Includes a saved recall card")
+                        .accessibilityLabel("Includes a saved recall card")
+                }
+
                 if item.isReady {
                     Button(action: {
                         Task { await viewModel.playPronunciation(for: item) }

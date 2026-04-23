@@ -109,12 +109,29 @@ final class WordListViewModel: ObservableObject {
         words.filter(\.isReady).count
     }
 
+    var exportableCardCount: Int {
+        words.reduce(0) { total, item in
+            guard item.isReady else { return total }
+            return total + 1 + (item.hasAcceptedRecallCard ? 1 : 0)
+        }
+    }
+
     var wordsColumnTitle: String {
         currentCollection?.name ?? "Words"
     }
 
+    var wordsColumnCardSummary: String {
+        let cardLabel = exportableCardCount == 1 ? "card" : "cards"
+        return "\(exportableCardCount) \(cardLabel)"
+    }
+
+    var wordsColumnReadySummary: String {
+        let wordLabel = words.count == 1 ? "word" : "words"
+        return "\(readyCount) of \(words.count) \(wordLabel) ready"
+    }
+
     var wordsColumnSummary: String {
-        "\(readyCount) of \(words.count) ready"
+        "\(wordsColumnCardSummary) · \(wordsColumnReadySummary)"
     }
 
     var canDeleteSelectedWord: Bool {

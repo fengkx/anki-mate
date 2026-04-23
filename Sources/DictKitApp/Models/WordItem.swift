@@ -307,6 +307,10 @@ final class WordItem: ObservableObject, Identifiable {
         lookupResult != nil
     }
 
+    var hasAcceptedRecallCard: Bool {
+        !aiAcceptedRecallCardDrafts.isEmpty
+    }
+
     private func normalizeExampleArtifact(_ artifact: ExampleSentenceArtifact) -> ExampleSentenceArtifact? {
         let normalized = ExampleSentenceArtifact(
             text: artifact.text,

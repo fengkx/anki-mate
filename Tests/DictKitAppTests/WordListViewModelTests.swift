@@ -276,8 +276,76 @@ final class WordListViewModelTests: XCTestCase {
 
         wait(for: [changed], timeout: 1.0)
         XCTAssertEqual(viewModel.readyCount, 1)
-        XCTAssertEqual(viewModel.wordsColumnSummary, "1 of 1 ready")
+        XCTAssertEqual(viewModel.wordsColumnCardSummary, "1 card")
+        XCTAssertEqual(viewModel.wordsColumnReadySummary, "1 of 1 word ready")
+        XCTAssertEqual(viewModel.wordsColumnSummary, "1 card · 1 of 1 word ready")
         XCTAssertEqual(viewModel.exportableWordCount(for: defaultCollection.id), 1)
+    }
+
+    func testWordsColumnSummaryReportsExportableCardCountIncludingRecallCards() throws {
+        let store = try makeStore()
+        let defaultCollection = try XCTUnwrap(try store.loadCollections().only)
+        let recallArtifacts = AIArtifacts(
+            recallCardDrafts: AIArtifactSlot(
+                accepted: [
+                    RecallCardDraft(
+                        mode: .phraseRecall,
+                        front: "reach a ____",
+                        back: "consensus",
+                        hint: "noun"
+                    )
+                ]
+            )
+        )
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Consensus",
+                normalizedWord: WordListStore.normalizedWord(for: "Consensus"),
+                lookupState: .loaded(Self.makeLookupResult(query: "consensus", definition: "general agreement", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 10),
+                updatedAt: Date(timeIntervalSince1970: 10),
+                lastRefreshedAt: nil,
+                aiArtifacts: recallArtifacts
+            ),
+            into: defaultCollection.id
+        )
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Apple",
+                normalizedWord: WordListStore.normalizedWord(for: "Apple"),
+                lookupState: .loaded(Self.makeLookupResult(query: "apple", definition: "fruit", examples: [])),
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 20),
+                updatedAt: Date(timeIntervalSince1970: 20),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+        _ = try store.upsertWord(
+            PersistedWordRecord(
+                id: UUID(),
+                displayWord: "Pending",
+                normalizedWord: WordListStore.normalizedWord(for: "Pending"),
+                lookupState: .pending,
+                audioData: nil,
+                createdAt: Date(timeIntervalSince1970: 30),
+                updatedAt: Date(timeIntervalSince1970: 30),
+                lastRefreshedAt: nil
+            ),
+            into: defaultCollection.id
+        )
+
+        let viewModel = try makeViewModel(store: store)
+
+        XCTAssertEqual(viewModel.readyCount, 2)
+        XCTAssertEqual(viewModel.exportableCardCount, 3)
+        XCTAssertEqual(viewModel.wordsColumnCardSummary, "3 cards")
+        XCTAssertEqual(viewModel.wordsColumnReadySummary, "2 of 3 words ready")
+        XCTAssertEqual(viewModel.wordsColumnSummary, "3 cards · 2 of 3 words ready")
+        XCTAssertEqual(viewModel.words.first?.hasAcceptedRecallCard, true)
     }
 
     func testPlayPronunciationPersistsAudioWhenMissing() async throws {

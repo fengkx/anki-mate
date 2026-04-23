@@ -6,16 +6,25 @@ struct WordsColumnView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(viewModel.wordsColumnTitle)
                             .font(.title2.weight(.semibold))
-                        Text(viewModel.wordsColumnSummary)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                    Spacer()
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(viewModel.wordsColumnCardSummary)
+                            Text(viewModel.wordsColumnReadySummary)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    }
+                    .layoutPriority(0)
+
+                    Spacer(minLength: 8)
 
                     HStack(spacing: 8) {
                         Button("Batch Add") {
@@ -29,6 +38,8 @@ struct WordsColumnView: View {
                         .buttonStyle(.bordered)
                         .disabled(!viewModel.canExportCurrentCollection)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(1)
                 }
 
                 WordInputView()
