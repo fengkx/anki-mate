@@ -415,96 +415,6 @@ public final class LLMService: ObservableObject {
         }
     }
 
-    /// Generate an optimized definition.
-    public func optimizeDefinition(
-        word: String,
-        rawDefinition: String
-    ) async throws -> String {
-        try await optimizeDefinition(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: "general",
-                    definition: rawDefinition
-                )
-            ]
-        )
-    }
-
-    public func optimizeDefinition(
-        word: String,
-        senses: [LLMSensePromptInput]
-    ) async throws -> String {
-        let hints = try await generateUsageHints(
-            word: word,
-            senses: senses
-        )
-        return Self.renderUsageHints(hints)
-    }
-
-    public func optimizeDefinitionStreaming(
-        word: String,
-        rawDefinition: String,
-        onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String {
-        try await optimizeDefinitionStreaming(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: "general",
-                    definition: rawDefinition
-                )
-            ],
-            onDelta: onDelta
-        )
-    }
-
-    public func optimizeDefinitionStreaming(
-        word: String,
-        senses: [LLMSensePromptInput],
-        onDelta: @escaping @Sendable (String) -> Void
-    ) async throws -> String {
-        try await withForegroundInferenceAccess { port in
-            let prompt = LLMPrompt.legacyOptimizeDefinitionText(
-                word: word,
-                senses: senses
-            )
-            let hintCount = LLMPrompt.usageHintCount(for: senses)
-
-            let response = try await self.rpcClient.chatCompletionStream(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: [
-                        ChatMessage(role: "system", content: prompt.system),
-                        ChatMessage(role: "user", content: prompt.user),
-                    ],
-                    temperature: self.adjustedTemperature(0.5),
-                    max_completion_tokens: max(260, hintCount * 104),
-                    stream: true
-                ),
-                port: port,
-                onDelta: onDelta
-            )
-            return self.normalizeLegacyUsageHints(response.choices.first?.message.content?.plainText ?? "")
-        }
-    }
-
-    public func generateUsageHints(
-        word: String,
-        definition: String,
-        partOfSpeech: String
-    ) async throws -> [LLMUsageHint] {
-        try await generateUsageHints(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: partOfSpeech,
-                    definition: definition
-                )
-            ]
-        )
-    }
-
     public func generateUsageHints(
         word: String,
         senses: [LLMSensePromptInput]
@@ -530,47 +440,12 @@ public final class LLMService: ObservableObject {
         )
     }
 
-    public func generateRecallCardDrafts(
+    public func generateUsageHintText(
         word: String,
-        definition: String,
-        partOfSpeech: String,
-        modes: [LLMRecallCardMode] = LLMRecallCardMode.allCases,
-        anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> [LLMRecallCardDraft] {
-        try await generateRecallCardDrafts(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: partOfSpeech,
-                    definition: definition
-                )
-            ],
-            modes: modes,
-            anchor: anchor
-        )
-    }
-
-    public func generateRecallCardDrafts(
-        word: String,
-        senses: [LLMSensePromptInput],
-        modes: [LLMRecallCardMode] = LLMRecallCardMode.allCases,
-        anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> [LLMRecallCardDraft] {
-        let requestedModes = modes.isEmpty ? [.fullSpelling] : modes
-        var drafts: [LLMRecallCardDraft] = []
-
-        for requestedMode in requestedModes {
-            drafts.append(
-                try await generateRecallCardDraft(
-                    word: word,
-                    senses: senses,
-                    mode: requestedMode,
-                    anchor: anchor
-                )
-            )
-        }
-
-        return drafts
+        senses: [LLMSensePromptInput]
+    ) async throws -> String {
+        let hints = try await generateUsageHints(word: word, senses: senses)
+        return Self.renderUsageHints(hints)
     }
 
     public func generatePhoneticIPA(
@@ -607,25 +482,14 @@ public final class LLMService: ObservableObject {
         existingIPA: String? = nil,
         senses: [LLMSensePromptInput]
     ) async throws -> LLMPronunciationEnhancement {
-        do {
-            return try await generatePronunciationEnhancement(
-                word: word,
-                dialect: dialect,
-                pronunciationGuide: pronunciationGuide,
-                existingIPA: existingIPA,
-                senses: senses,
-                strictSpellingRetry: false
-            )
-        } catch LLMServiceError.invalidStructuredOutput {
-            return try await generatePronunciationEnhancement(
-                word: word,
-                dialect: dialect,
-                pronunciationGuide: pronunciationGuide,
-                existingIPA: existingIPA,
-                senses: senses,
-                strictSpellingRetry: true
-            )
-        }
+        try await generatePronunciationEnhancement(
+            word: word,
+            dialect: dialect,
+            pronunciationGuide: pronunciationGuide,
+            existingIPA: existingIPA,
+            senses: senses,
+            retryCorrection: nil
+        )
     }
 
     private func generatePronunciationEnhancement(
@@ -634,7 +498,7 @@ public final class LLMService: ObservableObject {
         pronunciationGuide: String?,
         existingIPA: String?,
         senses: [LLMSensePromptInput],
-        strictSpellingRetry: Bool
+        retryCorrection: String?
     ) async throws -> LLMPronunciationEnhancement {
         let prompt = LLMPrompt.pronunciationEnhancement(
             word: word,
@@ -642,18 +506,40 @@ public final class LLMService: ObservableObject {
             pronunciationGuide: pronunciationGuide,
             existingIPA: existingIPA,
             senses: senses,
-            strictSpellingRetry: strictSpellingRetry
+            retryCorrection: retryCorrection
         )
 
         let response: GeneratedPronunciationEnhancementPayload = try await generateStructuredOutput(
             type: GeneratedPronunciationEnhancementPayload.self,
             prompt: prompt,
             maxTokens: Self.pronunciationEnhancementMaxTokens,
-            temperature: adjustedTemperature(strictSpellingRetry ? 0.1 : 0.2)
+            temperature: adjustedTemperature(retryCorrection == nil ? 0.2 : 0.1)
         )
 
-        guard let normalizedStress = Self.normalizeStressSyllables(response.stressSyllables, preservingSpellingOf: word) else {
-            throw LLMServiceError.invalidStructuredOutput("Expected one valid stress syllables string")
+        let stressValidation = Self.validatePronunciationStressSyllables(
+            response.stressSyllables,
+            preservingSpellingOf: word,
+            pronunciationGuide: pronunciationGuide
+        )
+
+        guard let normalizedStress = stressValidation.normalizedValue else {
+            if retryCorrection == nil {
+                return try await generatePronunciationEnhancement(
+                    word: word,
+                    dialect: dialect,
+                    pronunciationGuide: pronunciationGuide,
+                    existingIPA: existingIPA,
+                    senses: senses,
+                    retryCorrection: Self.retryCorrection(
+                        for: stressValidation.failureReason,
+                        word: word,
+                        pronunciationGuide: pronunciationGuide
+                    )
+                )
+            }
+            throw LLMServiceError.invalidStructuredOutput(
+                stressValidation.failureReason?.validationMessage ?? "Expected one valid stress syllables string"
+            )
         }
 
         let normalizedIPA = Self.normalizeGeneratedIPA(response.ipa)
@@ -661,72 +547,6 @@ public final class LLMService: ObservableObject {
         return LLMPronunciationEnhancement(
             ipa: normalizedIPA,
             stressSyllables: normalizedStress
-        )
-    }
-
-    public func generateRecallCardDraft(
-        word: String,
-        definition: String,
-        partOfSpeech: String,
-        context: LLMRecallGenerationContext,
-        mode: LLMRecallCardMode,
-        anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> LLMRecallCardDraft {
-        try await generateRecallCardDraft(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: partOfSpeech,
-                    definition: definition
-                )
-            ],
-            context: context,
-            mode: mode,
-            anchor: anchor
-        )
-    }
-
-    public func generateRecallCardDraft(
-        word: String,
-        definition: String,
-        partOfSpeech: String,
-        mode: LLMRecallCardMode,
-        anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> LLMRecallCardDraft {
-        try await generateRecallCardDraft(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: partOfSpeech,
-                    definition: definition
-                )
-            ],
-            mode: mode,
-            anchor: anchor
-        )
-    }
-
-    public func generateRecallCardDraftDecision(
-        word: String,
-        definition: String,
-        partOfSpeech: String,
-        context: LLMRecallGenerationContext,
-        allowedModes: [LLMRecallCardMode],
-        modePrior: LLMRecallCardMode? = nil,
-        anchor: LLMAnchorSnapshot? = nil
-    ) async throws -> RecallCardDraftDecisionEnvelope {
-        try await generateRecallCardDraftDecision(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: partOfSpeech,
-                    definition: definition
-                )
-            ],
-            context: context,
-            allowedModes: allowedModes,
-            modePrior: modePrior,
-            anchor: anchor
         )
     }
 
@@ -1277,20 +1097,7 @@ public final class LLMService: ObservableObject {
         .map { $0 }
     }
 
-    private func normalizeLegacyUsageHints(_ text: String) -> String {
-        text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map {
-                Self.normalizeGeneratedLine(
-                    String($0),
-                    convertBilingualLabels: true,
-                    stripFieldLabels: true
-                )
-            }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-    }
-
-    private static func renderUsageHints(_ hints: [LLMUsageHint]) -> String {
+    static func renderUsageHints(_ hints: [LLMUsageHint]) -> String {
         hints.map { hint in
             let translation = hint.translation.trimmingCharacters(in: .whitespacesAndNewlines)
             if translation.isEmpty {
@@ -3054,6 +2861,74 @@ extension LLMService {
         return nil
     }
 
+    static func validatePronunciationStressSyllables(
+        _ rawValue: String?,
+        preservingSpellingOf word: String,
+        pronunciationGuide: String?
+    ) -> PronunciationStressValidationResult {
+        guard let rawValue else {
+            return .failure(nil)
+        }
+        let rawCandidates = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            .components(separatedBy: CharacterSet(charactersIn: ",/;\n"))
+
+        var firstFailureReason: PronunciationStressFailureReason?
+        for rawCandidate in rawCandidates {
+            let candidate = rawCandidate
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: .whitespaces)
+                .joined()
+            guard !candidate.isEmpty else { continue }
+
+            if candidate.range(of: #"^[A-Za-z-]+$"#, options: .regularExpression) == nil {
+                firstFailureReason = firstFailureReason ?? .invalidCharacters
+                continue
+            }
+
+            let normalizedWord = word.lowercased()
+            let normalizedCandidateLetters = candidate
+                .replacingOccurrences(of: "-", with: "")
+                .lowercased()
+            if normalizedCandidateLetters != normalizedWord {
+                let normalizedGuideLetters = pronunciationGuide.map { guide in
+                    guide
+                        .components(separatedBy: CharacterSet.letters.inverted)
+                        .joined()
+                        .lowercased()
+                }
+                if let normalizedGuideLetters,
+                   normalizedGuideLetters != normalizedWord,
+                   normalizedCandidateLetters == normalizedGuideLetters {
+                    firstFailureReason = firstFailureReason ?? .copiedGuideLetters
+                } else {
+                    firstFailureReason = firstFailureReason ?? .doesNotPreserveSpelling
+                }
+                continue
+            }
+
+            if let pronunciationGuide,
+               pronunciationGuide.contains("-"),
+               !candidate.contains("-") {
+                firstFailureReason = firstFailureReason ?? .missingHyphenation
+                continue
+            }
+
+            if candidate.contains("-"),
+               candidate.rangeOfCharacter(from: .uppercaseLetters) == nil {
+                firstFailureReason = firstFailureReason ?? .missingPrimaryStressMarker
+                continue
+            }
+
+            if let normalized = normalizeStressSyllableCandidate(candidate, preservingSpellingOf: word) {
+                return .success(normalized)
+            }
+        }
+
+        return .failure(firstFailureReason)
+    }
+
     private static func normalizeStressSyllableCandidate(_ candidate: String, preservingSpellingOf word: String?) -> String? {
         let syllables = candidate
             .split(separator: "-", omittingEmptySubsequences: true)
@@ -3088,6 +2963,33 @@ extension LLMService {
         }
 
         return normalizedJoined
+    }
+
+    private static func retryCorrection(
+        for failureReason: PronunciationStressFailureReason?,
+        word: String,
+        pronunciationGuide: String?
+    ) -> String {
+        switch failureReason {
+        case .copiedGuideLetters:
+            let guideSuffix: String
+            if let pronunciationGuide, !pronunciationGuide.isEmpty {
+                guideSuffix = #" Do not copy guide spellings like "\#(pronunciationGuide)"."#
+            } else {
+                guideSuffix = ""
+            }
+            return #"Your previous value copied helper spellings from the pronunciation guide. Build stressSyllables from the exact letters of "\#(word)" only.\#(guideSuffix)"#
+        case .doesNotPreserveSpelling:
+            return #"Your previous value changed the original spelling. Keep the exact letters of "\#(word)" in the same order and insert hyphens only."#
+        case .missingHyphenation:
+            return "Your previous value did not split this word into hyphen-joined chunks. Return the same word letters with hyphens added between chunks."
+        case .missingPrimaryStressMarker:
+            return "Your previous value split the word into chunks but did not mark stress. Mark stress with uppercase in the returned chunks."
+        case .invalidCharacters:
+            return "Your previous value used invalid characters. Use letters from the original word plus hyphens only."
+        case nil:
+            return #"Your previous value was not a valid stressSyllables string. Build it from the exact letters of "\#(word)" only, keeping the same order and inserting hyphens only when needed."#
+        }
     }
 
     static func recallPromptScaffold(
@@ -4104,6 +4006,42 @@ extension LLMService {
         return .string(trimmed)
     }
 
+}
+
+enum PronunciationStressFailureReason: Equatable {
+    case copiedGuideLetters
+    case doesNotPreserveSpelling
+    case missingHyphenation
+    case missingPrimaryStressMarker
+    case invalidCharacters
+
+    var validationMessage: String {
+        switch self {
+        case .copiedGuideLetters:
+            return "stressSyllables copied helper spellings from the pronunciation guide"
+        case .doesNotPreserveSpelling:
+            return "stressSyllables did not preserve the original spelling"
+        case .missingHyphenation:
+            return "stressSyllables did not split the word into hyphen-joined chunks"
+        case .missingPrimaryStressMarker:
+            return "stressSyllables did not mark stress"
+        case .invalidCharacters:
+            return "stressSyllables contains invalid characters"
+        }
+    }
+}
+
+struct PronunciationStressValidationResult: Equatable {
+    let normalizedValue: String?
+    let failureReason: PronunciationStressFailureReason?
+
+    static func success(_ normalizedValue: String) -> Self {
+        Self(normalizedValue: normalizedValue, failureReason: nil)
+    }
+
+    static func failure(_ failureReason: PronunciationStressFailureReason?) -> Self {
+        Self(normalizedValue: nil, failureReason: failureReason)
+    }
 }
 
 private extension String {

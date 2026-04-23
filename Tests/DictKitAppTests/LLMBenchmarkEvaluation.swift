@@ -1,6 +1,17 @@
 import Foundation
 @testable import AnkiMateLLM
 
+enum LLMBenchmarkErrorEvaluation {
+    static func qualityIssues(from error: Error) -> [String]? {
+        switch error {
+        case LLMServiceError.invalidStructuredOutput(let message):
+            return ["invalid_structured_output: \(message)"]
+        default:
+            return nil
+        }
+    }
+}
+
 struct LLMBenchmarkUsageEvaluation {
     static func expectedLineCount(for senses: [LLMSensePromptInput]) -> Int {
         LLMPrompt.usageHintCount(for: senses)

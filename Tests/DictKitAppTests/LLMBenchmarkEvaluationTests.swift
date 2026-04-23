@@ -55,4 +55,23 @@ final class LLMBenchmarkEvaluationTests: XCTestCase {
         XCTAssertTrue(result.warnings.isEmpty)
         XCTAssertTrue(result.hardFailures.isEmpty)
     }
+
+    func testBenchmarkErrorClassificationTreatsInvalidStructuredOutputAsQualityIssue() {
+        XCTAssertEqual(
+            LLMBenchmarkErrorEvaluation.qualityIssues(
+                from: LLMServiceError.invalidStructuredOutput(
+                    "Recall draft generation returned no valid draft JSON"
+                )
+            ),
+            ["invalid_structured_output: Recall draft generation returned no valid draft JSON"]
+        )
+    }
+
+    func testBenchmarkErrorClassificationDoesNotDowngradeTransportTimeout() {
+        XCTAssertNil(
+            LLMBenchmarkErrorEvaluation.qualityIssues(
+                from: URLError(.timedOut)
+            )
+        )
+    }
 }

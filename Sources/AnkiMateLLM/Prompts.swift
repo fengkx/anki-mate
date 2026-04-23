@@ -199,67 +199,6 @@ public enum LLMPrompt {
         return (system, user)
     }
 
-    public static func optimizeDefinition(
-        word: String,
-        rawDefinition: String
-    ) -> (system: String, user: String) {
-        optimizeDefinition(
-            word: word,
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: "general",
-                    definition: rawDefinition
-                )
-            ]
-        )
-    }
-
-    public static func optimizeDefinition(
-        word: String,
-        senses: [LLMSensePromptInput]
-    ) -> (system: String, user: String) {
-        usageHints(
-            word: word,
-            senses: senses
-        )
-    }
-
-    static func legacyOptimizeDefinitionText(
-        word: String,
-        senses: [LLMSensePromptInput]
-    ) -> (system: String, user: String) {
-        let trimmedSenses = senses.isEmpty
-            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
-            : senses
-        let desiredCount = usageHintCount(for: trimmedSenses)
-        let system = PromptText.join([
-            "You are a bilingual language learning assistant.",
-            "Summarize dictionary meanings into concise learner-friendly usage hints in both English and Chinese."
-        ])
-
-        let user = PromptText.join([
-            #"Write concise learner usage hints for the word "\#(word)" using this sense inventory:"#,
-            senseInventoryText(from: trimmedSenses),
-            PromptText.labeledBlock(
-                "Rules",
-                value: PromptText.bulletList([
-                    "If multiple senses are listed, cover every listed sense before expanding on one",
-                    "If only one sense is listed, write \(desiredCount) short lines that vary the usage cue",
-                    "Use simple vocabulary",
-                    "Focus on sense distinction, common usage cues, or memorable contrasts",
-                    "Do not write spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, or example sentences",
-                    "Return exactly \(desiredCount) short plain lines",
-                    "Output each line in this format:",
-                    "<learner-friendly explanation> — <中文解释/用法提示>",
-                    "Do not use bullets, numbering, part-of-speech labels, EN/ZH labels, or extra markup",
-                    "Return ONLY the lines"
-                ])
-            )
-        ])
-
-        return (system, user)
-    }
-
     public static func usageHints(
         word: String,
         senses: [LLMSensePromptInput]
@@ -273,7 +212,8 @@ public enum LLMPrompt {
         let system = PromptText.join([
             "You are a bilingual language learning assistant.",
             "Generate concise learner-facing usage cues as strict JSON.",
-            "Focus on how the word is typically understood or used, and never add markdown fences or commentary."
+            "Focus on how the word is typically understood or used, and never add markdown fences or commentary.",
+            "A usage hint should help the learner choose or recognize the word in context, not just restate the definition."
         ])
 
         let user = PromptText.join([
@@ -303,7 +243,10 @@ public enum LLMPrompt {
                     "If only one sense is listed, vary the usage angle instead of repeating the same point",
                     "Keep each text concise, learner-facing, and more abstract than an example sentence",
                     "Keep each translation concise and idiomatic",
+                    "Prefer context, register, contrast, or selection guidance over paraphrasing the dictionary sense",
+                    "A good usage hint should help the learner decide when this word fits, what it contrasts with, or what context it usually appears in",
                     "Do not output spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, example sentences, or dictionary-definition rewrites",
+                    "Do not restate the dictionary definition in simpler words unless that rewrite adds a real usage boundary",
                     "Do not add labels, bullets, numbering, explanations, or extra fields"
                 ])
             )
@@ -376,107 +319,6 @@ public enum LLMPrompt {
                     "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
                     "Do not emit alternative modes, numbered options, explanations, or extra fields"
                 ])
-            )
-        ])
-
-        return (system, user)
-    }
-
-    public static func recallCardDrafts(
-        word: String,
-        senses: [LLMSensePromptInput],
-        modes: [LLMRecallCardMode],
-        anchor: LLMAnchorSnapshot? = nil
-    ) -> (system: String, user: String) {
-        recallCardDraft(
-            word: word,
-            senses: senses,
-            requestedMode: modes.first ?? .fullSpelling,
-            anchor: anchor
-        )
-    }
-
-    public static func recallCardDecision(
-        word: String,
-        senses: [LLMSensePromptInput],
-        context: LLMRecallGenerationContext,
-        allowedModes: [LLMRecallCardMode],
-        modePrior: LLMRecallCardMode?,
-        anchor: LLMAnchorSnapshot? = nil,
-        wordSignals: LLMRecallWordSignals,
-        scaffold: RecallPromptScaffold? = nil
-    ) -> (system: String, user: String) {
-        let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedSenses = senses.isEmpty
-            ? [LLMSensePromptInput(partOfSpeech: "general", definition: "general usage")]
-            : senses
-        let normalizedModes = allowedModes.isEmpty ? [.fullSpelling] : allowedModes
-        let learnerCue = scaffold?.learnerCue ?? "none"
-        let modeConstraintRules = recallModeConstraintRules(normalizedModes)
-
-        let system = PromptText.join([
-            "You are a bilingual language learning assistant.",
-            "Generate exactly one recall-oriented flashcard draft as strict structured JSON.",
-            "Choose the most appropriate recall mode from the allowed modes.",
-            "Base the choice on accepted learning aids, sense inventory, and the main learning objective.",
-            "When raw dictionary wording is technical, formal, or mixed with romanization, rewrite it into plain learner-facing Chinese before drafting the card.",
-            "Never add markdown fences, commentary, or extra fields."
-        ])
-
-        let user = PromptText.join([
-            #"Generate exactly 1 recall card draft for the target "\#(trimmedWord)"."#,
-            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
-            PromptText.labeledBlock("Accepted learning aids", value: recallLearningAidsText(context)),
-            PromptText.labeledBlock("Word signals", value: recallWordSignalsText(wordSignals)),
-            PromptText.labeledBlock("Allowed modes", value: recallAllowedModesText(normalizedModes)),
-            PromptText.labeledBlock("Mode prior", value: recallModePriorText(modePrior)),
-            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
-            PromptText.labeledBlock("Packaging scaffold", value: recallScaffoldText(scaffold, requestedMode: nil)),
-            PromptText.labeledBlock(
-                "Card contract",
-                value: recallCardContractText(target: trimmedWord, learnerCue: learnerCue)
-            ),
-            PromptText.labeledBlock(
-                "Mode selection contract",
-                value: recallModeSelectionContractText()
-            ),
-            PromptText.labeledBlock(
-                "normalizedCue contract",
-                value: recallNormalizedCueContractText()
-            ),
-            PromptText.labeledBlock(
-                "Plan examples",
-                value: recallPlanExamplesText()
-            ),
-            PromptText.jsonBlock([
-                "Return a single JSON object with this shape:",
-                "{",
-                "  \"draft\": {",
-                "    \"mode\": \"full_spelling | targeted_letter_cloze | phrase_recall\",",
-                "    \"front\": \"learner-facing prompt\",",
-                "    \"back\": \"exact answer\",",
-                "    \"hint\": \"optional short hint or null\",",
-                "    \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
-                "  },",
-                "  \"cuePlan\": {",
-                "    \"semanticSource\": \"accepted_usage_hint | sense_semantic_hint | sense_definition_paraphrase | pitfall | collocation\",",
-                "    \"normalizedCue\": \"short learner-facing cue before final packaging\"",
-                "  }",
-                "}"
-            ]),
-            PromptText.labeledBlock(
-                "Rules",
-                value: PromptText.bulletList([
-                    "Output JSON only",
-                    "mode must be one of the allowed modes",
-                    "Choose selectedMode first, then generate cuePlan.normalizedCue",
-                    "Use accepted learning aids, word signals, and the sense inventory as evidence",
-                    "Use cuePlan.normalizedCue as the semantic basis of draft.front",
-                    "hint is optional and should stay short",
-                    "anchor is optional display metadata only; do not invent source offsets or remap anchors",
-                    "If an anchor snapshot is supplied and directly useful, you may copy it as-is or leave anchor null",
-                    "Return exactly one draft only"
-                ] + modeConstraintRules)
             )
         ])
 
@@ -1088,7 +930,7 @@ public enum LLMPrompt {
         pronunciationGuide: String?,
         existingIPA: String?,
         senses: [LLMSensePromptInput],
-        strictSpellingRetry: Bool = false
+        retryCorrection: String? = nil
     ) -> (system: String, user: String) {
         let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSenses = senses.isEmpty
@@ -1107,13 +949,12 @@ public enum LLMPrompt {
             "Never return respelling as IPA, never add slashes, and never add explanations."
         ])
 
-        let retryReminder = strictSpellingRetry
-            ? PromptText.join([
+        let retryReminder = retryCorrection.map { correction in
+            PromptText.join([
                 "Retry correction:",
-                "Your previous stressSyllables value did not preserve the original written spelling.",
-                "This time, copy the original word's letters exactly, insert only hyphens, and use casing only to mark primary stress."
+                correction
             ])
-            : nil
+        }
 
         let user = PromptText.join([
             #"Generate pronunciation enhancement data for the target word "\#(trimmedWord)"."#,
@@ -1141,13 +982,13 @@ public enum LLMPrompt {
                 value: PromptText.bulletList([
                     "Output JSON only",
                     "\"stressSyllables\" is required",
-                    "Split the original written word into learner-friendly chunks joined by hyphens",
-                    "Build stressSyllables only from these Target characters, in the same order",
-                    "Hyphen is the only character you may add; uppercase/lowercase may only change casing of existing target letters",
-                    "Preserve the original spelling exactly; do not rewrite letters to match pronunciation",
+                    "Start from the exact written word",
+                    "Keep the original letters in the same order",
+                    "Insert hyphens only to show learner-friendly chunks",
+                    "Change casing only on existing target letters",
+                    "Do not copy helper spellings from the pronunciation guide into stressSyllables",
                     "After removing hyphens and case markers, the result must still spell the original word",
-                    "For multisyllable words, uppercase the primary-stress syllable only, for example \"im-POR-tant\"",
-                    "Prefer spelling-aware chunks like \"aes-THET-ic\" over pronunciation-only rewrites like \"es-THET-ic\"",
+                    "Use uppercase to mark stress if you mark it",
                     "For monosyllable words, return the plain word only, for example \"flock\"",
                     "If the dialect has multiple accepted variants, choose one default variant and return one string only",
                     "Do not include spaces, labels, bullets, markdown, commentary, alternatives, slashes, commas, or \"or\"",

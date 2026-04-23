@@ -124,6 +124,21 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
             )
         }
     }
+
+    func testBenchmarkRecallCorpusIncludesCurrentAppPromptRegressionCases() {
+        let casesByWord = Dictionary(uniqueKeysWithValues: recallCases.map { ($0.word, $0) })
+
+        XCTAssertEqual(casesByWord["necessary"]?.expectedMode, .fullSpelling)
+        XCTAssertEqual(casesByWord["lemmatize"]?.expectedMode, .fullSpelling)
+    }
+
+    func testBenchmarkLearningAidsCorpusIncludesCurrentAppAcceptedContextCases() {
+        let casesByWord = Dictionary(uniqueKeysWithValues: learningAidsCases.map { ($0.word, $0) })
+
+        XCTAssertEqual(casesByWord["charge"]?.anchor?.text, "charge")
+        XCTAssertEqual(casesByWord["charge"]?.anchor?.note, "snapshot only")
+        XCTAssertEqual(casesByWord["principal"]?.acceptedPitfalls, ["不要和 principle 混淆"])
+    }
 }
 
 private extension LLMModelBenchmarkE2ETests {
@@ -159,6 +174,8 @@ private extension LLMModelBenchmarkE2ETests {
         let previewAnchor: LLMAnchorSnapshot?
         let expectedMode: LLMRecallCardMode
         let expectedMaskHotspots: [String]
+        let requiredFrontContains: [String]
+        let requiredFrontExcludes: [String]
     }
 
     struct LearningAidsCase {
@@ -317,7 +334,9 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .phraseRecall,
-                expectedMaskHotspots: []
+                expectedMaskHotspots: [],
+                requiredFrontContains: [],
+                requiredFrontExcludes: []
             ),
             .init(
                 word: "receive",
@@ -328,7 +347,9 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
-                expectedMaskHotspots: ["ei"]
+                expectedMaskHotspots: ["ei"],
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["receive"]
             ),
             .init(
                 word: "believe",
@@ -339,7 +360,9 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
-                expectedMaskHotspots: ["ie"]
+                expectedMaskHotspots: ["ie"],
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["believe"]
             ),
             .init(
                 word: "accommodate",
@@ -350,7 +373,9 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
-                expectedMaskHotspots: ["cc", "mm"]
+                expectedMaskHotspots: ["cc", "mm"],
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["accommodate"]
             ),
             .init(
                 word: "conscientious",
@@ -361,18 +386,22 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
-                expectedMaskHotspots: ["sci", "tio", "ous"]
+                expectedMaskHotspots: ["sci", "tio", "ous"],
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["conscientious"]
             ),
             .init(
                 word: "collocation",
                 senses: [.init(partOfSpeech: "noun", definition: "固定搭配；常见词语搭配", semanticHint: "常见词语搭配")],
-                acceptedPitfalls: ["容易漏掉双写的 ll"],
+                acceptedPitfalls: ["容易漏掉双写的 ll", "中间元音和后半段顺序容易写错"],
                 acceptedDefinitionNote: "指自然的词语搭配，不是任意两个词放在一起",
                 acceptedMnemonics: [],
                 acceptedCollocations: ["strong collocation"],
                 previewAnchor: nil,
                 expectedMode: .targetedLetterCloze,
-                expectedMaskHotspots: ["ll"]
+                expectedMaskHotspots: ["ll"],
+                requiredFrontContains: ["搭配"],
+                requiredFrontExcludes: ["collocation"]
             ),
             .init(
                 word: "perpetual",
@@ -383,13 +412,61 @@ private extension LLMModelBenchmarkE2ETests {
                 acceptedCollocations: [],
                 previewAnchor: nil,
                 expectedMode: .fullSpelling,
-                expectedMaskHotspots: []
+                expectedMaskHotspots: [],
+                requiredFrontContains: ["持续"],
+                requiredFrontExcludes: ["perpetual"]
+            ),
+            .init(
+                word: "necessary",
+                senses: [.init(partOfSpeech: "adjective", definition: "必要的；必需的", semanticHint: "必要的")],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "表示某事是必须的，不可避免的",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .fullSpelling,
+                expectedMaskHotspots: [],
+                requiredFrontContains: ["必要"],
+                requiredFrontExcludes: ["necessary"]
+            ),
+            .init(
+                word: "lemmatize",
+                senses: [
+                    .init(
+                        partOfSpeech: "transitive verb",
+                        definition: "把…按屈折变化形式归类 bǎ… àn qūzhé biànhuà xíngshì guīlèi"
+                    )
+                ],
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: """
+                Lemmatize words to find the basic form of a word — 词语的词根或基本形式
+                Find the base form of a word — 找到一个词的原始形态
+                """,
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                previewAnchor: nil,
+                expectedMode: .fullSpelling,
+                expectedMaskHotspots: [],
+                requiredFrontContains: [],
+                requiredFrontExcludes: ["屈折", "qūzhé", "biànhuà", "lemmatize"]
             )
         ]
     }
 
     var learningAidsCases: [LearningAidsCase] {
         [
+            .init(
+                word: "charge",
+                senses: [
+                    .init(partOfSpeech: "noun", definition: "formal accusation"),
+                    .init(partOfSpeech: "verb", definition: "ask someone to pay a price")
+                ],
+                acceptedPitfalls: ["容易和负责、收费几个义项混在一起"],
+                acceptedDefinitionNote: "表示收费时是让别人支付一笔钱",
+                acceptedMnemonics: [],
+                acceptedCollocations: [],
+                anchor: LLMAnchorSnapshot(text: "charge", note: "snapshot only")
+            ),
             .init(
                 word: "principal",
                 senses: [
@@ -403,25 +480,14 @@ private extension LLMModelBenchmarkE2ETests {
                 anchor: nil
             ),
             .init(
-                word: "receive",
+                word: "demolish",
                 senses: [
-                    .init(partOfSpeech: "verb", definition: "get or be given something")
+                    .init(partOfSpeech: "verb", definition: "to knock down and destroy a building or structure")
                 ],
-                acceptedPitfalls: ["i 和 e 的顺序很容易写反"],
-                acceptedDefinitionNote: "表示收到某物，不只是正式接收",
+                acceptedPitfalls: [],
+                acceptedDefinitionNote: "常指建筑或结构被拆毁",
                 acceptedMnemonics: [],
                 acceptedCollocations: [],
-                anchor: nil
-            ),
-            .init(
-                word: "collocation",
-                senses: [
-                    .init(partOfSpeech: "noun", definition: "habitual word pairing", semanticHint: "word pairing")
-                ],
-                acceptedPitfalls: ["容易漏掉双写的 ll"],
-                acceptedDefinitionNote: "指自然的词语搭配，不是任意两个词放在一起",
-                acceptedMnemonics: [],
-                acceptedCollocations: ["strong collocation"],
                 anchor: nil
             )
         ]
@@ -559,10 +625,9 @@ private extension LLMModelBenchmarkE2ETests {
             timeoutSeconds: timeoutSeconds,
             traceFileURL: traceFileURL
         ) {
-            let hint = try await service.optimizeDefinitionStreaming(
+            let hint = try await service.generateUsageHintText(
                 word: testCase.word,
-                senses: testCase.senses,
-                onDelta: { _ in }
+                senses: testCase.senses
             )
             let lines = self.normalizedNonEmptyLines(from: hint)
             let evaluation = LLMBenchmarkUsageEvaluation.assess(
@@ -648,16 +713,9 @@ private extension LLMModelBenchmarkE2ETests {
             timeoutSeconds: timeoutSeconds,
             traceFileURL: traceFileURL
         ) {
-            let context = LLMService.normalizeRecallGenerationContext(
-                .init(
-                    acceptedPitfalls: testCase.acceptedPitfalls,
-                    acceptedUsageHints: self.acceptedUsageHints(from: testCase.acceptedDefinitionNote),
-                    acceptedMnemonics: testCase.acceptedMnemonics,
-                    acceptedCollocations: testCase.acceptedCollocations
-                )
-            )
-            let allowedModes = LLMService.recommendedRecallAllowedModes(for: testCase.word, context: context)
-            let modePrior = LLMService.recommendedRecallModePrior(for: testCase.word, context: context, allowedModes: allowedModes)
+            let context = self.appRecallGenerationContext(for: testCase)
+            let allowedModes = self.appRecommendedRecallAllowedModes(for: testCase)
+            let modePrior = self.appRecommendedRecallModePrior(for: testCase)
             let decision = try await service.generateRecallCardDraftDecision(
                 word: testCase.word,
                 senses: testCase.senses,
@@ -680,8 +738,17 @@ private extension LLMModelBenchmarkE2ETests {
             if !self.isPlainText(decision.draft.front) || !self.isPlainText(decision.draft.back) {
                 qualityIssues.append("formatting_noise")
             }
+            if decision.draft.front.containsPinyinDiacritics || (decision.draft.hint?.containsPinyinDiacritics ?? false) {
+                qualityIssues.append("romanization_leak")
+            }
             if self.cuePlanContainsTarget(decision.draft.front, target: testCase.word) {
                 qualityIssues.append("target_leak")
+            }
+            if !testCase.requiredFrontContains.allSatisfy(decision.draft.front.contains) {
+                qualityIssues.append("missing_expected_cue")
+            }
+            if testCase.requiredFrontExcludes.contains(where: decision.draft.front.contains) {
+                qualityIssues.append("front_contains_forbidden_fragment")
             }
             if decision.draft.mode == .targetedLetterCloze {
                 if self.underscoreGroupCount(in: decision.draft.front) != 1 {
@@ -690,6 +757,9 @@ private extension LLMModelBenchmarkE2ETests {
                 let gapLength = self.longestUnderscoreRun(in: decision.draft.front)
                 if !(2...3).contains(gapLength) {
                     qualityIssues.append("invalid_cloze_gap_length")
+                }
+                if !decision.draft.front.containsHanScript {
+                    qualityIssues.append("missing_chinese_cue")
                 }
                 if !testCase.expectedMaskHotspots.isEmpty {
                     let hiddenText = decision.maskPlan?.hiddenText.lowercased() ?? ""
@@ -752,12 +822,7 @@ private extension LLMModelBenchmarkE2ETests {
             let ranked = try await service.generateRankedLearningAids(
                 word: testCase.word,
                 senses: testCase.senses,
-                acceptedContext: .init(
-                    acceptedPitfalls: testCase.acceptedPitfalls,
-                    acceptedUsageHints: testCase.acceptedDefinitionNote.map { [$0] } ?? [],
-                    acceptedMnemonics: testCase.acceptedMnemonics,
-                    acceptedCollocations: testCase.acceptedCollocations
-                ),
+                acceptedContext: self.appLearningAidAcceptedContext(for: testCase),
                 anchor: testCase.anchor
             )
             let aids = ranked.aids
@@ -844,6 +909,22 @@ private extension LLMModelBenchmarkE2ETests {
         } catch {
             let elapsed = start.duration(to: clock.now)
             let traceSessionIDs = traceSessionIDs(in: traceFileURL, startingAt: traceEventStartIndex)
+            if let qualityIssues = LLMBenchmarkErrorEvaluation.qualityIssues(from: error) {
+                return .init(
+                    taskType: taskType,
+                    caseID: caseID,
+                    word: word,
+                    status: .passedWithIssues,
+                    latencyMilliseconds: elapsed.milliseconds,
+                    hardFailures: [],
+                    qualityIssues: qualityIssues,
+                    warnings: [],
+                    metrics: ["timeout_seconds": .int(timeoutSeconds)],
+                    output: ["quality_failure": .string(String(reflecting: error))],
+                    traceFile: benchmarkTraceFileName,
+                    traceSessionIDs: traceSessionIDs
+                )
+            }
             return .init(
                 taskType: taskType,
                 caseID: caseID,
@@ -978,6 +1059,41 @@ private extension LLMModelBenchmarkE2ETests {
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    func appRecallGenerationContext(for testCase: RecallCase) -> LLMRecallGenerationContext {
+        LLMService.normalizeRecallGenerationContext(
+            LLMRecallGenerationContext(
+                acceptedPitfalls: testCase.acceptedPitfalls,
+                acceptedUsageHints: acceptedUsageHints(from: testCase.acceptedDefinitionNote),
+                acceptedMnemonics: testCase.acceptedMnemonics,
+                acceptedCollocations: testCase.acceptedCollocations
+            )
+        )
+    }
+
+    func appRecommendedRecallAllowedModes(for testCase: RecallCase) -> [LLMRecallCardMode] {
+        LLMService.recommendedRecallAllowedModes(
+            for: testCase.word,
+            context: appRecallGenerationContext(for: testCase)
+        )
+    }
+
+    func appRecommendedRecallModePrior(for testCase: RecallCase) -> LLMRecallCardMode? {
+        LLMService.recommendedRecallModePrior(
+            for: testCase.word,
+            context: appRecallGenerationContext(for: testCase),
+            allowedModes: appRecommendedRecallAllowedModes(for: testCase)
+        )
+    }
+
+    func appLearningAidAcceptedContext(for testCase: LearningAidsCase) -> LLMLearningAidAcceptedContext {
+        LLMLearningAidAcceptedContext(
+            acceptedPitfalls: testCase.acceptedPitfalls,
+            acceptedUsageHints: testCase.acceptedDefinitionNote.map { [$0] } ?? [],
+            acceptedMnemonics: testCase.acceptedMnemonics,
+            acceptedCollocations: testCase.acceptedCollocations
+        )
     }
 
     func definitionOverlap(of text: String, senses: [LLMSensePromptInput]) -> Double {
@@ -1202,5 +1318,25 @@ private struct BenchmarkTimeoutError: Error, CustomStringConvertible {
 
     var description: String {
         "BenchmarkTimeoutError(seconds: \(seconds))"
+    }
+}
+
+private extension String {
+    var containsHanScript: Bool {
+        unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x4E00...0x9FFF, 0x3400...0x4DBF, 0x20000...0x2A6DF, 0x2A700...0x2B73F, 0x2B740...0x2B81F, 0x2B820...0x2CEAF, 0xF900...0xFAFF:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    var containsPinyinDiacritics: Bool {
+        range(
+            of: #"[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛ]"#,
+            options: .regularExpression
+        ) != nil
     }
 }

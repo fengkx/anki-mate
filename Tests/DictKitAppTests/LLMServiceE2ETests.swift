@@ -70,7 +70,7 @@ final class LLMServiceE2ETests: XCTestCase {
             ]
         )
 
-        let hint = try await service.optimizeDefinition(
+        let hint = try await service.generateUsageHintText(
             word: testCase.word,
             senses: testCase.senses
         )

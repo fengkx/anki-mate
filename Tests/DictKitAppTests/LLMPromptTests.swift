@@ -77,7 +77,7 @@ final class LLMPromptTests: XCTestCase {
     }
 
     func testUsagePromptUsesStructuredJSONAndProtectsBoundariesForSingleSense() {
-        let prompt = LLMPrompt.optimizeDefinition(
+        let prompt = LLMPrompt.usageHints(
             word: "perpetual",
             senses: [
                 LLMSensePromptInput(
@@ -88,13 +88,17 @@ final class LLMPromptTests: XCTestCase {
         )
 
         XCTAssertTrue(prompt.system.contains("strict JSON"))
+        XCTAssertTrue(prompt.system.contains("A usage hint should help the learner choose or recognize the word in context, not just restate the definition."))
         XCTAssertTrue(prompt.user.contains("\"usageHints\""))
         XCTAssertTrue(prompt.user.contains("\"text\""))
         XCTAssertTrue(prompt.user.contains("\"translation\""))
         XCTAssertTrue(prompt.user.contains("\"kind\""))
         XCTAssertTrue(prompt.user.contains("\"senseIndex\""))
         XCTAssertTrue(prompt.user.contains("Return 1 to 2 items in \"usageHints\""))
+        XCTAssertTrue(prompt.user.contains("Prefer context, register, contrast, or selection guidance over paraphrasing the dictionary sense"))
+        XCTAssertTrue(prompt.user.contains("A good usage hint should help the learner decide when this word fits, what it contrasts with, or what context it usually appears in"))
         XCTAssertTrue(prompt.user.contains("Do not output spelling warnings, confusable-word alerts, collocation lists, mnemonic slogans, example sentences"))
+        XCTAssertTrue(prompt.user.contains("Do not restate the dictionary definition in simpler words unless that rewrite adds a real usage boundary"))
     }
 
     func testUsageHintCountBaselineUsesTwoForSingleSenseAndSenseInventoryForMultiSense() {
@@ -123,7 +127,7 @@ final class LLMPromptTests: XCTestCase {
             LLMSensePromptInput(partOfSpeech: "verb", definition: "fill a battery")
         ]
 
-        let prompt = LLMPrompt.optimizeDefinition(word: "charge", senses: senses)
+        let prompt = LLMPrompt.usageHints(word: "charge", senses: senses)
 
         XCTAssertTrue(prompt.user.contains("Return 1 to 3 items in \"usageHints\""))
         XCTAssertTrue(prompt.user.contains("Prioritize multi-sense coverage over filling a fixed count"))
@@ -174,63 +178,6 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"verb · air travel\""))
         XCTAssertFalse(prompt.user.contains("choose the gap position yourself"))
         XCTAssertTrue(prompt.user.contains("Output JSON only"))
-    }
-
-    func testRecallDecisionPromptIncludesLearningAidsAllowedModesAndFrontBackContract() {
-        let prompt = LLMPrompt.recallCardDecision(
-            word: "collocation",
-            senses: [
-                LLMSensePromptInput(
-                    partOfSpeech: "noun",
-                    definition: "固定搭配；常见词语搭配",
-                    semanticHint: "常见词语搭配"
-                )
-            ],
-            context: LLMRecallGenerationContext(
-                acceptedPitfalls: ["容易漏掉双写的 ll"],
-                acceptedUsageHints: ["指自然的词语搭配"],
-                acceptedMnemonics: ["co + location of words"],
-                acceptedCollocations: ["strong collocation"]
-            ),
-            allowedModes: [.fullSpelling, .targetedLetterCloze],
-            modePrior: .targetedLetterCloze,
-            anchor: nil,
-            wordSignals: LLMRecallWordSignals(
-                isPhrase: false,
-                hasRepeatedLetters: true,
-                hasConfusableVowelCluster: true
-            ),
-            scaffold: RecallPromptScaffold(
-                learnerCue: "常见词语搭配",
-                hint: "noun · 常见词语搭配"
-            )
-        )
-
-        XCTAssertTrue(prompt.system.contains("strict structured JSON"))
-        XCTAssertTrue(prompt.user.contains("Accepted learning aids"))
-        XCTAssertTrue(prompt.user.contains("Allowed modes"))
-        XCTAssertTrue(prompt.user.contains("Mode prior"))
-        XCTAssertTrue(prompt.user.contains("cuePlan"))
-        XCTAssertTrue(prompt.user.contains("Card contract"))
-        XCTAssertTrue(prompt.user.contains("Mode selection contract"))
-        XCTAssertTrue(prompt.user.contains("normalizedCue contract"))
-        XCTAssertTrue(prompt.user.contains("front is the recall prompt"))
-        XCTAssertTrue(prompt.user.contains("back is the exact target answer"))
-        XCTAssertTrue(prompt.user.contains("front must not reveal the full back"))
-        XCTAssertTrue(prompt.user.contains("back must remain unchanged"))
-        XCTAssertTrue(prompt.user.contains("If the target is a phrase, choose phrase_recall"))
-        XCTAssertTrue(prompt.user.contains("If accepted pitfalls or word signals point to a local spelling hotspot, choose targeted_letter_cloze"))
-        XCTAssertTrue(prompt.user.contains("Otherwise choose full_spelling"))
-        XCTAssertTrue(prompt.user.contains("If evidence is mixed, follow modePrior"))
-        XCTAssertTrue(prompt.user.contains("normalizedCue must be semantic-only Chinese"))
-        XCTAssertTrue(prompt.user.contains("normalizedCue must not contain packaging text"))
-        XCTAssertTrue(prompt.user.contains("<plan_examples_do_not_copy>"))
-        XCTAssertFalse(prompt.user.contains("<front>"))
-        XCTAssertFalse(prompt.user.contains("<back>"))
-        XCTAssertFalse(prompt.user.contains("keep the masked target surface in front"))
-        XCTAssertFalse(prompt.user.contains("Before writing front, choose one semantic source"))
-        XCTAssertFalse(prompt.user.contains("Write cuePlan first, then write draft.front as the final rendered version of cuePlan.normalizedCue"))
-        XCTAssertFalse(prompt.user.contains("choose the gap position yourself"))
     }
 
     func testRecallPlanPromptIncludesSourceEvidenceButNoDraftShape() {
@@ -426,7 +373,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("strict JSON learning aids"))
         XCTAssertTrue(prompt.system.contains("Use accepted learning material as already-covered teaching points and avoid repeating them. Accepted material may be in Chinese or English; concept overlap still counts."))
         XCTAssertTrue(prompt.system.contains("Your job is not to fill sections."))
-        XCTAssertTrue(prompt.system.contains("For pitfalls, think like a language teacher: surface likely learner misunderstandings or misuses, not generic advice about better wording."))
+        XCTAssertTrue(prompt.system.contains("For pitfalls, think like a language teacher (from a language learner perspective): surface likely learner misunderstandings, similar words misspelling or misuses, not generic advice about better wording."))
         XCTAssertTrue(prompt.system.contains("A pitfall should describe misunderstanding the word itself, not criticizing the practice or style the word refers to."))
         XCTAssertTrue(prompt.system.contains("Prefer omission over low-information correctness."))
         XCTAssertTrue(prompt.user.contains("\"pitfalls\""))
@@ -611,13 +558,11 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("Convert dictionary pronunciation data into strict JSON only"))
         XCTAssertTrue(prompt.user.contains("\"stressSyllables\""))
         XCTAssertTrue(prompt.user.contains("\"ipa\": \"pure IPA only or null\""))
-        XCTAssertTrue(prompt.user.contains("im-POR-tant"))
-        XCTAssertTrue(prompt.user.contains("Preserve the original spelling exactly"))
-        XCTAssertTrue(prompt.user.contains("aes-THET-ic"))
+        XCTAssertTrue(prompt.user.contains("Start from the exact written word"))
+        XCTAssertTrue(prompt.user.contains("Do not copy helper spellings from the pronunciation guide"))
         XCTAssertTrue(prompt.user.contains("For monosyllable words, return the plain word only, for example \"flock\""))
         XCTAssertTrue(prompt.user.contains("choose one default variant and return one string only"))
         XCTAssertTrue(prompt.user.contains("keep \"ipa\" as null unless correction is necessary"))
-        XCTAssertTrue(prompt.user.contains("For multisyllable words, uppercase the primary-stress syllable only"))
     }
 
     func testPronunciationEnhancementPromptIncludesTargetCharactersForSpellingPreservation() {
@@ -641,12 +586,12 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("4: p"))
         XCTAssertTrue(prompt.user.contains("5: u"))
         XCTAssertTrue(prompt.user.contains("6: s"))
-        XCTAssertTrue(prompt.user.contains("Build stressSyllables only from these Target characters"))
-        XCTAssertTrue(prompt.user.contains("Hyphen is the only character you may add"))
-        XCTAssertTrue(prompt.user.contains("uppercase/lowercase may only change casing of existing target letters"))
+        XCTAssertTrue(prompt.user.contains("Keep the original letters in the same order"))
+        XCTAssertTrue(prompt.user.contains("Insert hyphens only to show learner-friendly chunks"))
+        XCTAssertTrue(prompt.user.contains("Change casing only on existing target letters"))
     }
 
-    func testPronunciationEnhancementRetryPromptEmphasizesSpellingPreservation() {
+    func testPronunciationEnhancementRetryPromptIncludesSpecificCorrection() {
         let prompt = LLMPrompt.pronunciationEnhancement(
             word: "aesthetic",
             dialect: "AmE",
@@ -658,13 +603,10 @@ final class LLMPromptTests: XCTestCase {
                     definition: "concerned with beauty"
                 )
             ],
-            strictSpellingRetry: true
+            retryCorrection: #"Your previous value changed the original spelling. Keep the exact letters of "aesthetic" in the same order and insert hyphens only."#
         )
 
         XCTAssertTrue(prompt.user.contains("Retry correction:"))
-        XCTAssertTrue(prompt.user.contains("did not preserve the original written spelling"))
-        XCTAssertTrue(prompt.user.contains("copy the original word's letters exactly"))
-        XCTAssertTrue(prompt.user.contains("insert only hyphens"))
-        XCTAssertTrue(prompt.user.contains("use casing only to mark primary stress"))
+        XCTAssertTrue(prompt.user.contains(#"Your previous value changed the original spelling. Keep the exact letters of "aesthetic" in the same order and insert hyphens only."#))
     }
 }

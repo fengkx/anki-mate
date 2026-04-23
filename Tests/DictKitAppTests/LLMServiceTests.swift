@@ -776,6 +776,60 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertNil(LLMService.normalizeStressSyllables("im-POR-tant!"))
     }
 
+    func testValidatePronunciationStressSyllablesClassifiesRetryReasons() {
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "KOR-pus",
+                preservingSpellingOf: "corpus",
+                pronunciationGuide: "KOR-pus"
+            ),
+            .failure(.copiedGuideLetters)
+        )
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "alphaa",
+                preservingSpellingOf: "alpha",
+                pronunciationGuide: nil
+            ),
+            .failure(.doesNotPreserveSpelling)
+        )
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "CELLO",
+                preservingSpellingOf: "cello",
+                pronunciationGuide: "CHEL-oh"
+            ),
+            .failure(.missingHyphenation)
+        )
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "cel-lo",
+                preservingSpellingOf: "cello",
+                pronunciationGuide: "CHEL-oh"
+            ),
+            .failure(.missingPrimaryStressMarker)
+        )
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "im-POR-tant!",
+                preservingSpellingOf: "important",
+                pronunciationGuide: nil
+            ),
+            .failure(.invalidCharacters)
+        )
+    }
+
+    func testValidatePronunciationStressSyllablesReturnsNormalizedValueForValidOutput() {
+        XCTAssertEqual(
+            LLMService.validatePronunciationStressSyllables(
+                "aes-Thet-ic",
+                preservingSpellingOf: "aesthetic",
+                pronunciationGuide: nil
+            ),
+            .success("aes-THET-ic")
+        )
+    }
+
     func testDecodeLearningAidsTrimsWhitespaceAndKeepsSectionsSeparate() throws {
         let payload = """
         model output:
@@ -899,6 +953,31 @@ final class LLMServiceTests: XCTestCase {
         )
         XCTAssertEqual(hints.map(\.kind), ["usage_tendency", "semantic_contrast"])
         XCTAssertEqual(hints.map(\.senseIndex), [1, 1])
+    }
+
+    func testRenderUsageHintsJoinsStructuredHintsIntoSavedUsageText() {
+        let rendered = LLMService.renderUsageHints([
+            LLMUsageHint(
+                text: "Often used in academic discussions of teaching methods.",
+                translation: "常用于讨论教学方法的学术语境。",
+                kind: "register_or_context",
+                senseIndex: 1
+            ),
+            LLMUsageHint(
+                text: "More specific than teaching; emphasizes method or approach.",
+                translation: "比 teaching 更具体，强调方法或路径。",
+                kind: "semantic_contrast",
+                senseIndex: 1
+            )
+        ])
+
+        XCTAssertEqual(
+            rendered,
+            """
+            Often used in academic discussions of teaching methods. — 常用于讨论教学方法的学术语境。
+            More specific than teaching; emphasizes method or approach. — 比 teaching 更具体，强调方法或路径。
+            """
+        )
     }
 
     func testMergeExampleSentencesUsesTopUpToRestoreMissingSenseCoverage() {
