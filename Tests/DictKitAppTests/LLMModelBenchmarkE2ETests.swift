@@ -99,6 +99,31 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
             throw XCTSkip("No benchmark models are downloaded. Run `just prepare-llm-benchmark-models` first.")
         }
     }
+
+    func testBenchmarkIncludesPronunciationSpellingPreservationCases() {
+        let casesByWord = Dictionary(uniqueKeysWithValues: pronunciationCases.map { ($0.word, $0) })
+        XCTAssertEqual(casesByWord["corpus"]?.pronunciationGuide, "KOR-pus")
+        XCTAssertEqual(casesByWord["corpus"]?.expectedStressSyllables, "COR-pus")
+        XCTAssertEqual(casesByWord["cello"]?.pronunciationGuide, "CHEL-oh")
+        XCTAssertEqual(casesByWord["cello"]?.expectedStressSyllables, "CEL-lo")
+        XCTAssertEqual(casesByWord["xylophone"]?.pronunciationGuide, "ZY-luh-fohn")
+        XCTAssertEqual(casesByWord["xylophone"]?.expectedStressSyllables, "XY-lo-phone")
+        for testCase in pronunciationCases {
+            XCTAssertEqual(
+                LLMService.normalizeStressSyllables(
+                    testCase.expectedStressSyllables,
+                    preservingSpellingOf: testCase.word
+                ),
+                testCase.expectedStressSyllables
+            )
+            XCTAssertNil(
+                LLMService.normalizeStressSyllables(
+                    testCase.pronunciationGuide,
+                    preservingSpellingOf: testCase.word
+                )
+            )
+        }
+    }
 }
 
 private extension LLMModelBenchmarkE2ETests {
@@ -112,6 +137,16 @@ private extension LLMModelBenchmarkE2ETests {
     struct UsageCase {
         let word: String
         let senses: [LLMSensePromptInput]
+    }
+
+    struct PronunciationCase {
+        let word: String
+        let dialect: String?
+        let pronunciationGuide: String?
+        let existingIPA: String?
+        let senses: [LLMSensePromptInput]
+        let expectedStressSyllables: String
+        let expectedIPA: String?
     }
 
     struct RecallCase {
@@ -217,6 +252,56 @@ private extension LLMModelBenchmarkE2ETests {
                 senses: [
                     .init(partOfSpeech: "verb", definition: "accept as true or real")
                 ]
+            )
+        ]
+    }
+
+    var pronunciationCases: [PronunciationCase] {
+        [
+            .init(
+                word: "corpus",
+                dialect: "AmE",
+                pronunciationGuide: "KOR-pus",
+                existingIPA: "kɔrpəs",
+                senses: [
+                    .init(
+                        partOfSpeech: "noun",
+                        definition: "a large collection of written or spoken material",
+                        semanticHint: "语料库"
+                    )
+                ],
+                expectedStressSyllables: "COR-pus",
+                expectedIPA: nil
+            ),
+            .init(
+                word: "cello",
+                dialect: "AmE",
+                pronunciationGuide: "CHEL-oh",
+                existingIPA: "ˈtʃeloʊ",
+                senses: [
+                    .init(
+                        partOfSpeech: "noun",
+                        definition: "a large stringed musical instrument",
+                        semanticHint: "大提琴"
+                    )
+                ],
+                expectedStressSyllables: "CEL-lo",
+                expectedIPA: nil
+            ),
+            .init(
+                word: "xylophone",
+                dialect: "AmE",
+                pronunciationGuide: "ZY-luh-fohn",
+                existingIPA: "ˈzaɪləfoʊn",
+                senses: [
+                    .init(
+                        partOfSpeech: "noun",
+                        definition: "a musical instrument with wooden bars struck by mallets",
+                        semanticHint: "木琴"
+                    )
+                ],
+                expectedStressSyllables: "XY-lo-phone",
+                expectedIPA: nil
             )
         ]
     }
@@ -370,6 +455,16 @@ private extension LLMModelBenchmarkE2ETests {
                     )
                 )
             }
+            for testCase in pronunciationCases {
+                tasks.append(
+                    await runPronunciationTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "pronunciation_enhancement"),
+                        traceFileURL: traceFileURL
+                    )
+                )
+            }
             for testCase in recallCases {
                 tasks.append(
                     await runRecallTask(
@@ -480,6 +575,62 @@ private extension LLMModelBenchmarkE2ETests {
                 warnings: evaluation.warnings,
                 metrics: evaluation.metrics,
                 output: evaluation.output
+            )
+        }
+    }
+
+    func runPronunciationTask(
+        service: LLMService,
+        testCase: PronunciationCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
+    ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
+        await measureTask(
+            taskType: "pronunciation_enhancement",
+            caseID: testCase.word,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
+            let enhancement = try await service.generatePronunciationEnhancement(
+                word: testCase.word,
+                dialect: testCase.dialect,
+                pronunciationGuide: testCase.pronunciationGuide,
+                existingIPA: testCase.existingIPA,
+                senses: testCase.senses
+            )
+
+            var qualityIssues: [String] = []
+            let stressMatchesExpected = enhancement.stressSyllables == testCase.expectedStressSyllables
+            if !stressMatchesExpected {
+                qualityIssues.append("stress_syllables_mismatch")
+            }
+
+            let ipaMatchesExpected: Bool?
+            if let expectedIPA = testCase.expectedIPA {
+                ipaMatchesExpected = enhancement.ipa == expectedIPA
+                if ipaMatchesExpected == false {
+                    qualityIssues.append("ipa_mismatch")
+                }
+            } else {
+                ipaMatchesExpected = nil
+            }
+
+            return .init(
+                qualityIssues: qualityIssues,
+                warnings: [],
+                metrics: [
+                    "stress_matches_expected": .bool(stressMatchesExpected),
+                    "ipa_matches_expected": ipaMatchesExpected.map(JSONValue.bool) ?? .null,
+                    "timeout_seconds": .int(timeoutSeconds)
+                ],
+                output: [
+                    "stress_syllables": .string(enhancement.stressSyllables),
+                    "expected_stress_syllables": .string(testCase.expectedStressSyllables),
+                    "ipa": enhancement.ipa.map(JSONValue.string) ?? .null,
+                    "expected_ipa": testCase.expectedIPA.map(JSONValue.string) ?? .null,
+                    "pronunciation_guide": testCase.pronunciationGuide.map(JSONValue.string) ?? .null
+                ]
             )
         }
     }
