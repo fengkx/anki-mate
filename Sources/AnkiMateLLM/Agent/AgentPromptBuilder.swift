@@ -25,22 +25,25 @@ public struct AgentPromptBuilder {
         }
     }
 
-    public struct Context: Sendable, Equatable {
+    public struct Context: Sendable {
         public let cardSnapshot: CardRenderSnapshot
         public let messages: [AgentChatMessage]
         public let tools: [LLMToolDefinition]
         public let maxContextTokens: Int?
+        public let attachmentStore: AgentAttachmentStoring?
 
         public init(
             cardSnapshot: CardRenderSnapshot,
             messages: [AgentChatMessage],
             tools: [LLMToolDefinition] = [],
-            maxContextTokens: Int? = nil
+            maxContextTokens: Int? = nil,
+            attachmentStore: AgentAttachmentStoring? = nil
         ) {
             self.cardSnapshot = cardSnapshot
             self.messages = messages
             self.tools = tools
             self.maxContextTokens = maxContextTokens
+            self.attachmentStore = attachmentStore
         }
     }
 
@@ -66,7 +69,8 @@ public struct AgentPromptBuilder {
         let historyBudget = max(0, totalBudget - reservedBudget)
         let historyMessages = assembleHistoryMessages(
             from: context.messages,
-            tokenBudget: historyBudget
+            tokenBudget: historyBudget,
+            attachmentStore: context.attachmentStore
         )
 
         return [
@@ -77,7 +81,8 @@ public struct AgentPromptBuilder {
 
     func assembleHistoryMessages(
         from messages: [AgentChatMessage],
-        tokenBudget: Int
+        tokenBudget: Int,
+        attachmentStore: AgentAttachmentStoring? = nil
     ) -> [LLMMessage] {
         let visible = messages
             .filter { $0.supersededBy == nil }
@@ -94,8 +99,8 @@ public struct AgentPromptBuilder {
                 }
                 return false
             }
-            .map(renderHistoryMessage)
-            + recentMessages.map(renderHistoryMessage)
+            .map { renderHistoryMessage($0, attachmentStore: nil) }
+            + recentMessages.map { renderHistoryMessage($0, attachmentStore: attachmentStore) }
 
         trimHistory(&history, tokenBudget: tokenBudget)
         return history
@@ -111,7 +116,7 @@ public struct AgentPromptBuilder {
         }
 
         while approximateTokenCount(history) > tokenBudget {
-            if let firstSummaryIndex = history.firstIndex(where: { $0.content.hasPrefix("Summary of earlier discussion") }) {
+            if let firstSummaryIndex = history.firstIndex(where: { $0.content.plainText.hasPrefix("Summary of earlier discussion") }) {
                 history.remove(at: firstSummaryIndex)
                 continue
             }
@@ -123,7 +128,7 @@ public struct AgentPromptBuilder {
 
             history = history.enumerated().map { index, message in
                 guard index < history.count - 1 else { return message }
-                return LLMMessage(role: message.role, content: truncated(message.content, maxCharacters: 160))
+                return LLMMessage(role: message.role, content: truncated(message.content.plainText, maxCharacters: 160))
             }
 
             if approximateTokenCount(history) <= tokenBudget {
@@ -151,6 +156,28 @@ public struct AgentPromptBuilder {
             // When to use tools — only for card edits
             tools.isEmpty ? nil : """
             You also have tools to propose content edits to my card (examples, usage cues, pitfalls, mnemonics, collocations, recall drafts). Only use these tools when I explicitly ask you to change, add, or remove something on the card. If I'm just asking a question, answer in text — do not call any tool.
+
+            Card edit policy:
+            - First decide whether the user is asking about the word or asking to edit card content.
+            - For explanation, nuance, etymology, usage, or comparison questions, answer in chat and do not call tools.
+            - The current card headword is the default learning target for study and edit requests. If the user asks to add learning content without naming another target, do not ask which word or aspect the user means.
+            - Attached images and existing artifacts are evidence for the current card, not alternative learning targets. Use them to infer style, section, and learning gaps; do not treat incidental words inside them as competing topics.
+            - Existing artifacts can still be edit targets for replace/delete when the user refers to them; use their real artifact ids for targetID.
+            - For content edit requests, call the matching propose_* tool as soon as the action, section, and content can be inferred from the current card or recent conversation.
+            - Treat references to earlier suggestions, numbered items, the most recent candidate, current pending proposals, or existing card sections as usable context. Do not ask the user to repeat information already present in the conversation.
+            - Proposal cards are the confirmation step. Do not ask the user to confirm before creating a proposal; the user will Apply or Dismiss it.
+            - Ask a clarifying question only when multiple plausible interpretations would produce different card edits.
+            - For underspecified content edit requests, make a constructive best-effort proposal first. This applies to examples, usage cues, pitfalls, mnemonics, collocations, and recall drafts.
+            - Default to generating the content yourself unless the user explicitly requests sourced/cited/verbatim content. Treat provenance/style preferences as optional refinements, not blockers.
+            - Do not ask the user to choose between internal labels or categories before creating a proposal. Use a reasonable default that fits the current card and let the user refine after reviewing the proposal.
+            - Do not ask for preferred scene, context, focus, tone, or angle before creating a proposal when a reasonable default can be inferred from the current card.
+            - You may ask a follow-up after the proposal is shown, or mention that the user can ask for a different angle after reviewing it.
+
+            Tool argument contract:
+            - operation=add must not include targetID because it creates new content.
+            - operation=replace and operation=delete require a real existing artifact id from the card snapshot or accepted artifacts.
+            - Never use the headword, section name, dictionary label, or sense label as targetID.
+            - When adding an example without exact text, generate a useful example for the current headword yourself and propose it.
             """,
 
             // Scope limits
@@ -210,10 +237,13 @@ public struct AgentPromptBuilder {
         }
     }
 
-    private func renderHistoryMessage(_ message: AgentChatMessage) -> LLMMessage {
+    private func renderHistoryMessage(
+        _ message: AgentChatMessage,
+        attachmentStore: AgentAttachmentStoring?
+    ) -> LLMMessage {
         LLMMessage(
             role: llmRole(for: message.role),
-            content: renderedContent(for: message.content)
+            content: renderedContent(for: message.content, attachmentStore: attachmentStore)
         )
     }
 
@@ -230,35 +260,79 @@ public struct AgentPromptBuilder {
         }
     }
 
-    private func renderedContent(for content: MessageContent) -> String {
+    private func renderedContent(
+        for content: MessageContent,
+        attachmentStore: AgentAttachmentStoring?
+    ) -> LLMMessageContent {
         switch content {
         case .text(let text, _):
-            return text
+            return .text(text)
+        case .userInput(let text, let attachments):
+            return userInputContent(text: text, attachments: attachments, attachmentStore: attachmentStore)
         case .toolCall(let name, let argsJSON):
-            return PromptText.join([
+            return .text(PromptText.join([
                 "[Tool call] \(name)",
                 argsJSON
-            ])
+            ]))
         case .toolResult(let name, let resultJSON, let truncated):
-            return PromptText.join([
+            return .text(PromptText.join([
                 "[Tool result] \(name)\(truncated ? " (truncated)" : "")",
                 resultJSON
-            ])
+            ]))
         case .actionProposal(let proposal):
-            return PromptText.join([
+            return .text(PromptText.join([
                 "Proposal (\(proposal.decision.rawValue))",
                 "Kind: \(proposal.kind.rawValue)",
                 "Operation: \(operationSummary(proposal.operation))",
                 "Summary: \(proposal.diffSummary)",
                 proposal.rationale.map { "Rationale: \($0)" }
-            ])
+            ]))
         case .summary(let text, let supersededCount):
-            return "Summary of earlier discussion (supersedes \(supersededCount) messages): \(text)"
+            return .text("Summary of earlier discussion (supersedes \(supersededCount) messages): \(text)")
         case .error(let message, let recoverable):
-            return "Error (\(recoverable ? "recoverable" : "fatal")): \(message)"
+            return .text("Error (\(recoverable ? "recoverable" : "fatal")): \(message)")
         case .layoutRequestDeclined(let userText, let detectedKind):
-            return "Declined \(detectedKind.rawValue) request: \(userText)"
+            return .text("Declined \(detectedKind.rawValue) request: \(userText)")
         }
+    }
+
+    private func userInputContent(
+        text: String,
+        attachments: [AgentAttachment],
+        attachmentStore: AgentAttachmentStoring?
+    ) -> LLMMessageContent {
+        var parts: [LLMMessageContentPart] = []
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            parts.append(.text(trimmed))
+        }
+
+        for attachment in attachments {
+            switch attachment.kind {
+            case .image:
+                guard let data = try? attachmentStore?.data(for: attachment) else {
+                    parts.append(.text("[Attached image unavailable: \(attachment.fileName)]"))
+                    continue
+                }
+                parts.append(.imageURL("data:\(attachment.mimeType);base64,\(data.base64EncodedString())"))
+            case .textFile:
+                guard let data = try? attachmentStore?.data(for: attachment),
+                      let content = String(data: data, encoding: .utf8) else {
+                    parts.append(.text("[Attached text file unavailable: \(attachment.fileName)]"))
+                    continue
+                }
+                parts.append(.text(PromptText.join([
+                    "Attached file: \(attachment.fileName)",
+                    content,
+                ])))
+            }
+        }
+
+        guard !parts.isEmpty else { return .text("") }
+        if parts.count == 1, case .text(let text) = parts[0] {
+            return .text(text)
+        }
+        return .parts(parts)
     }
 
     private func operationSummary(_ operation: ProposalRecord.Operation) -> String {
@@ -288,8 +362,12 @@ public struct AgentPromptBuilder {
             .sorted { $0.ordinal > $1.ordinal }
             .compactMap { message -> String? in
                 guard message.role == .user else { return nil }
-                guard case .text(let text, _) = message.content else { return nil }
-                return text
+                switch message.content {
+                case .text(let text, _), .userInput(let text, _):
+                    return text
+                default:
+                    return nil
+                }
             }
             .prefix(3)
 
@@ -316,7 +394,7 @@ public struct AgentPromptBuilder {
 
     private func approximateTokenCount(_ messages: [LLMMessage]) -> Int {
         messages.reduce(0) { partial, message in
-            partial + approximateTokenCount(message.content) + 4
+            partial + approximateTokenCount(message.content.plainText) + 4
         }
     }
 

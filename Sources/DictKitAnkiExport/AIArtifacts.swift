@@ -52,8 +52,9 @@ public struct ExampleSentenceArtifact: Codable, Equatable, Sendable {
         anchor: AIArtifactAnchorSnapshot? = nil
     ) {
         let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTranslation = translation?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.text = normalizedText
-        self.translation = Self.inferredTranslation(from: normalizedText)
+        self.translation = normalizedTranslation ?? Self.inferredTranslation(from: normalizedText)
         self.note = note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.anchor = anchor
     }
@@ -667,6 +668,7 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         artifacts?.compactMap { artifact in
             let normalized = ExampleSentenceArtifact(
                 text: artifact.text,
+                translation: artifact.translation,
                 note: artifact.note,
                 anchor: artifact.anchor
             )

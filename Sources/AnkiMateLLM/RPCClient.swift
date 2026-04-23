@@ -286,7 +286,11 @@ public actor RPCClient {
 
             let (bytes, httpResponse) = try await session.bytes(for: urlRequest)
             if let resp = httpResponse as? HTTPURLResponse, resp.statusCode != 200 {
-                throw RPCClientError.httpError(statusCode: resp.statusCode)
+                let body = try await Self.readErrorBody(from: bytes, limit: 4096)
+                if body.isEmpty {
+                    throw RPCClientError.httpError(statusCode: resp.statusCode)
+                }
+                throw RPCClientError.upstreamError("HTTP \(resp.statusCode): \(body)")
             }
 
             var accumulatedContent = ""
@@ -327,7 +331,7 @@ public actor RPCClient {
                 }
 
                 if let choice = chunk.choices.first {
-                    if let content = choice.delta.content, !content.isEmpty {
+                    if let content = choice.delta.content?.plainText, !content.isEmpty {
                         accumulatedRawContent += content
                         let split = Self.splitThinkingTaggedContent(accumulatedRawContent)
                         let visibleDelta = String(split.visible.dropFirst(accumulatedContent.count))
@@ -375,7 +379,7 @@ public actor RPCClient {
 
             let responseMessage = ChatMessage(
                 role: "assistant",
-                content: finalContent.isEmpty ? nil : finalContent,
+                content: finalContent.isEmpty ? nil : .text(finalContent),
                 reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning,
                 tool_calls: accumulatedToolCalls.isEmpty ? nil : accumulatedToolCalls
             )
@@ -404,5 +408,20 @@ public actor RPCClient {
             }
             throw error
         }
+    }
+
+    private static func readErrorBody(from bytes: URLSession.AsyncBytes, limit: Int) async throws -> String {
+        var data = Data()
+        for try await byte in bytes {
+            if data.count >= limit {
+                break
+            }
+            data.append(byte)
+        }
+        var body = String(data: data, encoding: .utf8) ?? ""
+        if data.count >= limit {
+            body += "..."
+        }
+        return body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

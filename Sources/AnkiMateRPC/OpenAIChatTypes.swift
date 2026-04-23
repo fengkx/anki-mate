@@ -11,7 +11,7 @@ public struct ChatCompletionRequest: Codable, Sendable {
     public var model: String
     public var messages: [ChatMessage]
     public var temperature: Float?
-    public var max_tokens: Int?
+    public var max_completion_tokens: Int?
     public var stream: Bool?
     public var tools: [ChatTool]?
     public var tool_choice: JSONValue?
@@ -22,7 +22,7 @@ public struct ChatCompletionRequest: Codable, Sendable {
         model: String,
         messages: [ChatMessage],
         temperature: Float? = nil,
-        max_tokens: Int? = nil,
+        max_completion_tokens: Int? = nil,
         stream: Bool? = nil,
         tools: [ChatTool]? = nil,
         tool_choice: JSONValue? = nil,
@@ -32,7 +32,7 @@ public struct ChatCompletionRequest: Codable, Sendable {
         self.model = model
         self.messages = messages
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.max_completion_tokens = max_completion_tokens
         self.stream = stream
         self.tools = tools
         self.tool_choice = tool_choice
@@ -43,14 +43,28 @@ public struct ChatCompletionRequest: Codable, Sendable {
 
 public struct ChatMessage: Codable, Sendable, Equatable {
     public var role: String?
-    public var content: String?
+    public var content: ChatMessageContent?
     public var reasoning_content: String?
     public var tool_calls: [ChatToolCall]?
     public var tool_call_id: String?
 
     public init(
+        role: String?,
+        content: String,
+        reasoning_content: String? = nil,
+        tool_calls: [ChatToolCall]? = nil,
+        tool_call_id: String? = nil
+    ) {
+        self.role = role
+        self.content = .text(content)
+        self.reasoning_content = reasoning_content
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+
+    public init(
         role: String? = nil,
-        content: String? = nil,
+        content: ChatMessageContent?,
         reasoning_content: String? = nil,
         tool_calls: [ChatToolCall]? = nil,
         tool_call_id: String? = nil
@@ -60,6 +74,88 @@ public struct ChatMessage: Codable, Sendable, Equatable {
         self.reasoning_content = reasoning_content
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
+    }
+}
+
+public enum ChatMessageContent: Codable, Sendable, Equatable {
+    case text(String)
+    case parts([ChatMessageContentPart])
+
+    public var plainText: String {
+        switch self {
+        case .text(let text):
+            return text
+        case .parts(let parts):
+            return parts.compactMap { part in
+                if case .text(let text) = part {
+                    return text
+                }
+                return nil
+            }.joined(separator: "\n\n")
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let text = try? container.decode(String.self) {
+            self = .text(text)
+            return
+        }
+        self = .parts(try container.decode([ChatMessageContentPart].self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .text(let text):
+            try container.encode(text)
+        case .parts(let parts):
+            try container.encode(parts)
+        }
+    }
+}
+
+public enum ChatMessageContentPart: Codable, Sendable, Equatable {
+    case text(String)
+    case imageURL(String)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case imageURL = "image_url"
+    }
+
+    private enum ImageURLKeys: String, CodingKey {
+        case url
+    }
+
+    private enum Kind: String, Codable {
+        case text
+        case imageURL = "image_url"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .type) {
+        case .text:
+            self = .text(try container.decode(String.self, forKey: .text))
+        case .imageURL:
+            let imageContainer = try container.nestedContainer(keyedBy: ImageURLKeys.self, forKey: .imageURL)
+            self = .imageURL(try imageContainer.decode(String.self, forKey: .url))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode(Kind.text, forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .imageURL(let url):
+            try container.encode(Kind.imageURL, forKey: .type)
+            var imageContainer = container.nestedContainer(keyedBy: ImageURLKeys.self, forKey: .imageURL)
+            try imageContainer.encode(url, forKey: .url)
+        }
     }
 }
 

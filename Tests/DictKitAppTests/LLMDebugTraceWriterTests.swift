@@ -14,7 +14,7 @@ final class LLMDebugTraceWriterTests: XCTestCase {
                 ChatMessage(role: "user", content: "User prompt"),
             ],
             temperature: 0.2,
-            max_tokens: 512,
+            max_completion_tokens: 512,
             response_format: ChatResponseFormat(type: "json_object")
         )
 
@@ -39,7 +39,7 @@ final class LLMDebugTraceWriterTests: XCTestCase {
         XCTAssertEqual(events[0].event, "request_started")
         XCTAssertEqual(events[0].request?.model, "/test.gguf")
         XCTAssertEqual(events[1].event, "request_finished")
-        XCTAssertEqual(events[1].response?.choices.first?.message.content, "{\"ok\":true}")
+        XCTAssertEqual(events[1].response?.choices.first?.message.content?.plainText, "{\"ok\":true}")
         XCTAssertEqual(events[1].response?.usage?.completion_tokens, 42)
         XCTAssertEqual(events[0].id, events[1].id)
     }
@@ -53,7 +53,7 @@ final class LLMDebugTraceWriterTests: XCTestCase {
                 ChatMessage(role: "user", content: "Stream user prompt"),
             ],
             temperature: 0.7,
-            max_tokens: 256,
+            max_completion_tokens: 256,
             stream: true
         )
 

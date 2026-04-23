@@ -2,6 +2,7 @@ import AnkiMateLLM
 import DictKitAnkiExport
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum AgentComposerInputCommand: Equatable {
     case submit
@@ -15,6 +16,12 @@ enum AgentComposerPlaceholderVisibility {
     }
 }
 
+enum AgentComposerLayout {
+    static let textContainerInset = NSSize(width: 8, height: 7)
+    static let placeholderHorizontalPadding = textContainerInset.width
+    static let placeholderVerticalPadding = textContainerInset.height
+}
+
 enum AgentComposerTextSync {
     static func shouldApplyBoundText(
         currentText: String,
@@ -22,6 +29,79 @@ enum AgentComposerTextSync {
         hasMarkedText: Bool
     ) -> Bool {
         !hasMarkedText && currentText != boundText
+    }
+}
+
+enum AgentComposerPasteboardImageReader {
+    static func pngData(from pasteboard: NSPasteboard = .general) -> Data? {
+        if let pngData = pasteboard.data(forType: .png) {
+            return pngData
+        }
+
+        if let tiffData = pasteboard.data(forType: .tiff),
+           let image = NSImage(data: tiffData),
+           let pngData = image.pngData() {
+            return pngData
+        }
+
+        for url in imageFileURLs(from: pasteboard) {
+            if let pngData = pngData(fromImageFileAt: url) {
+                return pngData
+            }
+        }
+
+        if let image = NSImage(pasteboard: pasteboard),
+           let pngData = image.pngData() {
+            return pngData
+        }
+
+        return nil
+    }
+
+    private static func imageFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let fileURLs = (pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL]) ?? []
+
+        if !fileURLs.isEmpty {
+            return fileURLs
+        }
+
+        let legacyFilenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        if let paths = pasteboard.propertyList(forType: legacyFilenamesType) as? [String] {
+            return paths.map(URL.init(fileURLWithPath:))
+        }
+
+        guard let fileURLString = pasteboard.string(forType: .fileURL),
+              let url = URL(string: fileURLString),
+              url.isFileURL else {
+            return []
+        }
+        return [url]
+    }
+
+    private static func pngData(fromImageFileAt url: URL) -> Data? {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType)
+            ?? UTType(filenameExtension: url.pathExtension)
+        guard type?.conforms(to: .image) == true else {
+            return nil
+        }
+        if type?.conforms(to: .png) == true,
+           let data = try? Data(contentsOf: url),
+           NSImage(data: data) != nil {
+            return data
+        }
+
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        return image.pngData()
     }
 }
 
@@ -52,10 +132,12 @@ struct AgentComposerInput: NSViewRepresentable {
     @Binding var text: String
     @Binding var hasMarkedText: Bool
     let isDisabled: Bool
+    let canSubmit: Bool
+    let onPasteImage: () -> Bool
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, hasMarkedText: $hasMarkedText, onSubmit: onSubmit)
+        Coordinator(text: $text, hasMarkedText: $hasMarkedText, canSubmit: canSubmit, onSubmit: onSubmit)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -89,7 +171,8 @@ struct AgentComposerInput: NSViewRepresentable {
         textView.isAutomaticDataDetectionEnabled = false
         textView.isSelectable = true
         textView.font = .systemFont(ofSize: NSFont.systemFontSize)
-        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.textContainerInset = AgentComposerLayout.textContainerInset
+        textView.textContainer?.lineFragmentPadding = 0
         textView.backgroundColor = .clear
         textView.drawsBackground = false
         textView.minSize = .zero
@@ -121,8 +204,10 @@ struct AgentComposerInput: NSViewRepresentable {
         textView.markedTextHandler = { hasMarkedText in
             context.coordinator.updateMarkedText(hasMarkedText)
         }
+        textView.pasteImageHandler = onPasteImage
         textView.string = text
         textView.isEditable = !isDisabled
+        context.coordinator.canSubmit = canSubmit
         context.coordinator.updateMarkedText(textView.hasMarkedText())
         scrollView.documentView = textView
         return scrollView
@@ -139,21 +224,26 @@ struct AgentComposerInput: NSViewRepresentable {
             textView.string = text
         }
         textView.isEditable = !isDisabled
+        textView.pasteImageHandler = onPasteImage
+        context.coordinator.canSubmit = canSubmit
         context.coordinator.updateMarkedText(hasMarkedText)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
         @Binding private var hasMarkedText: Bool
+        var canSubmit: Bool
         private let onSubmit: () -> Void
 
         init(
             text: Binding<String>,
             hasMarkedText: Binding<Bool>,
+            canSubmit: Bool,
             onSubmit: @escaping () -> Void
         ) {
             _text = text
             _hasMarkedText = hasMarkedText
+            self.canSubmit = canSubmit
             self.onSubmit = onSubmit
         }
 
@@ -169,7 +259,7 @@ struct AgentComposerInput: NSViewRepresentable {
         }
 
         func submitIfPossible() {
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard canSubmit else { return }
             onSubmit()
         }
     }
@@ -178,6 +268,7 @@ struct AgentComposerInput: NSViewRepresentable {
 final class AgentComposerTextView: NSTextView {
     var commandHandler: ((Selector, NSEvent?, Bool) -> Bool)?
     var markedTextHandler: ((Bool) -> Void)?
+    var pasteImageHandler: (() -> Bool)?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -186,6 +277,23 @@ final class AgentComposerTextView: NSTextView {
             return
         }
         super.doCommand(by: selector)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v",
+           pasteImageHandler?() == true {
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func paste(_ sender: Any?) {
+        if pasteImageHandler?() == true {
+            return
+        }
+        super.paste(sender)
     }
 
     override func setMarkedText(
@@ -203,9 +311,27 @@ final class AgentComposerTextView: NSTextView {
     }
 }
 
+private extension NSImage {
+    func pngData() -> Data? {
+        var rect = NSRect(origin: .zero, size: size)
+        if let cgImage = cgImage(forProposedRect: &rect, context: nil, hints: nil) {
+            let bitmap = NSBitmapImageRep(cgImage: cgImage)
+            return bitmap.representation(using: .png, properties: [:])
+        }
+
+        guard let tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
 struct AgentChatView: View {
     @ObservedObject var item: WordItem
     @ObservedObject var session: AgentSession
+    let attachmentStore: AgentAttachmentFileStore
+    let canAttachImages: Bool
     @Binding var previewOverrideArtifacts: AIArtifacts?
 
     @State private var composerText = ""
@@ -220,6 +346,7 @@ struct AgentChatView: View {
     @State private var thinkingStartTime: Date?
     @State private var thinkingElapsedRefresh = Date()
     @State private var expandedThinkingMessages: Set<UUID> = []
+    @State private var draftAttachments: [AgentAttachment] = []
 
     private var reloadTaskKey: String {
         "\(item.id.uuidString)-\(ObjectIdentifier(session))"
@@ -349,10 +476,12 @@ struct AgentChatView: View {
         switch row.message.content {
         case .text(let text, let reasoning):
             if row.message.role == .user {
-                userBubble(message: row.message, text: text)
+                userBubble(message: row.message, text: text, attachments: [])
             } else {
                 assistantBubble(message: row.message, text: text, reasoning: reasoning)
             }
+        case .userInput(let text, let attachments):
+            userBubble(message: row.message, text: text, attachments: attachments)
         case .error(let text, _):
             assistantBubble(message: row.message, text: text, tint: .red.opacity(0.12))
         case .layoutRequestDeclined(_, _):
@@ -376,7 +505,7 @@ struct AgentChatView: View {
 
     // MARK: - User Bubble
 
-    private func userBubble(message: AgentChatMessage, text: String) -> some View {
+    private func userBubble(message: AgentChatMessage, text: String, attachments: [AgentAttachment]) -> some View {
         let isLastUser = message.id == lastUserMessageID
 
         return VStack(alignment: .trailing, spacing: 4) {
@@ -387,14 +516,19 @@ struct AgentChatView: View {
             if editingMessageID == message.id {
                 editField(message: message)
             } else {
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentColor.opacity(0.12))
-                    )
+                VStack(alignment: .leading, spacing: 8) {
+                    if !text.isEmpty {
+                        Text(text)
+                            .font(.body)
+                            .textSelection(.enabled)
+                    }
+                    attachmentList(attachments, allowRemoval: false)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.accentColor.opacity(0.12))
+                )
             }
 
             // Action buttons
@@ -412,6 +546,61 @@ struct AgentChatView: View {
     }
 
     // MARK: - Assistant Bubble
+
+    @ViewBuilder
+    private func attachmentList(_ attachments: [AgentAttachment], allowRemoval: Bool) -> some View {
+        if !attachments.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(attachments) { attachment in
+                    HStack(alignment: .top, spacing: 8) {
+                        attachmentThumbnail(attachment)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(attachment.fileName)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                            if let preview = attachment.extractedTextPreview, !preview.isEmpty {
+                                Text(preview)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            } else {
+                                Text("\(attachment.mimeType) · \(Self.formattedByteSize(attachment.byteSize))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if allowRemoval {
+                            Button {
+                                removeDraftAttachment(attachment)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentThumbnail(_ attachment: AgentAttachment) -> some View {
+        if attachment.kind == .image,
+           let image = NSImage(contentsOf: attachmentStore.url(for: attachment)) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+        }
+    }
 
     private func assistantBubble(
         message: AgentChatMessage,
@@ -726,10 +915,13 @@ struct AgentChatView: View {
     // MARK: - Edit Field
 
     private func editField(message: AgentChatMessage) -> some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        let attachments = attachments(for: message.content)
+        return VStack(alignment: .trailing, spacing: 6) {
             TextField("Edit message…", text: $editText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...6)
+
+            attachmentList(attachments, allowRemoval: false)
 
             HStack(spacing: 6) {
                 Button("Cancel") {
@@ -744,7 +936,7 @@ struct AgentChatView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty)
             }
         }
         .padding(8)
@@ -765,7 +957,7 @@ struct AgentChatView: View {
 
     private func isVisibleContent(_ content: MessageContent) -> Bool {
         switch content {
-        case .text, .error, .layoutRequestDeclined, .summary:
+        case .text, .userInput, .error, .layoutRequestDeclined, .summary:
             return true
         case .toolCall, .toolResult, .actionProposal:
             return false
@@ -776,7 +968,8 @@ struct AgentChatView: View {
 
     private func submitEdit() {
         let newText = editText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !newText.isEmpty else { return }
+        guard let editingMessage = session.messages.first(where: { $0.id == editingMessageID }) else { return }
+        guard !newText.isEmpty || !attachments(for: editingMessage.content).isEmpty else { return }
         editingMessageID = nil
         editText = ""
         errorMessage = nil
@@ -806,12 +999,18 @@ struct AgentChatView: View {
 
     private func sendMessage() {
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !draftAttachments.isEmpty else { return }
+        guard !hasUnsupportedDraftImages else {
+            errorMessage = "Image attachments require a fully downloaded vision model."
+            return
+        }
+        let attachments = draftAttachments
         composerText = ""
+        draftAttachments = []
         errorMessage = nil
         Task {
             do {
-                try await session.sendUserMessage(text)
+                try await session.sendUserMessage(text, attachments: attachments)
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
@@ -930,7 +1129,11 @@ struct AgentChatView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            if !draftAttachments.isEmpty {
+                attachmentList(draftAttachments, allowRemoval: true)
+            }
+
             ZStack(alignment: .topLeading) {
                 if AgentComposerPlaceholderVisibility.shouldShow(
                     text: composerText,
@@ -938,8 +1141,8 @@ struct AgentChatView: View {
                 ) {
                     Text("Ask about the card or request a content edit…")
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 11)
+                        .padding(.horizontal, AgentComposerLayout.placeholderHorizontalPadding)
+                        .padding(.vertical, AgentComposerLayout.placeholderVerticalPadding)
                         .allowsHitTesting(false)
                 }
 
@@ -947,22 +1150,61 @@ struct AgentChatView: View {
                     text: $composerText,
                     hasMarkedText: $composerHasMarkedText,
                     isDisabled: session.isGenerating,
+                    canSubmit: canSendDraft,
+                    onPasteImage: pasteImageAttachment,
                     onSubmit: sendMessage
                 )
             }
-            .frame(minHeight: 40, maxHeight: 96)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(NSColor.separatorColor))
-            )
+            .frame(height: composerInputHeight)
 
-            Button("Send") {
-                sendMessage()
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    addAttachments()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .regular))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(session.isGenerating)
+                .help(canAttachImages ? "Attach images, Markdown, or text files" : "Attach Markdown or text files")
+
+                if hasUnsupportedDraftImages {
+                    Label("Image attachments require a fully downloaded vision model", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if !canAttachImages {
+                    Text("Text files only")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(canSendDraft ? Color.white : Color.secondary)
+                        .background(Circle().fill(canSendDraft ? Color.primary : Color.secondary.opacity(0.14)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSendDraft)
+                .help("Send")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(session.isGenerating || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(NSColor.textBackgroundColor).opacity(0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color(NSColor.separatorColor).opacity(0.8), lineWidth: 1)
+        )
     }
 
     // MARK: - Rendering Helpers
@@ -971,6 +1213,9 @@ struct AgentChatView: View {
         switch content {
         case .text(let text, _):
             return text
+        case .userInput(let text, let attachments):
+            let names = attachments.map(\.fileName).joined(separator: ", ")
+            return names.isEmpty ? text : "\(text)\nAttachments: \(names)"
         case .toolCall(let name, let argsJSON):
             return "\(name)\n\(argsJSON)"
         case .toolResult(let name, let resultJSON, let truncated):
@@ -984,6 +1229,113 @@ struct AgentChatView: View {
         case .layoutRequestDeclined(let userText, let detectedKind):
             return "Declined \(detectedKind.rawValue) request: \(userText)"
         }
+    }
+
+    private var hasUnsupportedDraftImages: Bool {
+        !canAttachImages && draftAttachments.contains { $0.kind == .image }
+    }
+
+    private func attachments(for content: MessageContent) -> [AgentAttachment] {
+        guard case .userInput(_, let attachments) = content else { return [] }
+        return attachments
+    }
+
+    private var canSendDraft: Bool {
+        !session.isGenerating &&
+            !hasUnsupportedDraftImages &&
+            (!composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty)
+    }
+
+    private var composerInputHeight: CGFloat {
+        let explicitLines = max(1, composerText.split(separator: "\n", omittingEmptySubsequences: false).count)
+        let clampedLines = min(explicitLines, 5)
+        return 18 + CGFloat(clampedLines * 18)
+    }
+
+    private func addAttachments() {
+        guard let sessionID = prepareSessionForAttachments() else { return }
+
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = allowedAttachmentTypes
+
+        guard panel.runModal() == .OK else { return }
+
+        do {
+            let imported = try attachmentStore.importFiles(
+                panel.urls,
+                sessionID: sessionID,
+                existingCount: draftAttachments.count
+            )
+            draftAttachments.append(contentsOf: imported)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private var allowedAttachmentTypes: [UTType] {
+        var types: [UTType] = [
+            .plainText,
+            UTType(filenameExtension: "txt")!,
+            UTType(filenameExtension: "md")!,
+            UTType(filenameExtension: "markdown")!,
+        ]
+        if canAttachImages {
+            types.append(.image)
+        }
+        return types
+    }
+
+    private func removeDraftAttachment(_ attachment: AgentAttachment) {
+        draftAttachments.removeAll { $0.id == attachment.id }
+        try? attachmentStore.delete([attachment])
+    }
+
+    private func pasteImageAttachment() -> Bool {
+        guard let pngData = AgentComposerPasteboardImageReader.pngData() else {
+            return false
+        }
+
+        guard canAttachImages else {
+            errorMessage = "Image attachments require a fully downloaded vision model."
+            return true
+        }
+
+        guard !session.isGenerating, let sessionID = prepareSessionForAttachments() else {
+            return true
+        }
+
+        do {
+            let attachment = try attachmentStore.importPastedImage(
+                pngData,
+                sessionID: sessionID,
+                existingCount: draftAttachments.count
+            )
+            draftAttachments.append(attachment)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return true
+    }
+
+    private func prepareSessionForAttachments() -> UUID? {
+        if session.sessionRecord == nil {
+            do {
+                try session.reload()
+            } catch {
+                errorMessage = error.localizedDescription
+                return nil
+            }
+        }
+        guard let sessionID = session.sessionRecord?.id else {
+            errorMessage = "Chat session is not ready."
+            return nil
+        }
+        return sessionID
     }
 
     private func roleLabel(_ role: AgentChatMessage.Role) -> String {
@@ -1028,5 +1380,9 @@ struct AgentChatView: View {
         case .dismissed:
             return .secondary
         }
+    }
+
+    private static func formattedByteSize(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }

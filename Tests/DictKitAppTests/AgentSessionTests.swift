@@ -65,6 +65,63 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertTrue(generator.calls[0].contains { $0.content.contains("Current card snapshot") })
     }
 
+    func testSendUserMessageWithAttachmentsPassesImagesAndTextFilesToGenerator() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let attachments = [
+            AgentAttachment(
+                kind: .image,
+                mimeType: "image/png",
+                fileName: "card.png",
+                relativePath: "agent/session/card.png",
+                byteSize: 3,
+                width: 20,
+                height: 10
+            ),
+            AgentAttachment(
+                kind: .textFile,
+                mimeType: "text/markdown",
+                fileName: "notes.md",
+                relativePath: "agent/session/notes.md",
+                byteSize: 12,
+                extractedTextPreview: "# Notes",
+                characterCount: 12
+            ),
+        ]
+        let attachmentStore = InMemoryAgentAttachmentStore(
+            dataByRelativePath: [
+                "agent/session/card.png": Data([0x01, 0x02, 0x03]),
+                "agent/session/notes.md": Data("# Notes\nhello".utf8),
+            ]
+        )
+        let generator = RecordingGenerator(
+            result: GenerateResult(text: "看到了图片和笔记。", tokensUsed: 42, durationMs: 12)
+        )
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            attachmentStore: attachmentStore,
+            generator: generator
+        )
+
+        try sut.reload()
+        try await sut.sendUserMessage("结合附件解释一下", attachments: attachments)
+
+        guard case .userInput(let text, let persistedAttachments) = sut.messages[0].content else {
+            return XCTFail("Expected user input message")
+        }
+        XCTAssertEqual(text, "结合附件解释一下")
+        XCTAssertEqual(persistedAttachments.map(\.fileName), ["card.png", "notes.md"])
+        XCTAssertTrue(generator.calls[0].contains { message in
+            message.content.parts.contains(.imageURL("data:image/png;base64,AQID"))
+        })
+        XCTAssertTrue(generator.calls[0].contains { message in
+            message.content.plainText.contains("Attached file: notes.md") &&
+                message.content.plainText.contains("# Notes\nhello")
+        })
+    }
+
     func testSendUserMessageRollsBackMessagesAndRethrowsWhenGenerationFails() async throws {
         let persistence = InMemoryAgentPersistence()
         let wordID = UUID()
@@ -86,6 +143,42 @@ final class AgentSessionTests: XCTestCase {
 
         // The user message should have been rolled back — no messages remain.
         XCTAssertEqual(sut.messages.count, 0)
+    }
+
+    func testSendUserMessageWithAttachmentsDeletesImportedFilesWhenGenerationFails() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let attachment = AgentAttachment(
+            kind: .textFile,
+            mimeType: "text/plain",
+            fileName: "note.txt",
+            relativePath: "agent/session/note.txt",
+            byteSize: 5,
+            extractedTextPreview: "hello",
+            characterCount: 5
+        )
+        let attachmentStore = InMemoryAgentAttachmentStore(
+            dataByRelativePath: ["agent/session/note.txt": Data("hello".utf8)]
+        )
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            attachmentStore: attachmentStore,
+            generator: RecordingGenerator(error: Failure.stub)
+        )
+
+        try sut.reload()
+
+        do {
+            try await sut.sendUserMessage("read this", attachments: [attachment])
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertTrue(error is Failure)
+        }
+
+        XCTAssertEqual(sut.messages.count, 0)
+        XCTAssertEqual(attachmentStore.deletedAttachments, [attachment])
     }
 
     func testSendUserMessageRethrowsRollbackDeleteFailure() async throws {
@@ -323,8 +416,56 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(proposal.decision, .pending)
     }
 
+    func testSendUserMessagePersistsNormalizedProposalToolCall() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let generator = RecordingGenerator(
+            result: GenerateResult(
+                text: "",
+                tokensUsed: 18,
+                durationMs: 6,
+                toolCalls: [
+                    LLMToolCall(
+                        id: "call-add",
+                        name: "propose_example",
+                        arguments: .object([
+                            "operation": .string("add"),
+                            "targetID": .string("corpus"),
+                            "diffSummary": .string("Add an academic example"),
+                            "payload": .object([
+                                "text": .string("The corpus reveals regional usage patterns.")
+                            ])
+                        ])
+                    )
+                ]
+            )
+        )
+        let sut = AgentSession(
+            wordID: UUID(),
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: generator
+        )
+
+        try sut.reload()
+        try await sut.sendUserMessage("添加这个例句")
+
+        XCTAssertEqual(sut.messages.count, 3)
+        guard case .toolCall(let toolName, let argsJSON) = sut.messages[1].content else {
+            return XCTFail("Expected normalized tool call trace")
+        }
+        XCTAssertEqual(toolName, "propose_example")
+        XCTAssertTrue(argsJSON.contains(#""operation":"add""#))
+        XCTAssertFalse(argsJSON.contains("targetID"))
+
+        guard case .actionProposal(let proposal) = sut.messages[2].content else {
+            return XCTFail("Expected proposal message")
+        }
+        XCTAssertEqual(proposal.operation, .add)
+    }
+
     func testClearChatKeepsSessionButRemovesMessages() throws {
         let persistence = InMemoryAgentPersistence()
+        let attachmentStore = InMemoryAgentAttachmentStore(dataByRelativePath: [:])
         let wordID = UUID()
         let sessionRecord = try persistence.upsertSession(for: wordID)
         _ = try persistence.addMessage(sessionID: sessionRecord.id, role: .user, content: .text("hello"))
@@ -333,6 +474,7 @@ final class AgentSessionTests: XCTestCase {
             wordID: wordID,
             persistence: persistence,
             snapshotProvider: StaticSnapshotProvider(),
+            attachmentStore: attachmentStore,
             generator: RecordingGenerator(result: .init(text: "unused", tokensUsed: 1, durationMs: 1))
         )
         try sut.reload()
@@ -341,6 +483,7 @@ final class AgentSessionTests: XCTestCase {
 
         XCTAssertNotNil(sut.sessionRecord)
         XCTAssertTrue(sut.messages.isEmpty)
+        XCTAssertEqual(attachmentStore.deletedSessionIDs, [sessionRecord.id])
     }
 
     func testPreviewOverrideRoundTrips() throws {
@@ -401,6 +544,10 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(
             sut.previewOverrideArtifacts?.acceptedExampleSentences,
             ["I ate an apple.", "Apple stock fell sharply after earnings."]
+        )
+        XCTAssertEqual(
+            sut.previewOverrideArtifacts?.exampleSentences.accepted?[1].translation,
+            "苹果公司财报后股价大跌。"
         )
     }
 
@@ -474,6 +621,10 @@ final class AgentSessionTests: XCTestCase {
             try artifactsManager.loadArtifacts(for: wordID).acceptedExampleSentences,
             ["I ate an apple.", "Apple stock fell sharply after earnings."]
         )
+        XCTAssertEqual(
+            try artifactsManager.loadArtifacts(for: wordID).exampleSentences.accepted?[1].translation,
+            "苹果公司财报后股价大跌。"
+        )
         XCTAssertTrue(try artifactsManager.loadArtifacts(for: wordID).suggestedExampleSentences.isEmpty)
         guard case .actionProposal(let applied) = sut.messages[0].content else {
             return XCTFail("Expected proposal message")
@@ -546,6 +697,102 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(sut.messages.map(\.role), [.user, .assistant])
         XCTAssertEqual(extractText(from: sut.messages[0].content), "原始问题")
         XCTAssertEqual(extractText(from: sut.messages[1].content), "原始回答")
+    }
+
+    func testEditLastUserMessagePreservesAttachmentsOnSuccess() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let session = try persistence.upsertSession(for: wordID)
+        let attachment = AgentAttachment(
+            kind: .image,
+            mimeType: "image/png",
+            fileName: "card.png",
+            relativePath: "agent/session/card.png",
+            byteSize: 3,
+            width: 20,
+            height: 10
+        )
+        let attachmentStore = InMemoryAgentAttachmentStore(
+            dataByRelativePath: ["agent/session/card.png": Data([0x01, 0x02, 0x03])]
+        )
+        _ = try persistence.addMessage(
+            sessionID: session.id,
+            role: .user,
+            content: .userInput(text: "原始问题", attachments: [attachment])
+        )
+        _ = try persistence.addMessage(sessionID: session.id, role: .assistant, content: .text("原始回答"))
+        let generator = RecordingGenerator(
+            result: GenerateResult(text: "编辑后回答", tokensUsed: 4, durationMs: 1)
+        )
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            attachmentStore: attachmentStore,
+            generator: generator
+        )
+
+        try sut.reload()
+        try await sut.editLastUserMessage("编辑后的问题")
+
+        XCTAssertEqual(sut.messages.count, 2)
+        guard case .userInput(let text, let attachments) = sut.messages[0].content else {
+            return XCTFail("Expected edited user input to keep attachments")
+        }
+        XCTAssertEqual(text, "编辑后的问题")
+        XCTAssertEqual(attachments, [attachment])
+        XCTAssertTrue(generator.calls[0].contains { message in
+            message.content.parts.contains(.imageURL("data:image/png;base64,AQID"))
+        })
+        XCTAssertTrue(attachmentStore.deletedAttachments.isEmpty)
+    }
+
+    func testEditLastUserMessageDoesNotDeleteExistingAttachmentsWhenResendFails() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let wordID = UUID()
+        let session = try persistence.upsertSession(for: wordID)
+        let attachment = AgentAttachment(
+            kind: .image,
+            mimeType: "image/png",
+            fileName: "card.png",
+            relativePath: "agent/session/card.png",
+            byteSize: 3,
+            width: 20,
+            height: 10
+        )
+        let attachmentStore = InMemoryAgentAttachmentStore(
+            dataByRelativePath: ["agent/session/card.png": Data([0x01, 0x02, 0x03])]
+        )
+        _ = try persistence.addMessage(
+            sessionID: session.id,
+            role: .user,
+            content: .userInput(text: "原始问题", attachments: [attachment])
+        )
+        _ = try persistence.addMessage(sessionID: session.id, role: .assistant, content: .text("原始回答"))
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            attachmentStore: attachmentStore,
+            generator: RecordingGenerator(error: Failure.stub)
+        )
+
+        try sut.reload()
+
+        do {
+            try await sut.editLastUserMessage("编辑后的问题")
+            XCTFail("Expected error to be thrown")
+        } catch {
+            XCTAssertTrue(error is Failure)
+        }
+
+        XCTAssertEqual(sut.messages.count, 2)
+        guard case .userInput(let text, let attachments) = sut.messages[0].content else {
+            return XCTFail("Expected original user input")
+        }
+        XCTAssertEqual(text, "原始问题")
+        XCTAssertEqual(attachments, [attachment])
+        XCTAssertTrue(attachmentStore.deletedAttachments.isEmpty)
     }
 
     func testRegenerateLastResponsePreservesOriginalAssistantMessageWhenRetryFails() async throws {
@@ -746,6 +993,31 @@ private final class InMemoryAgentPersistence: AgentSessionPersisting {
             return updated
         }
         throw Failure.stub
+    }
+}
+
+private final class InMemoryAgentAttachmentStore: AgentAttachmentStoring, @unchecked Sendable {
+    var dataByRelativePath: [String: Data]
+    private(set) var deletedAttachments: [AgentAttachment] = []
+    private(set) var deletedSessionIDs: [UUID] = []
+
+    init(dataByRelativePath: [String: Data]) {
+        self.dataByRelativePath = dataByRelativePath
+    }
+
+    func data(for attachment: AgentAttachment) throws -> Data {
+        guard let data = dataByRelativePath[attachment.relativePath] else {
+            throw Failure.stub
+        }
+        return data
+    }
+
+    func delete(_ attachments: [AgentAttachment]) throws {
+        deletedAttachments.append(contentsOf: attachments)
+    }
+
+    func deleteAllAttachments(for sessionID: UUID) throws {
+        deletedSessionIDs.append(sessionID)
     }
 }
 

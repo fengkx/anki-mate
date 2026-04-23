@@ -144,6 +144,116 @@ final class AgentToolRegistryTests: XCTestCase {
         XCTAssertTrue(proposal.payloadJSON.contains(#""text":"Apple stock fell sharply after earnings.""#))
     }
 
+    func testExecuteProposeExampleDerivesSummaryWhenModelOmitsDiffSummary() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        let content = try registry.execute(
+            LLMToolCall(
+                id: "call-lemmatize-example",
+                name: "propose_example",
+                arguments: .object([
+                    "operation": .string("add"),
+                    "rationale": .string("为学习者提供一个关于词形还原在技术或学习场景中应用的例句，帮助理解该词的实际应用。"),
+                    "payload": .object([
+                        "note": .string("这个例句侧重于说明使用 lemmatize 的目的：将一个词还原到其基本形式，这在词汇分析和学习中非常常见。"),
+                        "text": .string("The software automatically lemmatizes complex words to help users understand the root form."),
+                        "translation": .string("该软件会自动对复杂的词语进行词形还原，以帮助用户理解其词根形式。")
+                    ])
+                ])
+            ),
+            for: UUID()
+        )
+
+        guard case .actionProposal(let proposal) = content else {
+            return XCTFail("Expected proposal content")
+        }
+        XCTAssertEqual(proposal.kind, .example)
+        XCTAssertEqual(proposal.operation, .add)
+        XCTAssertEqual(
+            proposal.diffSummary,
+            "Add example: The software automatically lemmatizes complex words to help users understand the root form."
+        )
+        XCTAssertEqual(
+            proposal.rationale,
+            "为学习者提供一个关于词形还原在技术或学习场景中应用的例句，帮助理解该词的实际应用。"
+        )
+        XCTAssertTrue(proposal.payloadJSON.contains(#""note":"这个例句侧重于说明使用 lemmatize 的目的"#))
+    }
+
+    func testNormalizeProposalAddRemovesTargetID() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        let normalized = try registry.normalizedToolCall(
+            LLMToolCall(
+                id: "call-add",
+                name: "propose_example",
+                arguments: .object([
+                    "operation": .string("add"),
+                    "targetID": .string("corpus"),
+                    "diffSummary": .string("Add an academic example"),
+                    "payload": .object([
+                        "text": .string("The corpus reveals regional usage patterns.")
+                    ])
+                ])
+            ),
+            for: UUID()
+        )
+
+        guard case .object(let arguments) = normalized.arguments else {
+            return XCTFail("Expected normalized arguments object")
+        }
+        XCTAssertNil(arguments["targetID"])
+
+        let content = try registry.execute(normalized, for: UUID())
+        guard case .actionProposal(let proposal) = content else {
+            return XCTFail("Expected proposal content")
+        }
+        XCTAssertEqual(proposal.operation, ProposalRecord.Operation.add)
+    }
+
+    func testNormalizeProposalReplaceRejectsMissingOrInvalidTargetID() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        XCTAssertThrowsError(
+            try registry.normalizedToolCall(
+                LLMToolCall(
+                    id: "call-replace-missing",
+                    name: "propose_example",
+                    arguments: .object([
+                        "operation": .string("replace"),
+                        "diffSummary": .string("Replace an example"),
+                        "payload": .object([
+                            "text": .string("The corpus reveals regional usage patterns.")
+                        ])
+                    ])
+                ),
+                for: UUID()
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Invalid arguments for agent tool: propose_example")
+        }
+
+        XCTAssertThrowsError(
+            try registry.normalizedToolCall(
+                LLMToolCall(
+                    id: "call-replace-invalid",
+                    name: "propose_example",
+                    arguments: .object([
+                        "operation": .string("replace"),
+                        "targetID": .string("corpus"),
+                        "diffSummary": .string("Replace an example"),
+                        "payload": .object([
+                            "text": .string("The corpus reveals regional usage patterns.")
+                        ])
+                    ])
+                ),
+                for: UUID()
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Invalid arguments for agent tool: propose_example")
+        }
+    }
+
     func testExecuteProposePitfallRejectsMissingRequiredText() {
         let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
 

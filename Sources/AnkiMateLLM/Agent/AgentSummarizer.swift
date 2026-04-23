@@ -81,6 +81,9 @@ public struct AgentSummarizer {
         switch content {
         case .text(let text, _):
             return text
+        case .userInput(let text, let attachments):
+            let names = attachments.map(\.fileName).joined(separator: ", ")
+            return names.isEmpty ? text : "\(text)\n[Attachments: \(names)]"
         case .toolCall(let name, let argsJSON):
             return "[Tool call] \(name) \(argsJSON)"
         case .toolResult(let name, let resultJSON, let truncated):

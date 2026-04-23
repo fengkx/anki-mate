@@ -52,6 +52,12 @@ public protocol AgentCardSnapshotProviding {
     func snapshot(for wordID: UUID) throws -> CardRenderSnapshot
 }
 
+public protocol AgentAttachmentStoring: AnyObject, Sendable {
+    func data(for attachment: AgentAttachment) throws -> Data
+    func delete(_ attachments: [AgentAttachment]) throws
+    func deleteAllAttachments(for sessionID: UUID) throws
+}
+
 public protocol AgentGenerating {
     func generate(
         messages: [LLMMessage],
@@ -94,6 +100,7 @@ public final class AgentSession: ObservableObject {
 
     private let persistence: AgentSessionPersisting
     private let snapshotProvider: AgentCardSnapshotProviding
+    private let attachmentStore: AgentAttachmentStoring?
     private let artifactsManager: AgentArtifactsManaging?
     private let generator: AgentGenerating
     private let promptBuilder: AgentPromptBuilder
@@ -106,6 +113,7 @@ public final class AgentSession: ObservableObject {
         wordID: UUID,
         persistence: AgentSessionPersisting,
         snapshotProvider: AgentCardSnapshotProviding,
+        attachmentStore: AgentAttachmentStoring? = nil,
         artifactsManager: AgentArtifactsManaging? = nil,
         generator: AgentGenerating,
         preferences: AgentSessionPreferences = .init(),
@@ -121,6 +129,7 @@ public final class AgentSession: ObservableObject {
         self.wordID = wordID
         self.persistence = persistence
         self.snapshotProvider = snapshotProvider
+        self.attachmentStore = attachmentStore
         self.artifactsManager = artifactsManager
         self.generator = generator
         self.preferences = preferences
@@ -138,9 +147,17 @@ public final class AgentSession: ObservableObject {
         refreshDerivedState()
     }
 
-    public func sendUserMessage(_ text: String) async throws {
+    public func sendUserMessage(_ text: String, attachments: [AgentAttachment] = []) async throws {
+        try await sendUserMessage(text, attachments: attachments, deleteAttachmentsOnFailure: true)
+    }
+
+    private func sendUserMessage(
+        _ text: String,
+        attachments: [AgentAttachment],
+        deleteAttachmentsOnFailure: Bool
+    ) async throws {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         if sessionRecord == nil {
             try reload()
         }
@@ -154,7 +171,7 @@ public final class AgentSession: ObservableObject {
         let userMessage = try persistence.addMessage(
             sessionID: sessionRecord.id,
             role: .user,
-            content: .text(trimmed)
+            content: attachments.isEmpty ? .text(trimmed) : .userInput(text: trimmed, attachments: attachments)
         )
         messages.append(userMessage)
         refreshDerivedState()
@@ -187,6 +204,9 @@ public final class AgentSession: ObservableObject {
             // Roll back all messages added during this turn (including the user message)
             // so the user can simply re-send.
             try rollbackMessages(from: messageCountBeforeTurn)
+            if deleteAttachmentsOnFailure {
+                try? attachmentStore?.delete(attachments)
+            }
             throw error
         }
     }
@@ -198,16 +218,16 @@ public final class AgentSession: ObservableObject {
             throw AgentSessionError.sessionUnavailable
         }
 
-        // Find the last user message
         guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }) else {
             return
         }
+        let attachments = userAttachments(in: messages[lastUserIndex].content)
 
         let messagesToReplace = Array(messages[lastUserIndex...])
         let retainedMessages = Array(messages[..<lastUserIndex])
 
         try await withTemporaryTranscript(retainedMessages, deletingOnSuccess: messagesToReplace) {
-            try await sendUserMessage(newText)
+            try await sendUserMessage(newText, attachments: attachments, deleteAttachmentsOnFailure: false)
         }
     }
 
@@ -220,7 +240,7 @@ public final class AgentSession: ObservableObject {
 
         // Find the last user message
         guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }),
-              case .text = messages[lastUserIndex].content else {
+              messages[lastUserIndex].content.isUserAuthoredInput else {
             return
         }
 
@@ -238,11 +258,15 @@ public final class AgentSession: ObservableObject {
         }
         guard let sessionRecord else { return }
         try persistence.clearMessages(sessionID: sessionRecord.id)
+        try attachmentStore?.deleteAllAttachments(for: sessionRecord.id)
         messages = []
         refreshDerivedState()
     }
 
     public func resetSession() throws {
+        if let sessionRecord {
+            try attachmentStore?.deleteAllAttachments(for: sessionRecord.id)
+        }
         try persistence.resetSession(for: wordID)
         sessionRecord = nil
         messages = []
@@ -420,7 +444,8 @@ public final class AgentSession: ObservableObject {
                 context: .init(
                     cardSnapshot: snapshot,
                     messages: messages,
-                    tools: availableTools
+                    tools: availableTools,
+                    attachmentStore: attachmentStore
                 )
             )
             let result = try await generateWithStreaming(promptMessages: promptMessages, tools: availableTools)
@@ -490,7 +515,8 @@ public final class AgentSession: ObservableObject {
 
     private func executeToolCalls(_ toolCalls: [LLMToolCall], sessionID: UUID) throws -> Bool {
         var shouldContinue = false
-        for toolCall in toolCalls {
+        for rawToolCall in toolCalls {
+            let toolCall = try toolRegistry.normalizedToolCall(rawToolCall, for: wordID)
             let callMessage = try persistence.addMessage(
                 sessionID: sessionID,
                 role: .assistant,
@@ -521,6 +547,11 @@ public final class AgentSession: ObservableObject {
         try persistence.deleteMessages(ids: idsToDelete)
         messages.removeSubrange(startIndex...)
         refreshDerivedState()
+    }
+
+    private func userAttachments(in content: MessageContent) -> [AgentAttachment] {
+        guard case .userInput(_, let attachments) = content else { return [] }
+        return attachments
     }
 
     private func role(for content: MessageContent) -> AgentChatMessage.Role {

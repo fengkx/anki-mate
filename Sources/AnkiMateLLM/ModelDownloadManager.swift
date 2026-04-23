@@ -14,6 +14,17 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         let totalBytes: Int64
     }
 
+    private enum DownloadAssetKind: String {
+        case model
+        case mmproj
+    }
+
+    public enum LocalAssetState: Equatable, Sendable {
+        case missingModel
+        case missingMMProj
+        case ready
+    }
+
     public struct DownloadProgress: Equatable, Sendable {
         public let modelId: String
         public var state: DownloadState
@@ -161,6 +172,8 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
     private var activeTasks: [String: URLSessionDownloadTask] = [:]
     private var modelIdByTask: [Int: String] = [:]
     private var modelInfoByTask: [Int: ModelInfo] = [:]
+    private var assetKindByTask: [Int: DownloadAssetKind] = [:]
+    private var baseBytesByTask: [Int: Int64] = [:]
     private var modelInfoByModelId: [String: ModelInfo] = [:]
     private var resumeDataByModelId: [String: Data] = [:]
     private var lastSampleByModelId: [String: TransferSample] = [:]
@@ -199,8 +212,29 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         modelsDirectory.appendingPathComponent(model.fileName)
     }
 
+    public func localMMProjPath(for model: ModelInfo) -> URL? {
+        guard let fileName = model.mmprojFileName else { return nil }
+        return modelsDirectory.appendingPathComponent(fileName)
+    }
+
     public func isDownloaded(_ model: ModelInfo) -> Bool {
-        FileManager.default.fileExists(atPath: localPath(for: model).path)
+        localAssetState(for: model) == .ready
+    }
+
+    public func localAssetState(for model: ModelInfo) -> LocalAssetState {
+        guard FileManager.default.fileExists(atPath: localPath(for: model).path) else {
+            return .missingModel
+        }
+        guard model.requiresMMProj else { return .ready }
+        guard let mmprojPath = localMMProjPath(for: model),
+              FileManager.default.fileExists(atPath: mmprojPath.path) else {
+            return .missingMMProj
+        }
+        return .ready
+    }
+
+    public func downloadActionTitle(for model: ModelInfo) -> String {
+        localAssetState(for: model) == .missingMMProj ? "Download Projector" : "Download"
     }
 
     // MARK: - Mirror
@@ -222,13 +256,14 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         if latestNotice?.modelId == model.id {
             latestNotice = nil
         }
-        guard let url = mirroredURL(for: model.url) else {
+        let assetKind = nextMissingAssetKind(for: model)
+        guard let url = downloadURL(for: model, assetKind: assetKind) else {
             setDownloadProgress(
                 DownloadProgress(
                     modelId: model.id,
                     state: .failed("Invalid URL"),
                     bytesWritten: 0,
-                    totalBytes: model.sizeBytes
+                    totalBytes: model.totalSizeBytes
                 )
             )
             return
@@ -242,6 +277,7 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
 
         let task: URLSessionDownloadTask
         let resumedBytes: Int64
+        let baseBytes = downloadedBytesBeforeCurrentAsset(for: model, assetKind: assetKind)
 
         // Try to resume from saved data
         if let resumeData = resumeDataByModelId.removeValue(forKey: model.id) {
@@ -257,22 +293,55 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         activeTasks[model.id] = task
         modelIdByTask[task.taskIdentifier] = model.id
         modelInfoByTask[task.taskIdentifier] = model
+        assetKindByTask[task.taskIdentifier] = assetKind
+        baseBytesByTask[task.taskIdentifier] = baseBytes
 
         setDownloadProgress(
             DownloadProgress(
                 modelId: model.id,
                 state: .downloading,
-                bytesWritten: resumedBytes,
-                totalBytes: model.sizeBytes,
+                bytesWritten: max(resumedBytes, baseBytes),
+                totalBytes: model.totalSizeBytes,
                 bytesPerSecond: nil
             )
         )
         lastSampleByModelId[model.id] = TransferSample(
-            bytesWritten: resumedBytes,
+            bytesWritten: max(resumedBytes, baseBytes),
             timestamp: Date()
         )
 
         task.resume()
+    }
+
+    private func nextMissingAssetKind(for model: ModelInfo) -> DownloadAssetKind {
+        if !FileManager.default.fileExists(atPath: localPath(for: model).path) {
+            return .model
+        }
+        if model.requiresMMProj,
+           let mmprojPath = localMMProjPath(for: model),
+           !FileManager.default.fileExists(atPath: mmprojPath.path) {
+            return .mmproj
+        }
+        return .model
+    }
+
+    private func downloadURL(for model: ModelInfo, assetKind: DownloadAssetKind) -> URL? {
+        switch assetKind {
+        case .model:
+            return mirroredURL(for: model.url)
+        case .mmproj:
+            guard let url = model.mmprojURL else { return nil }
+            return mirroredURL(for: url)
+        }
+    }
+
+    private func downloadedBytesBeforeCurrentAsset(for model: ModelInfo, assetKind: DownloadAssetKind) -> Int64 {
+        switch assetKind {
+        case .model:
+            return 0
+        case .mmproj:
+            return model.sizeBytes
+        }
     }
 
     /// Pause a download — saves resume data for later continuation.
@@ -331,6 +400,8 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
                 // Clean up task mappings
                 self.modelIdByTask.removeValue(forKey: task.taskIdentifier)
                 self.modelInfoByTask.removeValue(forKey: task.taskIdentifier)
+                self.assetKindByTask.removeValue(forKey: task.taskIdentifier)
+                self.baseBytesByTask.removeValue(forKey: task.taskIdentifier)
                 completion?()
             }
         }
@@ -342,6 +413,8 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
             task.cancel()
             modelIdByTask.removeValue(forKey: task.taskIdentifier)
             modelInfoByTask.removeValue(forKey: task.taskIdentifier)
+            assetKindByTask.removeValue(forKey: task.taskIdentifier)
+            baseBytesByTask.removeValue(forKey: task.taskIdentifier)
         }
         resumeDataByModelId.removeValue(forKey: modelId)
         lastSampleByModelId.removeValue(forKey: modelId)
@@ -373,6 +446,12 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         if FileManager.default.fileExists(atPath: path.path) {
             try await Task.detached(priority: .utility) {
                 try FileManager.default.removeItem(at: path)
+            }.value
+        }
+        if let mmprojPath = localMMProjPath(for: model),
+           FileManager.default.fileExists(atPath: mmprojPath.path) {
+            try await Task.detached(priority: .utility) {
+                try FileManager.default.removeItem(at: mmprojPath)
             }.value
         }
         if latestNotice?.modelId == model.id {
@@ -488,18 +567,19 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
         Task { @MainActor [weak self] in
             guard let self = self,
                   let modelId = self.modelIdByTask[taskId] else { return }
+            let baseBytes = self.baseBytesByTask[taskId] ?? 0
 
             let now = Date()
             let previousSample = self.lastSampleByModelId[modelId]
             self.updateDownloadProgress(for: modelId) { progress in
-                progress.bytesWritten = totalBytesWritten
+                progress.bytesWritten = baseBytes + totalBytesWritten
                 if totalBytesExpectedToWrite > 0 {
-                    progress.totalBytes = totalBytesExpectedToWrite
+                    progress.totalBytes = max(progress.totalBytes, baseBytes + totalBytesExpectedToWrite)
                 }
 
                 if let previousSample {
                     let elapsed = now.timeIntervalSince(previousSample.timestamp)
-                    let deltaBytes = totalBytesWritten - previousSample.bytesWritten
+                    let deltaBytes = progress.bytesWritten - previousSample.bytesWritten
                     if elapsed >= 0.4, deltaBytes >= 0 {
                         let instantSpeed = Double(deltaBytes) / elapsed
                         if instantSpeed > 0 {
@@ -521,8 +601,9 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
             }
 
             if shouldRefreshSample {
+                let currentBytes = baseBytes + totalBytesWritten
                 self.lastSampleByModelId[modelId] = TransferSample(
-                    bytesWritten: totalBytesWritten,
+                    bytesWritten: currentBytes,
                     timestamp: now
                 )
             }
@@ -542,14 +623,32 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
         Task { @MainActor [weak self] in
             guard let self = self,
                   let modelId = self.modelIdByTask[taskId],
-                  let model = self.modelInfoByTask[taskId] else { return }
+                  let model = self.modelInfoByTask[taskId],
+                  let assetKind = self.assetKindByTask[taskId] else { return }
 
-            let destination = self.localPath(for: model)
+            let destination: URL
+            switch assetKind {
+            case .model:
+                destination = self.localPath(for: model)
+            case .mmproj:
+                guard let mmprojPath = self.localMMProjPath(for: model) else { return }
+                destination = mmprojPath
+            }
             do {
                 if FileManager.default.fileExists(atPath: destination.path) {
                     try FileManager.default.removeItem(at: destination)
                 }
                 try FileManager.default.moveItem(at: tempCopy, to: destination)
+
+                if assetKind == .model,
+                   model.requiresMMProj,
+                   let mmprojPath = self.localMMProjPath(for: model),
+                   !FileManager.default.fileExists(atPath: mmprojPath.path) {
+                    self.cleanupCompletedTask(taskId: taskId, modelId: modelId)
+                    self.download(model: model)
+                    return
+                }
+
                 self.updateDownloadProgress(for: modelId) { progress in
                     progress.state = .completed
                     progress.bytesWritten = max(progress.bytesWritten, progress.totalBytes)
@@ -579,10 +678,7 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
                 )
             }
 
-            self.activeTasks.removeValue(forKey: modelId)
-            self.modelIdByTask.removeValue(forKey: taskId)
-            self.modelInfoByTask.removeValue(forKey: taskId)
-            self.lastSampleByModelId.removeValue(forKey: modelId)
+            self.cleanupCompletedTask(taskId: taskId, modelId: modelId)
         }
     }
 
@@ -668,7 +764,18 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
             self.activeTasks.removeValue(forKey: modelId)
             self.modelIdByTask.removeValue(forKey: taskId)
             self.modelInfoByTask.removeValue(forKey: taskId)
+            self.assetKindByTask.removeValue(forKey: taskId)
+            self.baseBytesByTask.removeValue(forKey: taskId)
         }
+    }
+
+    private func cleanupCompletedTask(taskId: Int, modelId: String) {
+        activeTasks.removeValue(forKey: modelId)
+        modelIdByTask.removeValue(forKey: taskId)
+        modelInfoByTask.removeValue(forKey: taskId)
+        assetKindByTask.removeValue(forKey: taskId)
+        baseBytesByTask.removeValue(forKey: taskId)
+        lastSampleByModelId.removeValue(forKey: modelId)
     }
 
     public func dismissLatestNotice() {

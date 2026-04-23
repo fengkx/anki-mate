@@ -11,6 +11,29 @@ final class LLMBenchmarkSupportTests: XCTestCase {
         XCTAssertFalse(modelIDs.contains("gemma-3n-e4b-it-q6k"))
     }
 
+    func testBundledModelRegistryOrdersCurrentDefaultRecommendationsFirst() {
+        let registry = ModelRegistry()
+
+        XCTAssertEqual(
+            Array(registry.models.prefix(4).map(\.id)),
+            [
+                "gemma-4-e2b-it-q4km",
+                "qwen35-4b-q4km",
+                "gemma-3n-e4b-it-q4km",
+                "qwen35-4b-q6k"
+            ]
+        )
+        XCTAssertEqual(
+            registry.models.filter(\.recommended).map(\.id),
+            [
+                "gemma-4-e2b-it-q4km",
+                "qwen35-4b-q4km",
+                "gemma-3n-e4b-it-q4km"
+            ]
+        )
+        XCTAssertEqual(registry.recommended?.id, "gemma-4-e2b-it-q4km")
+    }
+
     func testPinnedLLME2EModelAndJustDefaultUseGemma4Q4KM() throws {
         let lockfileURL = repositoryRootURL()
             .appendingPathComponent("ci", isDirectory: true)

@@ -81,6 +81,7 @@ final class RPCDispatcher {
         do {
             try await supervisor.loadModel(
                 path: loadParams.modelPath,
+                mmprojPath: loadParams.mmprojPath,
                 contextSize: loadParams.contextSize,
                 gpuLayers: loadParams.gpuLayers
             )

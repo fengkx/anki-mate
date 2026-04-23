@@ -406,6 +406,9 @@ struct LLMSettingsView: View {
                         if model.recommended {
                             statusBadge(text: "Recommended", tint: .blue)
                         }
+                        if model.supportsVision {
+                            statusBadge(text: "Vision", tint: .green)
+                        }
                     }
 
                     Text("\(model.quantization) · \(model.formattedSize)")
@@ -428,6 +431,8 @@ struct LLMSettingsView: View {
                 modelProgressBlock(model, progress: progress)
             } else if llmService.downloadManager.isDeleting(modelId: model.id) {
                 deletingProgressBlock
+            } else if llmService.downloadManager.localAssetState(for: model) == .missingMMProj {
+                missingProjectorBlock
             }
         }
         .padding(.horizontal, 14)
@@ -470,6 +475,8 @@ struct LLMSettingsView: View {
             statusBadge(text: "Selected", tint: .blue)
         } else if llmService.downloadManager.isDownloaded(model) {
             statusBadge(text: "Downloaded", tint: .secondary)
+        } else if llmService.downloadManager.localAssetState(for: model) == .missingMMProj {
+            statusBadge(text: "Missing projector", tint: .orange)
         } else if let progress = llmService.downloadManager.downloads[model.id] {
             switch progress.state {
             case .downloading:
@@ -589,8 +596,27 @@ struct LLMSettingsView: View {
                 }
             }
         } else {
-            actionButton("Download", prominent: true) {
+            actionButton(dm.downloadActionTitle(for: model), prominent: true) {
                 dm.download(model: model)
+            }
+        }
+    }
+
+    private var missingProjectorBlock: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "eye.trianglebadge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Vision projector missing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text("The main model file is present, but image input needs the companion mmproj file. Download the projector to enable attachments with images.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -26,6 +26,7 @@ struct CardPreviewView: View {
     @State private var agentSession: AgentSession?
     @State private var agentPreviewOverrideArtifacts: AIArtifacts?
 
+    private let agentAttachmentStore = AgentAttachmentFileStore()
     private let minAIPanelHeight: CGFloat = 180
     private let minPreviewHeight: CGFloat = 96
     private var generationAvailabilityState: LLMGenerationAvailability.State {
@@ -139,6 +140,7 @@ struct CardPreviewView: View {
                     bottomContent: AIContentView(
                         item: item,
                         agentSession: agentSession,
+                        agentAttachmentStore: agentAttachmentStore,
                         agentPreviewOverrideArtifacts: $agentPreviewOverrideArtifacts
                     )
                     .id(item.id)
@@ -538,6 +540,7 @@ struct CardPreviewView: View {
             wordID: item.id,
             persistence: AgentSessionStore(databaseURL: databaseURL),
             snapshotProvider: bridge,
+            attachmentStore: agentAttachmentStore,
             artifactsManager: bridge,
             generator: LLMAgentGeneratorAdapter(llmService: llmService)
         )

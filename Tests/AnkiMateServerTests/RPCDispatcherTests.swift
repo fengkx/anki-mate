@@ -64,6 +64,27 @@ final class RPCDispatcherTests: XCTestCase {
         XCTAssertEqual(supervisor.loadModelGpuLayers, 99)
     }
 
+    func testLoadModelPassesMMProjPathToSupervisor() async {
+        let supervisor = MockSupervisor()
+        let dispatcher = RPCDispatcher(supervisor: supervisor)
+        let request = makeRawRequest(
+            method: RPCMethod.loadModel,
+            params: LoadModelParams(
+                modelPath: "/test.gguf",
+                mmprojPath: "/mmproj.gguf",
+                contextSize: 2048,
+                gpuLayers: 99
+            ),
+            id: 9
+        )
+
+        let response = await dispatcher.dispatch(request, uptimeSeconds: 1)
+
+        XCTAssertNil(response.error)
+        XCTAssertEqual(supervisor.loadModelPath, "/test.gguf")
+        XCTAssertEqual(supervisor.loadModelMMProjPath, "/mmproj.gguf")
+    }
+
     func testUnloadModelCallsSupervisor() async {
         let supervisor = MockSupervisor()
         let dispatcher = RPCDispatcher(supervisor: supervisor)
@@ -120,13 +141,15 @@ private final class MockSupervisor: LlamaServerSupervising {
     var childPort: Int? { state.port }
 
     var loadModelPath: String?
+    var loadModelMMProjPath: String?
     var loadModelContextSize: Int?
     var loadModelGpuLayers: Int?
     var unloadModelCalled = false
     var shutdownCalled = false
 
-    func loadModel(path: String, contextSize: Int, gpuLayers: Int) async throws {
+    func loadModel(path: String, mmprojPath: String?, contextSize: Int, gpuLayers: Int) async throws {
         loadModelPath = path
+        loadModelMMProjPath = mmprojPath
         loadModelContextSize = contextSize
         loadModelGpuLayers = gpuLayers
         state = .ready(port: 9999, modelPath: path)

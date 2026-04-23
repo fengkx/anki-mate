@@ -15,9 +15,14 @@ public enum RPCMethod {
 
 public struct LLMMessage: Codable, Sendable, Equatable {
     public let role: LLMMessageRole
-    public let content: String
+    public let content: LLMMessageContent
 
     public init(role: LLMMessageRole, content: String) {
+        self.role = role
+        self.content = .text(content)
+    }
+
+    public init(role: LLMMessageRole, content: LLMMessageContent) {
         self.role = role
         self.content = content
     }
@@ -28,6 +33,60 @@ public enum LLMMessageRole: String, Codable, Sendable, Equatable {
     case user
     case assistant
     case tool
+}
+
+public enum LLMMessageContent: Codable, Sendable, Equatable {
+    case text(String)
+    case parts([LLMMessageContentPart])
+
+    public var plainText: String {
+        switch self {
+        case .text(let text):
+            return text
+        case .parts(let parts):
+            return parts.compactMap { part in
+                if case .text(let text) = part {
+                    return text
+                }
+                return nil
+            }.joined(separator: "\n\n")
+        }
+    }
+
+    public var isEmpty: Bool {
+        plainText.isEmpty
+    }
+
+    public func contains(_ other: String) -> Bool {
+        plainText.contains(other)
+    }
+
+    public func hasPrefix(_ prefix: String) -> Bool {
+        plainText.hasPrefix(prefix)
+    }
+
+    public var parts: [LLMMessageContentPart] {
+        switch self {
+        case .text(let text):
+            return [.text(text)]
+        case .parts(let parts):
+            return parts
+        }
+    }
+}
+
+public enum LLMMessageContentPart: Codable, Sendable, Equatable {
+    case text(String)
+    case imageURL(String)
+
+    public var plainText: String {
+        switch self {
+        case .text(let text):
+            return text
+        case .imageURL:
+            return ""
+        }
+    }
 }
 
 public struct LLMToolDefinition: Codable, Sendable, Equatable {
@@ -108,11 +167,13 @@ public enum ServerStatus: String, Codable, Sendable {
 
 public struct LoadModelParams: Codable, Sendable {
     public let modelPath: String
+    public let mmprojPath: String?
     public let contextSize: Int
     public let gpuLayers: Int
 
-    public init(modelPath: String, contextSize: Int = 4096, gpuLayers: Int = 99) {
+    public init(modelPath: String, mmprojPath: String? = nil, contextSize: Int = 4096, gpuLayers: Int = 99) {
         self.modelPath = modelPath
+        self.mmprojPath = mmprojPath
         self.contextSize = contextSize
         self.gpuLayers = gpuLayers
     }

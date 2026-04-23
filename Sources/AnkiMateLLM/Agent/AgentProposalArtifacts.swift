@@ -25,19 +25,19 @@ enum AgentProposalArtifactsProjector {
             applyDefinitionNote(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .example:
             let payload = try decodePayload(ExampleSentenceArtifact.self, from: proposal.payloadJSON)
-            applyExample(payload, operation: proposal.operation, to: &updated, mode: mode)
+            try applyExample(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .recallDraft:
             let payload = try decodePayload(RecallCardDraft.self, from: proposal.payloadJSON)
             applyRecallDraft(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .pitfall:
             let payload = try decodePayload(PitfallArtifact.self, from: proposal.payloadJSON)
-            applyPitfall(payload, operation: proposal.operation, to: &updated, mode: mode)
+            try applyPitfall(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .mnemonic:
             let payload = try decodePayload(MnemonicArtifact.self, from: proposal.payloadJSON)
-            applyMnemonic(payload, operation: proposal.operation, to: &updated, mode: mode)
+            try applyMnemonic(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .collocation:
             let payload = try decodePayload(CollocationArtifact.self, from: proposal.payloadJSON)
-            applyCollocation(payload, operation: proposal.operation, to: &updated, mode: mode)
+            try applyCollocation(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .deleteAccepted:
             let payload = try decodePayload(DeleteAcceptedPayload.self, from: proposal.payloadJSON)
             try applyDeleteAccepted(payload, operation: proposal.operation, to: &updated)
@@ -91,10 +91,10 @@ enum AgentProposalArtifactsProjector {
         operation: ProposalRecord.Operation,
         to artifacts: inout AIArtifacts,
         mode: Mode
-    ) {
+    ) throws {
         var values = artifactBase(from: artifacts.pitfalls, mode: mode)
         let targetIndex = collectionTargetIndex(operation: operation, prefix: "pf-", ids: values.map(\.id))
-        mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
         assign(values, to: &artifacts.pitfalls, mode: mode)
     }
 
@@ -103,10 +103,10 @@ enum AgentProposalArtifactsProjector {
         operation: ProposalRecord.Operation,
         to artifacts: inout AIArtifacts,
         mode: Mode
-    ) {
+    ) throws {
         var values = artifactBase(from: artifacts.mnemonics, mode: mode)
         let targetIndex = collectionTargetIndex(operation: operation, prefix: "mn-", ids: values.map(\.id))
-        mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
         assign(values, to: &artifacts.mnemonics, mode: mode)
     }
 
@@ -115,10 +115,10 @@ enum AgentProposalArtifactsProjector {
         operation: ProposalRecord.Operation,
         to artifacts: inout AIArtifacts,
         mode: Mode
-    ) {
+    ) throws {
         var values = artifactBase(from: artifacts.collocations, mode: mode)
         let targetIndex = collectionTargetIndex(operation: operation, prefix: "co-", ids: values.map(\.id))
-        mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
         assign(values, to: &artifacts.collocations, mode: mode)
     }
 
@@ -159,18 +159,20 @@ enum AgentProposalArtifactsProjector {
         operation: ProposalRecord.Operation,
         targetIndex: Int?,
         replacement: Value
-    ) {
+    ) throws {
         switch operation {
         case .add:
             values.append(replacement)
         case .replace:
-            if let targetIndex, values.indices.contains(targetIndex) {
-                values[targetIndex] = replacement
-            } else {
-                values.append(replacement)
+            guard let targetIndex, values.indices.contains(targetIndex) else {
+                throw AgentProposalArtifactsError.targetUnavailable
             }
+            values[targetIndex] = replacement
         case .delete:
-            removeTarget(&values, targetIndex: targetIndex)
+            guard let targetIndex, values.indices.contains(targetIndex) else {
+                throw AgentProposalArtifactsError.targetUnavailable
+            }
+            values.remove(at: targetIndex)
         }
     }
 
@@ -202,7 +204,7 @@ enum AgentProposalArtifactsProjector {
         operation: ProposalRecord.Operation,
         to artifacts: inout AIArtifacts,
         mode: Mode
-    ) {
+    ) throws {
         var values = exampleBase(from: artifacts, mode: mode)
         let targetIndex: Int?
         switch operation {
@@ -211,7 +213,7 @@ enum AgentProposalArtifactsProjector {
         case .replace(let targetID), .delete(let targetID):
             targetIndex = resolveSyntheticIndex(targetID, prefix: "ex-")
         }
-        mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
         assign(values, to: &artifacts.exampleSentences, mode: mode)
     }
 
@@ -305,6 +307,7 @@ enum AgentProposalArtifactsProjector {
 enum AgentProposalArtifactsError: LocalizedError {
     case invalidPayload(reason: String?)
     case invalidDeleteOperation
+    case targetUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -315,6 +318,8 @@ enum AgentProposalArtifactsError: LocalizedError {
             return "Invalid proposal payload."
         case .invalidDeleteOperation:
             return "Delete-accepted proposals must use delete operations."
+        case .targetUnavailable:
+            return "Agent proposal target is unavailable."
         }
     }
 }

@@ -92,8 +92,51 @@ public struct AgentChatMessage: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct AgentAttachment: Codable, Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public let kind: Kind
+    public let mimeType: String
+    public let fileName: String
+    public let relativePath: String
+    public let byteSize: Int64
+    public let width: Int?
+    public let height: Int?
+    public let extractedTextPreview: String?
+    public let characterCount: Int?
+
+    public init(
+        id: UUID = UUID(),
+        kind: Kind,
+        mimeType: String,
+        fileName: String,
+        relativePath: String,
+        byteSize: Int64,
+        width: Int? = nil,
+        height: Int? = nil,
+        extractedTextPreview: String? = nil,
+        characterCount: Int? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.relativePath = relativePath
+        self.byteSize = byteSize
+        self.width = width
+        self.height = height
+        self.extractedTextPreview = extractedTextPreview
+        self.characterCount = characterCount
+    }
+
+    public enum Kind: String, Codable, Sendable {
+        case image
+        case textFile
+    }
+}
+
 public enum MessageContent: Codable, Equatable, Sendable {
     case text(String, reasoning: String? = nil)
+    case userInput(text: String, attachments: [AgentAttachment])
     case toolCall(name: String, argsJSON: String)
     case toolResult(name: String, resultJSON: String, truncated: Bool)
     case actionProposal(ProposalRecord)
@@ -115,10 +158,12 @@ public enum MessageContent: Codable, Equatable, Sendable {
         case reasoning
         case userText
         case detectedKind
+        case attachments
     }
 
     private enum Kind: String, Codable {
         case text
+        case userInput = "user_input"
         case toolCall = "tool_call"
         case toolResult = "tool_result"
         case actionProposal = "proposal"
@@ -134,6 +179,11 @@ public enum MessageContent: Codable, Equatable, Sendable {
             self = .text(
                 try container.decode(String.self, forKey: .text),
                 reasoning: try container.decodeIfPresent(String.self, forKey: .reasoning)
+            )
+        case .userInput:
+            self = .userInput(
+                text: try container.decode(String.self, forKey: .text),
+                attachments: try container.decodeIfPresent([AgentAttachment].self, forKey: .attachments) ?? []
             )
         case .toolCall:
             self = .toolCall(
@@ -175,6 +225,10 @@ public enum MessageContent: Codable, Equatable, Sendable {
             if let reasoning {
                 try container.encode(reasoning, forKey: .reasoning)
             }
+        case .userInput(let text, let attachments):
+            try container.encode(Kind.userInput, forKey: .kind)
+            try container.encode(text, forKey: .text)
+            try container.encode(attachments, forKey: .attachments)
         case .toolCall(let name, let argsJSON):
             try container.encode(Kind.toolCall, forKey: .kind)
             try container.encode(name, forKey: .name)
@@ -199,6 +253,17 @@ public enum MessageContent: Codable, Equatable, Sendable {
             try container.encode(Kind.layoutRequestDeclined, forKey: .kind)
             try container.encode(userText, forKey: .userText)
             try container.encode(detectedKind, forKey: .detectedKind)
+        }
+    }
+}
+
+public extension MessageContent {
+    var isUserAuthoredInput: Bool {
+        switch self {
+        case .text, .userInput:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -299,4 +364,3 @@ public struct ProposalRecord: Codable, Equatable, Identifiable, Sendable {
         case dismissed
     }
 }
-

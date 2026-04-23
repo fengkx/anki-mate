@@ -98,6 +98,11 @@ final class AgentComposerInputTests: XCTestCase {
         XCTAssertTrue(textView.acceptsFirstResponder)
     }
 
+    func testPlaceholderUsesTextViewInsertionInsets() {
+        XCTAssertEqual(AgentComposerLayout.placeholderHorizontalPadding, AgentComposerLayout.textContainerInset.width)
+        XCTAssertEqual(AgentComposerLayout.placeholderVerticalPadding, AgentComposerLayout.textContainerInset.height)
+    }
+
     func testPlaceholderStaysHiddenWhileInputMethodHasMarkedText() {
         XCTAssertFalse(
             AgentComposerPlaceholderVisibility.shouldShow(

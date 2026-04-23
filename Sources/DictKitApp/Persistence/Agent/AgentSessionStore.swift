@@ -512,6 +512,8 @@ struct AgentSessionStore: AgentSessionPersisting {
         switch content {
         case .text:
             return "text"
+        case .userInput:
+            return "user_input"
         case .toolCall:
             return "tool_call"
         case .toolResult:

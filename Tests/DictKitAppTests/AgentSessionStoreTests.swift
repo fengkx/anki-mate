@@ -31,6 +31,34 @@ final class AgentSessionStoreTests: XCTestCase {
         XCTAssertEqual(messages.map(\.id), [first.id, second.id])
     }
 
+    func testUserInputAttachmentsRoundTripThroughContentJSON() throws {
+        let (wordListStore, wordID) = try makeStores()
+        let store = AgentSessionStore(databaseURL: wordListStore.databaseURL)
+        let session = try store.upsertSession(for: wordID)
+        let attachment = AgentAttachment(
+            kind: .textFile,
+            mimeType: "text/plain",
+            fileName: "note.txt",
+            relativePath: "agent/session/note.txt",
+            byteSize: 11,
+            extractedTextPreview: "hello world",
+            characterCount: 11
+        )
+
+        _ = try store.addMessage(
+            sessionID: session.id,
+            role: .user,
+            content: .userInput(text: "read this", attachments: [attachment])
+        )
+
+        let reloaded = try XCTUnwrap(try store.loadMessages(sessionID: session.id).only)
+        guard case .userInput(let text, let attachments) = reloaded.content else {
+            return XCTFail("Expected user input content")
+        }
+        XCTAssertEqual(text, "read this")
+        XCTAssertEqual(attachments, [attachment])
+    }
+
     func testDeletingWordCascadesSessionsAndMessages() throws {
         let (wordListStore, wordID) = try makeStores()
         let store = AgentSessionStore(databaseURL: wordListStore.databaseURL)

@@ -54,6 +54,58 @@ final class LLMServiceTests: XCTestCase {
         )
     }
 
+    func testVisionModelDownloadRequiresProjectorFile() throws {
+        let root = makeTemporaryDirectory()
+        let manager = ModelDownloadManager(baseDirectoryURL: root)
+        let model = ModelInfo(
+            id: "vision-model",
+            displayName: "Vision Model",
+            fileName: "model.gguf",
+            url: "https://example.com/model.gguf",
+            sizeBytes: 10,
+            quantization: "Q4",
+            contextSize: 4096,
+            supportsVision: true,
+            mmprojFileName: "mmproj-F16.gguf",
+            mmprojURL: "https://example.com/mmproj-F16.gguf",
+            mmprojSizeBytes: 5
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        try Data().write(to: manager.localPath(for: model))
+
+        XCTAssertFalse(manager.isDownloaded(model))
+
+        let mmprojPath = try XCTUnwrap(manager.localMMProjPath(for: model))
+        try Data().write(to: mmprojPath)
+
+        XCTAssertTrue(manager.isDownloaded(model))
+    }
+
+    func testVisionModelReportsMissingProjectorWhenOnlyPrimaryModelExists() throws {
+        let root = makeTemporaryDirectory()
+        let manager = ModelDownloadManager(baseDirectoryURL: root)
+        let model = ModelInfo(
+            id: "vision-model",
+            displayName: "Vision Model",
+            fileName: "model.gguf",
+            url: "https://example.com/model.gguf",
+            sizeBytes: 10,
+            quantization: "Q4",
+            contextSize: 4096,
+            supportsVision: true,
+            mmprojFileName: "mmproj-F16.gguf",
+            mmprojURL: "https://example.com/mmproj-F16.gguf",
+            mmprojSizeBytes: 5
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        try Data().write(to: manager.localPath(for: model))
+
+        XCTAssertEqual(manager.localAssetState(for: model), .missingMMProj)
+        XCTAssertEqual(manager.downloadActionTitle(for: model), "Download Projector")
+    }
+
     func testDownloadManagerChangesTriggerLLMServiceUpdates() {
         let service = LLMService()
         let model = ModelInfo(
@@ -952,10 +1004,10 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(LLMService.recallDraftMaxTokens, 1024)
     }
 
-    func testStructuredJSONTokenBudgetsAreUniformForReasoningModels() {
+    func testStructuredJSONTokenBudgetsMatchTaskOutputShape() {
         XCTAssertEqual(LLMService.exampleArtifactMinTokens, 1024)
         XCTAssertEqual(LLMService.usageHintMinTokens, 1024)
-        XCTAssertEqual(LLMService.learningAidsMaxTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidsMaxTokens, 1280)
         XCTAssertEqual(LLMService.learningAidJudgeMaxTokens, 1024)
         XCTAssertEqual(LLMService.learningAidCombinedJudgeMaxTokens, 1024)
         XCTAssertEqual(LLMService.ipaMaxTokens, 1024)
@@ -971,7 +1023,7 @@ final class LLMServiceTests: XCTestCase {
                 ChatMessage(role: "user", content: "Hello")
             ],
             temperature: 0.2,
-            max_tokens: 128,
+            max_completion_tokens: 128,
             tools: [
                 ChatTool(
                     function: ChatFunction(
@@ -1000,13 +1052,16 @@ final class LLMServiceTests: XCTestCase {
         )
 
         let data = try JSONEncoder().encode(request)
+        let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
         let decoded = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
 
         XCTAssertEqual(decoded.model, "/test.gguf")
         XCTAssertEqual(decoded.messages.count, 2)
         XCTAssertEqual(decoded.tools?.first?.function.name, "lookup")
         XCTAssertEqual(decoded.response_format?.type, "json_schema")
-        XCTAssertEqual(decoded.max_tokens, 128)
+        XCTAssertTrue(encoded.contains(#""max_completion_tokens":128"#))
+        XCTAssertFalse(encoded.contains(#""max_tokens":"#))
+        XCTAssertEqual(decoded.max_completion_tokens, 128)
         XCTAssertEqual(decoded.temperature, 0.2)
     }
 

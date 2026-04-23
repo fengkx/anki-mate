@@ -73,4 +73,18 @@ final class LlamaServerSupervisorTests: XCTestCase {
             ]
         )
     }
+
+    func testLaunchArgumentsIncludeMMProjWhenProvided() {
+        XCTAssertTrue(
+            LlamaServerSupervisor.launchArguments(
+                port: 8080,
+                modelPath: "/tmp/model.gguf",
+                mmprojPath: "/tmp/mmproj-F16.gguf",
+                contextSize: 4096,
+                gpuLayers: 99
+            )
+            .suffix(2)
+            .elementsEqual(["--mmproj", "/tmp/mmproj-F16.gguf"])
+        )
+    }
 }

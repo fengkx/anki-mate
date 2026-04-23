@@ -248,6 +248,7 @@ private enum AIPanelMode: String, CaseIterable, Identifiable {
 struct AIContentView: View {
     @ObservedObject var item: WordItem
     var agentSession: AgentSession?
+    var agentAttachmentStore: AgentAttachmentFileStore = AgentAttachmentFileStore()
     @Binding var agentPreviewOverrideArtifacts: AIArtifacts?
     @EnvironmentObject private var llmService: LLMService
     @EnvironmentObject private var viewModel: WordListViewModel
@@ -297,6 +298,13 @@ struct AIContentView: View {
     private var isGeneratingRecall: Bool { recallTask != nil }
     private var activeAgentSession: AgentSession? {
         Self.resolvedAgentSession(for: item.id, session: agentSession)
+    }
+    private var activeModelSupportsVision: Bool {
+        let modelID = llmService.loadedModelId ?? llmService.selectedModelId
+        guard let model = llmService.registry.models.first(where: { $0.id == modelID }) else {
+            return false
+        }
+        return model.supportsVision && llmService.downloadManager.isDownloaded(model)
     }
     private var generationAvailabilityState: LLMGenerationAvailability.State {
         LLMGenerationAvailability.resolvedState(
@@ -442,6 +450,8 @@ struct AIContentView: View {
                     AgentChatView(
                         item: item,
                         session: activeAgentSession,
+                        attachmentStore: agentAttachmentStore,
+                        canAttachImages: activeModelSupportsVision,
                         previewOverrideArtifacts: $agentPreviewOverrideArtifacts
                     )
                     }

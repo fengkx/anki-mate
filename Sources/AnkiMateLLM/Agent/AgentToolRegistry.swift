@@ -79,6 +79,7 @@ public struct AgentToolRegistry {
     }
 
     public func execute(_ toolCall: LLMToolCall, for wordID: UUID) throws -> MessageContent {
+        let toolCall = try normalizedToolCall(toolCall, for: wordID)
         switch toolCall.name {
         case "read_card_snapshot":
             return try executeReadCardSnapshot(for: wordID)
@@ -97,6 +98,36 @@ public struct AgentToolRegistry {
         default:
             throw AgentToolRegistryError.unsupportedTool(toolCall.name)
         }
+    }
+
+    func normalizedToolCall(_ toolCall: LLMToolCall, for wordID: UUID) throws -> LLMToolCall {
+        _ = wordID
+        guard isProposalTool(toolCall.name) else {
+            return toolCall
+        }
+        guard case .object(var arguments) = toolCall.arguments else {
+            throw AgentToolRegistryError.invalidArguments(toolCall.name)
+        }
+
+        let proposalKind = try proposalKind(for: toolCall.name)
+        let rawOperation = try requiredString("operation", in: arguments, toolName: toolCall.name)
+        switch rawOperation {
+        case "add":
+            arguments.removeValue(forKey: "targetID")
+        case "replace", "delete":
+            let targetID = try requiredString("targetID", in: arguments, toolName: toolCall.name)
+            guard isValidTargetID(targetID, for: proposalKind) else {
+                throw AgentToolRegistryError.invalidArguments(toolCall.name)
+            }
+        default:
+            throw AgentToolRegistryError.invalidArguments(toolCall.name)
+        }
+
+        return LLMToolCall(
+            id: toolCall.id,
+            name: toolCall.name,
+            arguments: .object(arguments)
+        )
     }
 
     private func executeReadCardSnapshot(for wordID: UUID) throws -> MessageContent {
@@ -173,6 +204,7 @@ public struct AgentToolRegistry {
                 "properties": .object([
                     "operation": .object([
                         "type": .string("string"),
+                        "description": .string("Use add for new content, replace for editing an existing artifact, delete for removing an existing artifact."),
                         "enum": .array([
                             .string("add"),
                             .string("replace"),
@@ -180,7 +212,8 @@ public struct AgentToolRegistry {
                         ])
                     ]),
                     "targetID": .object([
-                        "type": .string("string")
+                        "type": .string("string"),
+                        "description": .string("Only provide for replace/delete. Must be a real existing artifact id; never use the headword or section name.")
                     ]),
                     "diffSummary": .object([
                         "type": .string("string")
@@ -192,7 +225,6 @@ public struct AgentToolRegistry {
                 ]),
                 "required": .array([
                     .string("operation"),
-                    .string("diffSummary"),
                     .string("payload")
                 ]),
                 "additionalProperties": .bool(false)
@@ -356,10 +388,15 @@ public struct AgentToolRegistry {
         }
         let proposalKind = try proposalKind(for: toolCall.name)
         let operation = try proposalOperation(from: arguments)
-        let diffSummary = try requiredString("diffSummary", in: arguments, toolName: toolCall.name)
         let rationale = optionalString("rationale", in: arguments)
         let payload = try requiredObject("payload", in: arguments, toolName: toolCall.name)
         let payloadJSON = try encode(payload)
+        let diffSummary = proposalDiffSummary(
+            from: arguments,
+            kind: proposalKind,
+            operation: operation,
+            payload: payload
+        )
 
         try validateProposalPayload(
             kind: proposalKind,
@@ -423,6 +460,67 @@ public struct AgentToolRegistry {
             return .deleteAccepted
         default:
             throw AgentToolRegistryError.unsupportedTool(toolName)
+        }
+    }
+
+    private func isProposalTool(_ toolName: String) -> Bool {
+        switch toolName {
+        case "propose_usage_cue",
+             "propose_example",
+             "propose_recall_draft",
+             "propose_pitfall",
+             "propose_mnemonic",
+             "propose_collocation",
+             "propose_delete_accepted":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func isValidTargetID(
+        _ targetID: String,
+        for kind: ProposalRecord.ProposalKind
+    ) -> Bool {
+        let trimmed = targetID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == targetID, !trimmed.isEmpty else {
+            return false
+        }
+
+        switch kind {
+        case .usageCue:
+            return trimmed == "usage-cue"
+        case .example:
+            return isSyntheticID(trimmed, prefix: "ex-")
+        case .recallDraft:
+            return trimmed == "recall-draft"
+        case .pitfall:
+            return hasArtifactIDShape(trimmed, prefix: "pf-")
+        case .mnemonic:
+            return hasArtifactIDShape(trimmed, prefix: "mn-")
+        case .collocation:
+            return hasArtifactIDShape(trimmed, prefix: "co-")
+        case .deleteAccepted:
+            return trimmed == "usage-cue" ||
+                trimmed == "recall-draft" ||
+                isSyntheticID(trimmed, prefix: "ex-") ||
+                hasArtifactIDShape(trimmed, prefix: "pf-") ||
+                hasArtifactIDShape(trimmed, prefix: "mn-") ||
+                hasArtifactIDShape(trimmed, prefix: "co-")
+        }
+    }
+
+    private func isSyntheticID(_ value: String, prefix: String) -> Bool {
+        guard value.hasPrefix(prefix) else { return false }
+        let suffix = value.dropFirst(prefix.count)
+        return !suffix.isEmpty && suffix.allSatisfy(\.isNumber)
+    }
+
+    private func hasArtifactIDShape(_ value: String, prefix: String) -> Bool {
+        guard value.hasPrefix(prefix) else { return false }
+        let suffix = value.dropFirst(prefix.count)
+        return !suffix.isEmpty && suffix.allSatisfy { character in
+            character.isLetter || character.isNumber || character == "-"
         }
     }
 
@@ -517,6 +615,81 @@ public struct AgentToolRegistry {
             _ = try JSONDecoder().decode(T.self, from: data)
         } catch {
             throw AgentToolRegistryError.invalidArguments(toolName)
+        }
+    }
+
+    private func proposalDiffSummary(
+        from arguments: [String: JSONValue],
+        kind: ProposalRecord.ProposalKind,
+        operation: ProposalRecord.Operation,
+        payload: JSONValue
+    ) -> String {
+        if let explicit = optionalString("diffSummary", in: arguments) {
+            return explicit
+        }
+        if let payloadSummary = payloadSummary(kind: kind, payload: payload) {
+            return "\(operationLabel(operation)) \(kindLabel(kind)): \(payloadSummary)"
+        }
+        if let rationale = optionalString("rationale", in: arguments) {
+            return rationale
+        }
+        return "\(operationLabel(operation)) \(kindLabel(kind))"
+    }
+
+    private func payloadSummary(kind: ProposalRecord.ProposalKind, payload: JSONValue) -> String? {
+        guard case .object(let object) = payload else { return nil }
+        let preferredKeys: [String]
+        switch kind {
+        case .usageCue, .example, .pitfall, .mnemonic:
+            preferredKeys = ["text", "note"]
+        case .recallDraft:
+            preferredKeys = ["front", "mode", "hint"]
+        case .collocation:
+            preferredKeys = ["phrase", "note"]
+        case .deleteAccepted:
+            preferredKeys = ["section"]
+        }
+        return preferredKeys.lazy.compactMap { key in
+            guard case .string(let value)? = object[key] else { return nil }
+            return truncatedSummaryText(value)
+        }.first
+    }
+
+    private func truncatedSummaryText(_ value: String, maxCharacters: Int = 140) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard trimmed.count > maxCharacters else { return trimmed }
+        let end = trimmed.index(trimmed.startIndex, offsetBy: maxCharacters)
+        return String(trimmed[..<end]) + "..."
+    }
+
+    private func operationLabel(_ operation: ProposalRecord.Operation) -> String {
+        switch operation {
+        case .add:
+            return "Add"
+        case .replace:
+            return "Replace"
+        case .delete:
+            return "Delete"
+        }
+    }
+
+    private func kindLabel(_ kind: ProposalRecord.ProposalKind) -> String {
+        switch kind {
+        case .usageCue:
+            return "usage cue"
+        case .example:
+            return "example"
+        case .recallDraft:
+            return "recall draft"
+        case .pitfall:
+            return "pitfall"
+        case .mnemonic:
+            return "mnemonic"
+        case .collocation:
+            return "collocation"
+        case .deleteAccepted:
+            return "accepted artifact"
         }
     }
 }

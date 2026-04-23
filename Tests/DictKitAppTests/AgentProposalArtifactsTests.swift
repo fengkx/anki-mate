@@ -30,7 +30,40 @@ final class AgentProposalArtifactsTests: XCTestCase {
             projected.acceptedExampleSentences,
             ["I ate an apple.", "Apple stock fell sharply after earnings."]
         )
+        XCTAssertEqual(
+            projected.exampleSentences.accepted?[1].translation,
+            "苹果公司财报后股价大跌。"
+        )
         XCTAssertTrue(projected.suggestedExampleSentences.isEmpty)
+    }
+
+    func testExampleReplaceRejectsMissingTargetInsteadOfAppending() throws {
+        let baseline = AIArtifacts(
+            exampleSentences: .init(
+                accepted: [
+                    ExampleSentenceArtifact(text: "I ate an apple.")
+                ]
+            )
+        )
+        let proposal = ProposalRecord(
+            kind: .example,
+            operation: .replace(targetID: "corpus"),
+            payloadJSON: #"{"text":"The corpus reveals regional usage patterns."}"#,
+            diffSummary: "Replace example"
+        )
+
+        XCTAssertThrowsError(
+            try AgentProposalArtifactsProjector.project(
+                proposal: proposal,
+                onto: baseline,
+                mode: .preview
+            )
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Agent proposal target is unavailable."
+            )
+        }
     }
 
     func testPersistProjectionWritesSuggestedUsageCue() throws {

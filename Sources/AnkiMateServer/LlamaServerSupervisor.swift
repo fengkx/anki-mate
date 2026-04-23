@@ -40,7 +40,7 @@ protocol LlamaServerSupervising: AnyObject {
     var loadedModelPath: String? { get }
     var childPort: Int? { get }
 
-    func loadModel(path: String, contextSize: Int, gpuLayers: Int) async throws
+    func loadModel(path: String, mmprojPath: String?, contextSize: Int, gpuLayers: Int) async throws
     func unloadModel() async
     func shutdown() async
 }
@@ -81,7 +81,7 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
 
     // MARK: - Public
 
-    func loadModel(path: String, contextSize: Int, gpuLayers: Int) async throws {
+    func loadModel(path: String, mmprojPath: String?, contextSize: Int, gpuLayers: Int) async throws {
         // Idempotent: already ready with the same model
         if case .ready(_, let currentPath) = state, currentPath == path {
             return
@@ -106,6 +106,7 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
         proc.arguments = Self.launchArguments(
             port: internalPort,
             modelPath: path,
+            mmprojPath: mmprojPath,
             contextSize: contextSize,
             gpuLayers: gpuLayers
         )
@@ -286,10 +287,11 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
     static func launchArguments(
         port: Int,
         modelPath: String,
+        mmprojPath: String? = nil,
         contextSize: Int,
         gpuLayers: Int
     ) -> [String] {
-        [
+        var arguments = [
             "--host", "127.0.0.1",
             "--port", "\(port)",
             "--jinja",
@@ -300,6 +302,10 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
             "-c", "\(contextSize)",
             "-ngl", "\(gpuLayers)",
         ]
+        if let mmprojPath, !mmprojPath.isEmpty {
+            arguments.append(contentsOf: ["--mmproj", mmprojPath])
+        }
+        return arguments
     }
 
     // MARK: - Environment

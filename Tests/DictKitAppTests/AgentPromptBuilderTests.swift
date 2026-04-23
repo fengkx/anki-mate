@@ -16,7 +16,7 @@ final class AgentPromptBuilderTests: XCTestCase {
             )
         )
 
-        let systemPrompt = messages.first(where: { $0.role == .system })?.content ?? ""
+        let systemPrompt = messages.first(where: { $0.role == .system })?.content.plainText ?? ""
 
         XCTAssertTrue(systemPrompt.contains("study assistant for Anki vocabulary cards"))
         XCTAssertTrue(systemPrompt.contains("You can only edit card content"))
@@ -54,7 +54,7 @@ final class AgentPromptBuilderTests: XCTestCase {
             )
         )
 
-        let combined = messages.map(\.content).joined(separator: "\n---\n")
+        let combined = messages.map(\.content.plainText).joined(separator: "\n---\n")
 
         XCTAssertTrue(combined.contains("Current card snapshot"))
         XCTAssertTrue(combined.contains("┌─────────── FRONT"))
@@ -65,6 +65,28 @@ final class AgentPromptBuilderTests: XCTestCase {
         XCTAssertTrue(combined.contains("applied"))
         XCTAssertTrue(combined.contains("Add company-vs-fruit pitfall"))
     }
+
+    func testSystemPromptDiscouragesInternalLabelQuestionsBeforeProposal() {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+        let builder = AgentPromptBuilder()
+        let messages = builder.buildMessages(
+            context: .init(
+                cardSnapshot: Self.sampleSnapshot(),
+                messages: [
+                    Self.message(role: .user, ordinal: 1, content: .text("帮我新增一个例句吧"))
+                ],
+                tools: registry.definitions
+            )
+        )
+
+        let systemPrompt = messages.first(where: { $0.role == .system })?.content.plainText ?? ""
+
+        XCTAssertTrue(systemPrompt.contains("Do not ask the user to choose between internal labels or categories before creating a proposal"))
+        XCTAssertTrue(systemPrompt.contains("Default to generating the content yourself unless the user explicitly requests sourced/cited/verbatim content"))
+        XCTAssertFalse(systemPrompt.contains("AI-generated"))
+        XCTAssertFalse(systemPrompt.contains("natural context"))
+    }
+
 }
 
 final class AgentContextAssemblyTests: XCTestCase {
@@ -102,7 +124,7 @@ final class AgentContextAssemblyTests: XCTestCase {
                 messages: history
             )
         )
-        let combined = built.map(\.content).joined(separator: "\n")
+        let combined = built.map(\.content.plainText).joined(separator: "\n")
 
         XCTAssertFalse(combined.contains("Old detailed request that should disappear"))
         XCTAssertTrue(combined.contains("Earlier discussion focused on shortening examples."))
@@ -133,7 +155,7 @@ final class AgentContextAssemblyTests: XCTestCase {
                 messages: [summary] + recentMessages
             )
         )
-        let combined = built.map(\.content).joined(separator: "\n")
+        let combined = built.map(\.content.plainText).joined(separator: "\n")
 
         XCTAssertFalse(combined.contains("summary summary summary"))
         XCTAssertTrue(combined.contains("recent-3"))
