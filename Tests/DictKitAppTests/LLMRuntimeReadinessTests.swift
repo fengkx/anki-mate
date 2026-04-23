@@ -107,9 +107,140 @@ final class LLMRuntimeReadinessTests: XCTestCase {
         XCTAssertNil(service.loadedModelId)
         XCTAssertFalse(service.isReady)
     }
+
+    func testWarmupCoordinatorRunsWarmupOnlyOncePerLoadedModel() async throws {
+        let coordinator = LLMWarmupCoordinator()
+        let recorder = WarmupRecorder()
+        let rpcClient = RPCClient()
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        let invocations = await recorder.invocations
+        XCTAssertEqual(invocations.count, 1)
+        XCTAssertEqual(invocations.first?.port, 8081)
+        XCTAssertEqual(invocations.first?.modelPath, "/tmp/runtime-alpha.gguf")
+    }
+
+    func testWarmupCoordinatorAllowsWarmupAgainAfterReset() async throws {
+        let coordinator = LLMWarmupCoordinator()
+        let recorder = WarmupRecorder()
+        let rpcClient = RPCClient()
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        await coordinator.reset()
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        let invocations = await recorder.invocations
+        XCTAssertEqual(invocations.count, 2)
+    }
+
+    func testWarmupCoordinatorRunsAgainWhenModelPathChanges() async throws {
+        let coordinator = LLMWarmupCoordinator()
+        let recorder = WarmupRecorder()
+        let rpcClient = RPCClient()
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha-v1.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        try await coordinator.warmIfNeeded(
+            modelId: "runtime-alpha",
+            modelPath: "/tmp/runtime-alpha-v2.gguf",
+            inferencePort: 8081,
+            rpcClient: rpcClient
+        ) { _, port, modelPath in
+            await recorder.record(port: port, modelPath: modelPath)
+        }
+
+        let invocations = await recorder.invocations
+        XCTAssertEqual(invocations.count, 2)
+        XCTAssertEqual(
+            invocations.map(\.modelPath),
+            ["/tmp/runtime-alpha-v1.gguf", "/tmp/runtime-alpha-v2.gguf"]
+        )
+    }
+
+    func testInferenceRequestGateSkipsWarmupWhileForegroundLeaseIsActive() async throws {
+        let gate = LLMInferenceRequestGate()
+        let foregroundLease = try await gate.acquireForegroundLease()
+
+        let warmupLease = await gate.tryAcquireWarmupLease()
+
+        XCTAssertNil(warmupLease)
+        await gate.release(foregroundLease)
+    }
+
+    func testInferenceRequestGateSkipsWarmupWhileForegroundRequestIsWaiting() async throws {
+        let gate = LLMInferenceRequestGate()
+        let activeLease = try await gate.acquireForegroundLease()
+
+        let foregroundTask = Task {
+            try await gate.acquireForegroundLease()
+        }
+        defer { foregroundTask.cancel() }
+
+        await Task.yield()
+        let warmupLease = await gate.tryAcquireWarmupLease()
+
+        XCTAssertNil(warmupLease)
+
+        await gate.release(activeLease)
+        let queuedLease = try await foregroundTask.value
+        await gate.release(queuedLease)
+    }
 }
 
 private extension LLMRuntimeReadinessTests {
+    actor WarmupRecorder {
+        struct Invocation: Equatable {
+            let port: Int
+            let modelPath: String
+        }
+
+        private(set) var invocations: [Invocation] = []
+
+        func record(port: Int, modelPath: String) {
+            invocations.append(Invocation(port: port, modelPath: modelPath))
+        }
+    }
+
     struct TestContext {
         let defaults: UserDefaults
         let baseDirectoryURL: URL
@@ -148,7 +279,8 @@ private extension LLMRuntimeReadinessTests {
         context: TestContext,
         models: [ModelInfo],
         selectedModelId: String,
-        lastSuccessfulModelId: String? = nil
+        lastSuccessfulModelId: String? = nil,
+        warmupRequest: @escaping LLMWarmupRequest = LLMWarmupCoordinator.defaultWarmupRequest
     ) -> LLMService {
         context.defaults.set(selectedModelId, forKey: selectedModelDefaultsKey)
         if let lastSuccessfulModelId {
@@ -161,7 +293,8 @@ private extension LLMRuntimeReadinessTests {
             registry: ModelRegistry(models: models),
             downloadManager: ModelDownloadManager(baseDirectoryURL: context.baseDirectoryURL),
             serverManager: ServerProcessManager(rpcClient: rpcClient),
-            rpcClient: rpcClient
+            rpcClient: rpcClient,
+            warmupRequest: warmupRequest
         )
     }
 

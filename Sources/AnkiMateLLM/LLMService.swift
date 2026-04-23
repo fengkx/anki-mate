@@ -6,6 +6,9 @@ import Combine
 import AnkiMateRPC
 import DictKit
 
+private let llmServiceWarmupRequestTimeoutSeconds: TimeInterval = 5
+private let llmServiceWarmupResourceTimeoutSeconds: TimeInterval = 10
+
 @MainActor
 public final class LLMService: ObservableObject {
     private static let selectedModelIdDefaultsKey = "ankimate.selectedModelId"
@@ -15,7 +18,7 @@ public final class LLMService: ObservableObject {
     private static let recallDebugEnvironmentKey = "DICTKIT_LLM_RECALL_DEBUG"
     static let exampleArtifactMinTokens = 1024
     static let usageHintMinTokens = 1024
-    static let learningAidsMaxTokens = 1024
+    static let learningAidsMaxTokens = 1280
     static let learningAidJudgeMaxTokens = 1024
     static let learningAidCombinedJudgeMaxTokens = 1024
     static let ipaMaxTokens = 1024
@@ -37,10 +40,16 @@ public final class LLMService: ObservableObject {
     public let serverManager: ServerProcessManager
 
     private let rpcClient: RPCClient
+    private let warmupRPCClient: RPCClient
     private let defaults: UserDefaults
+    private let warmupCoordinator: LLMWarmupCoordinator
+    private let warmupRequest: LLMWarmupRequest
+    private let inferenceRequestGate: LLMInferenceRequestGate
     private var cancellables = Set<AnyCancellable>()
     private var autoStartOnAvailableModel = false
     private var autoStartTask: Task<Void, Never>?
+    private var warmupTask: Task<Void, Never>?
+    private var warmupTaskID: UUID?
     private var loadedModelPath: String?
     /// Port of the llama-server child process for direct chat completion requests.
     @Published public private(set) var llamaServerPort: Int?
@@ -50,12 +59,19 @@ public final class LLMService: ObservableObject {
         rpcClientConfiguration: RPCClient.Configuration = .init()
     ) {
         let client = RPCClient(configuration: rpcClientConfiguration)
+        let warmupClient = RPCClient(
+            configuration: .init(
+                requestTimeoutSeconds: llmServiceWarmupRequestTimeoutSeconds,
+                resourceTimeoutSeconds: llmServiceWarmupResourceTimeoutSeconds
+            )
+        )
         self.init(
             defaults: defaults,
             registry: ModelRegistry(),
             downloadManager: ModelDownloadManager(),
             serverManager: ServerProcessManager(rpcClient: client),
-            rpcClient: client
+            rpcClient: client,
+            warmupRPCClient: warmupClient
         )
     }
 
@@ -64,13 +80,26 @@ public final class LLMService: ObservableObject {
         registry: ModelRegistry,
         downloadManager: ModelDownloadManager,
         serverManager: ServerProcessManager,
-        rpcClient: RPCClient
+        rpcClient: RPCClient,
+        warmupRPCClient: RPCClient? = nil,
+        warmupCoordinator: LLMWarmupCoordinator = LLMWarmupCoordinator(),
+        inferenceRequestGate: LLMInferenceRequestGate? = nil,
+        warmupRequest: @escaping LLMWarmupRequest = LLMWarmupCoordinator.defaultWarmupRequest
     ) {
         self.rpcClient = rpcClient
+        self.warmupRPCClient = warmupRPCClient ?? RPCClient(
+            configuration: .init(
+                requestTimeoutSeconds: llmServiceWarmupRequestTimeoutSeconds,
+                resourceTimeoutSeconds: llmServiceWarmupResourceTimeoutSeconds
+            )
+        )
         self.defaults = defaults
         self.registry = registry
         self.downloadManager = downloadManager
         self.serverManager = serverManager
+        self.warmupCoordinator = warmupCoordinator
+        self.inferenceRequestGate = inferenceRequestGate ?? LLMInferenceRequestGate()
+        self.warmupRequest = warmupRequest
         self.selectedModelId = defaults.string(forKey: Self.selectedModelIdDefaultsKey) ?? ""
 
         // Observe server state changes
@@ -129,10 +158,12 @@ public final class LLMService: ObservableObject {
             }
 
             let modelPath = downloadManager.localPath(for: model).path
+            let mmprojPath = model.requiresMMProj ? downloadManager.localMMProjPath(for: model)?.path : nil
             let _: LoadModelResult = try await rpcClient.call(
                 method: RPCMethod.loadModel,
                 params: LoadModelParams(
                     modelPath: modelPath,
+                    mmprojPath: mmprojPath,
                     contextSize: Self.contextSizeOverride(defaultValue: model.contextSize),
                     gpuLayers: Self.gpuLayersOverride()
                 ),
@@ -156,6 +187,10 @@ public final class LLMService: ObservableObject {
 
     /// Stop the server.
     public func stopServer() async {
+        warmupTask?.cancel()
+        warmupTask = nil
+        warmupTaskID = nil
+        await warmupCoordinator.reset()
         await serverManager.stop()
         loadedModelId = nil
         loadedModelPath = nil
@@ -187,6 +222,7 @@ public final class LLMService: ObservableObject {
 
         do {
             try await ensureReady()
+            scheduleWarmupIfNeeded()
         } catch {
             // Best effort: keep the auto-start path non-fatal and leave the UI state intact.
         }
@@ -215,30 +251,28 @@ public final class LLMService: ObservableObject {
         word: String,
         senses: [LLMSensePromptInput]
     ) async throws -> [String] {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let prompt = LLMPrompt.exampleSentences(
+                word: word,
+                senses: senses
+            )
+            let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-        let prompt = LLMPrompt.exampleSentences(
-            word: word,
-            senses: senses
-        )
-        let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
+            let response = try await self.rpcClient.chatCompletion(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: [
+                        ChatMessage(role: "system", content: prompt.system),
+                        ChatMessage(role: "user", content: prompt.user),
+                    ],
+                    temperature: self.adjustedTemperature(0.7),
+                    max_completion_tokens: max(300, sentenceCount * 96)
+                ),
+                port: port
+            )
 
-        let response = try await rpcClient.chatCompletion(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: [
-                    ChatMessage(role: "system", content: prompt.system),
-                    ChatMessage(role: "user", content: prompt.user),
-                ],
-                temperature: adjustedTemperature(0.7),
-                max_tokens: max(300, sentenceCount * 96)
-            ),
-            port: port
-        )
-
-        // Parse numbered sentences
-        return parseSentences(response.choices.first?.message.content ?? "")
+            return self.parseSentences(response.choices.first?.message.content?.plainText ?? "")
+        }
     }
 
     public func generateExampleSentenceArtifacts(
@@ -356,30 +390,29 @@ public final class LLMService: ObservableObject {
         senses: [LLMSensePromptInput],
         onDelta: @escaping @Sendable (String) -> Void
     ) async throws -> [String] {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let prompt = LLMPrompt.exampleSentences(
+                word: word,
+                senses: senses
+            )
+            let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-        let prompt = LLMPrompt.exampleSentences(
-            word: word,
-            senses: senses
-        )
-        let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
-
-        let response = try await rpcClient.chatCompletionStream(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: [
-                    ChatMessage(role: "system", content: prompt.system),
-                    ChatMessage(role: "user", content: prompt.user),
-                ],
-                temperature: adjustedTemperature(0.7),
-                max_tokens: max(360, sentenceCount * 112),
-                stream: true
-            ),
-            port: port,
-            onDelta: onDelta
-        )
-        return parseSentences(response.choices.first?.message.content ?? "")
+            let response = try await self.rpcClient.chatCompletionStream(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: [
+                        ChatMessage(role: "system", content: prompt.system),
+                        ChatMessage(role: "user", content: prompt.user),
+                    ],
+                    temperature: self.adjustedTemperature(0.7),
+                    max_completion_tokens: max(360, sentenceCount * 112),
+                    stream: true
+                ),
+                port: port,
+                onDelta: onDelta
+            )
+            return self.parseSentences(response.choices.first?.message.content?.plainText ?? "")
+        }
     }
 
     /// Generate an optimized definition.
@@ -431,30 +464,29 @@ public final class LLMService: ObservableObject {
         senses: [LLMSensePromptInput],
         onDelta: @escaping @Sendable (String) -> Void
     ) async throws -> String {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let prompt = LLMPrompt.legacyOptimizeDefinitionText(
+                word: word,
+                senses: senses
+            )
+            let hintCount = LLMPrompt.usageHintCount(for: senses)
 
-        let prompt = LLMPrompt.legacyOptimizeDefinitionText(
-            word: word,
-            senses: senses
-        )
-        let hintCount = LLMPrompt.usageHintCount(for: senses)
-
-        let response = try await rpcClient.chatCompletionStream(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: [
-                    ChatMessage(role: "system", content: prompt.system),
-                    ChatMessage(role: "user", content: prompt.user),
-                ],
-                temperature: adjustedTemperature(0.5),
-                max_tokens: max(260, hintCount * 104),
-                stream: true
-            ),
-            port: port,
-            onDelta: onDelta
-        )
-        return normalizeLegacyUsageHints(response.choices.first?.message.content ?? "")
+            let response = try await self.rpcClient.chatCompletionStream(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: [
+                        ChatMessage(role: "system", content: prompt.system),
+                        ChatMessage(role: "user", content: prompt.user),
+                    ],
+                    temperature: self.adjustedTemperature(0.5),
+                    max_completion_tokens: max(260, hintCount * 104),
+                    stream: true
+                ),
+                port: port,
+                onDelta: onDelta
+            )
+            return self.normalizeLegacyUsageHints(response.choices.first?.message.content?.plainText ?? "")
+        }
     }
 
     public func generateUsageHints(
@@ -1440,29 +1472,28 @@ public final class LLMService: ObservableObject {
         allowReasoningFallback: Bool = true,
         operation: String = "Structured generation"
     ) async throws -> T {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let response = try await self.rpcClient.chatCompletion(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: [
+                        ChatMessage(role: "system", content: prompt.system),
+                        ChatMessage(role: "user", content: prompt.user),
+                    ],
+                    temperature: temperature,
+                    max_completion_tokens: maxTokens,
+                    response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
+                ),
+                port: port
+            )
 
-        let response = try await rpcClient.chatCompletion(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: [
-                    ChatMessage(role: "system", content: prompt.system),
-                    ChatMessage(role: "user", content: prompt.user),
-                ],
-                temperature: temperature,
-                max_tokens: maxTokens,
-                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
-            ),
-            port: port
-        )
-
-        let responseText = try Self.strictStructuredResponseText(
-            from: response,
-            operation: operation,
-            allowReasoningFallback: allowReasoningFallback
-        )
-        return try Self.decodeStructuredOutput(type, from: responseText)
+            let responseText = try Self.strictStructuredResponseText(
+                from: response,
+                operation: operation,
+                allowReasoningFallback: allowReasoningFallback
+            )
+            return try Self.decodeStructuredOutput(type, from: responseText)
+        }
     }
 
     /// OpenAI-style chat generation entry point.
@@ -1480,47 +1511,46 @@ public final class LLMService: ObservableObject {
         maxTokens: Int? = nil,
         temperature: Float = 0.2
     ) async throws -> GenerateResult {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content)) }
 
-        let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
-
-        let chatTools: [ChatTool]? = tools.flatMap { defs in
-            let mapped = defs.map { tool in
-                ChatTool(
-                    function: ChatFunction(
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.parameters
+            let chatTools: [ChatTool]? = tools.flatMap { defs in
+                let mapped = defs.map { tool in
+                    ChatTool(
+                        function: ChatFunction(
+                            name: tool.name,
+                            description: tool.description,
+                            parameters: tool.parameters
+                        )
                     )
-                )
+                }
+                return mapped.isEmpty ? nil : mapped
             }
-            return mapped.isEmpty ? nil : mapped
+
+            let chatToolChoice: JSONValue? = if let toolChoice {
+                .string(toolChoice)
+            } else if chatTools != nil {
+                .string("auto")
+            } else {
+                nil
+            }
+
+            let response = try await self.rpcClient.chatCompletion(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: chatMessages,
+                    temperature: temperature,
+                    max_completion_tokens: maxTokens,
+                    tools: chatTools,
+                    tool_choice: chatToolChoice,
+                    parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
+                    response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
+                ),
+                port: port
+            )
+
+            return Self.mapToGenerateResult(response)
         }
-
-        let chatToolChoice: JSONValue? = if let toolChoice {
-            .string(toolChoice)
-        } else if chatTools != nil {
-            .string("auto")
-        } else {
-            nil
-        }
-
-        let response = try await rpcClient.chatCompletion(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: chatMessages,
-                temperature: temperature,
-                max_tokens: maxTokens,
-                tools: chatTools,
-                tool_choice: chatToolChoice,
-                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
-                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
-            ),
-            port: port
-        )
-
-        return Self.mapToGenerateResult(response)
     }
 
     /// Streaming variant of `generate`. Calls `onDelta` for each content chunk.
@@ -1534,49 +1564,48 @@ public final class LLMService: ObservableObject {
         onDelta: @escaping @Sendable (String) -> Void,
         onReasoningDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> GenerateResult {
-        try await ensureReady()
-        let port = try requireInferencePort()
+        try await withForegroundInferenceAccess { port in
+            let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content)) }
 
-        let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
-
-        let chatTools: [ChatTool]? = tools.flatMap { defs in
-            let mapped = defs.map { tool in
-                ChatTool(
-                    function: ChatFunction(
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.parameters
+            let chatTools: [ChatTool]? = tools.flatMap { defs in
+                let mapped = defs.map { tool in
+                    ChatTool(
+                        function: ChatFunction(
+                            name: tool.name,
+                            description: tool.description,
+                            parameters: tool.parameters
+                        )
                     )
-                )
+                }
+                return mapped.isEmpty ? nil : mapped
             }
-            return mapped.isEmpty ? nil : mapped
+
+            let chatToolChoice: JSONValue? = if let toolChoice {
+                .string(toolChoice)
+            } else if chatTools != nil {
+                .string("auto")
+            } else {
+                nil
+            }
+
+            let response = try await self.rpcClient.chatCompletionStream(
+                request: ChatCompletionRequest(
+                    model: self.loadedModelPath ?? "",
+                    messages: chatMessages,
+                    temperature: temperature,
+                    max_completion_tokens: maxTokens,
+                    stream: true,
+                    tools: chatTools,
+                    tool_choice: chatToolChoice,
+                    parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil
+                ),
+                port: port,
+                onDelta: onDelta,
+                onReasoningDelta: onReasoningDelta
+            )
+
+            return Self.mapToGenerateResult(response)
         }
-
-        let chatToolChoice: JSONValue? = if let toolChoice {
-            .string(toolChoice)
-        } else if chatTools != nil {
-            .string("auto")
-        } else {
-            nil
-        }
-
-        let response = try await rpcClient.chatCompletionStream(
-            request: ChatCompletionRequest(
-                model: loadedModelPath ?? "",
-                messages: chatMessages,
-                temperature: temperature,
-                max_tokens: maxTokens,
-                stream: true,
-                tools: chatTools,
-                tool_choice: chatToolChoice,
-                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil
-            ),
-            port: port,
-            onDelta: onDelta,
-            onReasoningDelta: onReasoningDelta
-        )
-
-        return Self.mapToGenerateResult(response)
     }
 
     /// Returns the llama-server child port for direct chat completion requests.
@@ -1718,6 +1747,69 @@ public final class LLMService: ObservableObject {
         autoStartTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.autoActivateInferenceServerIfPossible()
+        }
+    }
+
+    private func scheduleWarmupIfNeeded() {
+        guard let modelId = loadedModelId,
+              let modelPath = loadedModelPath,
+              let inferencePort = llamaServerPort else {
+            return
+        }
+
+        guard warmupTask == nil else { return }
+
+        let taskID = UUID()
+        warmupTaskID = taskID
+        warmupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let lease = await self.inferenceRequestGate.tryAcquireWarmupLease() else {
+                self.clearWarmupTaskIfCurrent(taskID)
+                return
+            }
+            defer {
+                Task {
+                    await self.inferenceRequestGate.release(lease)
+                }
+                self.clearWarmupTaskIfCurrent(taskID)
+            }
+
+            do {
+                try await self.warmupCoordinator.warmIfNeeded(
+                    modelId: modelId,
+                    modelPath: modelPath,
+                    inferencePort: inferencePort,
+                    rpcClient: self.warmupRPCClient,
+                    warmupRequest: self.warmupRequest
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func clearWarmupTaskIfCurrent(_ taskID: UUID) {
+        guard warmupTaskID == taskID else { return }
+        warmupTask = nil
+        warmupTaskID = nil
+    }
+
+    private func withForegroundInferenceAccess<T>(
+        _ operation: (Int) async throws -> T
+    ) async throws -> T {
+        let lease = try await inferenceRequestGate.acquireForegroundLease()
+
+        do {
+            try await ensureReady()
+            let port = try requireInferencePort()
+            let result = try await operation(port)
+            await inferenceRequestGate.release(lease)
+            return result
+        } catch {
+            await inferenceRequestGate.release(lease)
+            throw error
         }
     }
 
@@ -3910,6 +4002,22 @@ extension LLMService {
 
     // MARK: - OpenAI Mapping Helpers
 
+    private static func mapMessageContent(_ content: LLMMessageContent) -> ChatMessageContent {
+        switch content {
+        case .text(let text):
+            return .text(text)
+        case .parts(let parts):
+            return .parts(parts.map { part in
+                switch part {
+                case .text(let text):
+                    return .text(text)
+                case .imageURL(let url):
+                    return .imageURL(url)
+                }
+            })
+        }
+    }
+
     private static func mapResponseFormat(_ format: LLMResponseFormat) -> ChatResponseFormat? {
         switch format.kind {
         case .text:
@@ -3929,7 +4037,7 @@ extension LLMService {
 
     static func primaryResponseText(from response: ChatCompletionResponse) -> String {
         let choice = response.choices.first
-        let content = choice?.message.content ?? ""
+        let content = choice?.message.content?.plainText ?? ""
         let reasoning = choice?.message.reasoning_content ?? ""
         return (content.isEmpty ? reasoning : content).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -3940,7 +4048,7 @@ extension LLMService {
         allowReasoningFallback: Bool
     ) throws -> String {
         let choice = response.choices.first
-        let content = choice?.message.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let content = choice?.message.content?.plainText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !content.isEmpty {
             return content
         }
