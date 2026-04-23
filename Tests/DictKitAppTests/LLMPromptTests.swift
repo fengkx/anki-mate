@@ -426,6 +426,8 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("strict JSON learning aids"))
         XCTAssertTrue(prompt.system.contains("Use accepted learning material as already-covered teaching points and avoid repeating them. Accepted material may be in Chinese or English; concept overlap still counts."))
         XCTAssertTrue(prompt.system.contains("Your job is not to fill sections."))
+        XCTAssertTrue(prompt.system.contains("For pitfalls, think like a language teacher: surface likely learner misunderstandings or misuses, not generic advice about better wording."))
+        XCTAssertTrue(prompt.system.contains("A pitfall should describe misunderstanding the word itself, not criticizing the practice or style the word refers to."))
         XCTAssertTrue(prompt.system.contains("Prefer omission over low-information correctness."))
         XCTAssertTrue(prompt.user.contains("\"pitfalls\""))
         XCTAssertTrue(prompt.user.contains("\"mnemonics\""))
@@ -439,7 +441,21 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"clue\""))
         XCTAssertTrue(prompt.user.contains("\"phrase\""))
         XCTAssertTrue(prompt.user.contains("\"gloss\""))
-        XCTAssertTrue(prompt.user.contains("Accepted learning material"))
+        XCTAssertTrue(prompt.user.contains("<learning_aids_context>"))
+        XCTAssertTrue(prompt.user.contains("<target>charge</target>"))
+        XCTAssertTrue(prompt.user.contains("<sense_inventory>"))
+        XCTAssertTrue(prompt.user.contains("<sense index=\"1\">"))
+        XCTAssertTrue(prompt.user.contains("<part_of_speech>noun</part_of_speech>"))
+        XCTAssertTrue(prompt.user.contains("<definition>formal accusation</definition>"))
+        XCTAssertTrue(prompt.user.contains("<accepted_learning_material>"))
+        XCTAssertTrue(prompt.user.contains("<pitfalls>none</pitfalls>"))
+        XCTAssertTrue(prompt.user.contains("<anchor_snapshot>"))
+        XCTAssertTrue(prompt.user.contains("<text>charge</text>"))
+        XCTAssertTrue(prompt.user.contains("<note>keep raw</note>"))
+        XCTAssertTrue(prompt.user.contains("Target expression contract"))
+        XCTAssertTrue(prompt.user.contains("Do not replace the target headword or target expression with a Chinese gloss, translation, or romanization"))
+        XCTAssertTrue(prompt.user.contains("Chinese may appear as explanation, gloss, or translation, but it must not replace the expression the learner is supposed to remember"))
+        XCTAssertTrue(prompt.user.contains("If you mention the target expression directly, keep the original target surface"))
         XCTAssertTrue(prompt.user.contains("Quality bar"))
         XCTAssertTrue(prompt.user.contains("Every item must be specific to this target word"))
         XCTAssertTrue(prompt.user.contains("If an item is correct but generic, obvious, or weakly memorable, do not return it"))
@@ -458,6 +474,10 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("pitfalls: require a concrete wrong form, confusable alternative, spelling trap, or misuse context; otherwise return an empty array"))
         XCTAssertTrue(prompt.user.contains("pitfalls: a near-synonym wording contrast is not enough unless it points to a concrete learner mistake"))
         XCTAssertTrue(prompt.user.contains("pitfalls: if accepted pitfalls already cover a spelling trap, do not emit another pitfall whose main information is that same letters or chunk"))
+        XCTAssertTrue(prompt.user.contains("pitfalls: write pitfalls as likely learner errors, not generic style advice or editorial preference"))
+        XCTAssertTrue(prompt.user.contains("pitfalls: good pitfalls usually name the mistaken interpretation, contrast, or context that would lead the learner astray"))
+        XCTAssertTrue(prompt.user.contains("pitfalls: describe confusion about the word's meaning or use, not a judgment about whether the thing it names is good or bad"))
+        XCTAssertTrue(prompt.user.contains("pitfalls: avoid turning words like jargon, slang, or formality labels into generic advice about clearer communication"))
         XCTAssertTrue(prompt.user.contains("mnemonics: require a vivid image, a concrete spelling chunk, or a memorable contrast that still works without seeing the headword"))
         XCTAssertTrue(prompt.user.contains("mnemonics: for abstract words, a concrete scene is acceptable; a synonym paraphrase is not"))
         XCTAssertTrue(prompt.user.contains("mnemonics: no acrostics, no whole-word spelling, no \"think of a <word> person\""))
@@ -471,7 +491,6 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Bad collocation: principal -> \"principal of the school\""))
         XCTAssertTrue(prompt.user.contains("Why bad: this just restates the dictionary sense instead of teaching a reusable pattern"))
         XCTAssertTrue(prompt.user.contains("If accepted pitfalls already include \"easy to miss the double l\", return an empty pitfall unless you have a genuinely different risk"))
-        XCTAssertTrue(prompt.user.contains("\"charge\" [note: keep raw]"))
         XCTAssertTrue(prompt.user.contains("do not invent source offsets or remap anchors"))
     }
 
@@ -601,6 +620,32 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("For multisyllable words, uppercase the primary-stress syllable only"))
     }
 
+    func testPronunciationEnhancementPromptIncludesTargetCharactersForSpellingPreservation() {
+        let prompt = LLMPrompt.pronunciationEnhancement(
+            word: "corpus",
+            dialect: "AmE",
+            pronunciationGuide: "KOR-pus",
+            existingIPA: "kɔrpəs",
+            senses: [
+                LLMSensePromptInput(
+                    partOfSpeech: "noun",
+                    definition: "a body of written or spoken material"
+                )
+            ]
+        )
+
+        XCTAssertTrue(prompt.user.contains("Target characters"))
+        XCTAssertTrue(prompt.user.contains("1: c"))
+        XCTAssertTrue(prompt.user.contains("2: o"))
+        XCTAssertTrue(prompt.user.contains("3: r"))
+        XCTAssertTrue(prompt.user.contains("4: p"))
+        XCTAssertTrue(prompt.user.contains("5: u"))
+        XCTAssertTrue(prompt.user.contains("6: s"))
+        XCTAssertTrue(prompt.user.contains("Build stressSyllables only from these Target characters"))
+        XCTAssertTrue(prompt.user.contains("Hyphen is the only character you may add"))
+        XCTAssertTrue(prompt.user.contains("uppercase/lowercase may only change casing of existing target letters"))
+    }
+
     func testPronunciationEnhancementRetryPromptEmphasizesSpellingPreservation() {
         let prompt = LLMPrompt.pronunciationEnhancement(
             word: "aesthetic",
@@ -619,5 +664,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("Retry correction:"))
         XCTAssertTrue(prompt.user.contains("did not preserve the original written spelling"))
         XCTAssertTrue(prompt.user.contains("copy the original word's letters exactly"))
+        XCTAssertTrue(prompt.user.contains("insert only hyphens"))
+        XCTAssertTrue(prompt.user.contains("use casing only to mark primary stress"))
     }
 }

@@ -71,6 +71,13 @@ private enum PromptText {
         }
         return string
     }
+
+    static func xmlEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
 }
 
 public enum LLMPrompt {
@@ -761,6 +768,8 @@ public enum LLMPrompt {
             "Generate strict JSON learning aids for a vocabulary learner.",
             "Your job is not to fill sections. Your job is to return only items that add non-obvious learning value beyond the dictionary senses.",
             "A good item must teach at least one of: a likely learner mistake, a word-specific retrieval hook, or a reusable phrase pattern that is more informative than the definition itself.",
+            "For pitfalls, think like a language teacher (from a language learner perspective): surface likely learner misunderstandings, similar words misspelling or misuses, not generic advice about better wording.",
+            "A pitfall should describe misunderstanding the word itself, not criticizing the practice or style the word refers to.",
             "If a section does not contain that level of value, return an empty array.",
             "Prefer omission over low-information correctness.",
             "Keep every field concise and practical for flashcards.",
@@ -770,14 +779,26 @@ public enum LLMPrompt {
 
         let user = PromptText.join([
             #"Generate structured learning aids for the target "\#(trimmedWord)"."#,
-            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
-            PromptText.labeledBlock("Accepted learning material", value: learningAidAcceptedContextText(acceptedContext)),
-            PromptText.labeledBlock("Anchor snapshot", value: anchorSnapshotText(anchor)),
+            learningAidContextXML(
+                target: trimmedWord,
+                senses: trimmedSenses,
+                acceptedContext: acceptedContext,
+                anchor: anchor
+            ),
+            PromptText.labeledBlock(
+                "Target expression contract",
+                value: PromptText.bulletList([
+                    "Do not replace the target headword or target expression with a Chinese gloss, translation, or romanization",
+                    "All learning aids must stay centered on the original target expression, even when the sense inventory contains Chinese explanations",
+                    "Chinese may appear as explanation, gloss, or translation, but it must not replace the expression the learner is supposed to remember",
+                    "If you mention the target expression directly, keep the original target surface: \"\(trimmedWord)\""
+                ])
+            ),
             PromptText.labeledBlock(
                 "Quality bar",
                 value: PromptText.bulletList([
-                    "Every item must add information that is not already obvious from the sense inventory",
-                    "Every item must be specific to this target word, not a generic fact that would also fit nearby synonyms",
+	                    "Every item must add information that is not already obvious from the sense inventory",
+	                    "Every item must be specific to this target word, not a generic fact that would also fit nearby synonyms",
                     "Every item must save the learner effort: after reading it once, the learner should know what to remember or what mistake to avoid",
                     "If an item is correct but generic, obvious, or weakly memorable, do not return it"
                 ])
@@ -842,6 +863,10 @@ public enum LLMPrompt {
                     "pitfalls: a near-synonym wording contrast is not enough unless it points to a concrete learner mistake",
                     "pitfalls: if accepted pitfalls already cover a spelling trap, do not emit another pitfall whose main information is that same letters or chunk",
                     "pitfalls: reject vague nuance comments that do not predict a real learner error",
+                    "pitfalls: write pitfalls as likely learner errors, not generic style advice or editorial preference",
+                    "pitfalls: good pitfalls usually name the mistaken interpretation, contrast, or context that would lead the learner astray",
+                    "pitfalls: describe confusion about the word's meaning or use, not a judgment about whether the thing it names is good or bad",
+                    "pitfalls: avoid turning words like jargon, slang, or formality labels into generic advice about clearer communication",
                     "mnemonics: require a vivid image, a concrete spelling chunk, or a memorable contrast that still works without seeing the headword",
                     "mnemonics: for abstract words, a concrete scene is acceptable; a synonym paraphrase is not",
                     "mnemonics: no acrostics, no whole-word spelling, no \"think of a <word> person\"",
@@ -1086,7 +1111,7 @@ public enum LLMPrompt {
             ? PromptText.join([
                 "Retry correction:",
                 "Your previous stressSyllables value did not preserve the original written spelling.",
-                "This time, copy the original word's letters exactly and only insert hyphens plus uppercase emphasis."
+                "This time, copy the original word's letters exactly, insert only hyphens, and use casing only to mark primary stress."
             ])
             : nil
 
@@ -1102,6 +1127,7 @@ public enum LLMPrompt {
                 "Existing IPA",
                 value: trimmedExistingIPA.map { "\"\($0)\"" } ?? "none"
             ),
+            PromptText.labeledBlock("Target characters", value: targetCharacterListText(for: trimmedWord)),
             retryReminder,
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
@@ -1116,6 +1142,8 @@ public enum LLMPrompt {
                     "Output JSON only",
                     "\"stressSyllables\" is required",
                     "Split the original written word into learner-friendly chunks joined by hyphens",
+                    "Build stressSyllables only from these Target characters, in the same order",
+                    "Hyphen is the only character you may add; uppercase/lowercase may only change casing of existing target letters",
                     "Preserve the original spelling exactly; do not rewrite letters to match pronunciation",
                     "After removing hyphens and case markers, the result must still spell the original word",
                     "For multisyllable words, uppercase the primary-stress syllable only, for example \"im-POR-tant\"",
@@ -1219,6 +1247,76 @@ public enum LLMPrompt {
         }
 
         return rendered.isEmpty ? "none" : rendered.joined(separator: "\n")
+    }
+
+    private static func learningAidContextXML(
+        target: String,
+        senses: [LLMSensePromptInput],
+        acceptedContext: LLMLearningAidAcceptedContext,
+        anchor: LLMAnchorSnapshot?
+    ) -> String {
+        let senseBody = senses.enumerated().map { index, sense in
+            """
+              <sense index="\(index + 1)">
+                <part_of_speech>\(PromptText.xmlEscaped(sense.partOfSpeech))</part_of_speech>
+                <definition>\(PromptText.xmlEscaped(sense.definition))</definition>\(sense.semanticHint.map { "\n            <semantic_hint>\(PromptText.xmlEscaped($0))</semantic_hint>" } ?? "")
+              </sense>
+            """
+        }.joined(separator: "\n")
+
+        let acceptedSections: [(String, [String])] = [
+            ("pitfalls", acceptedContext.acceptedPitfalls),
+            ("usage_hints", acceptedContext.acceptedUsageHints),
+            ("mnemonics", acceptedContext.acceptedMnemonics),
+            ("collocations", acceptedContext.acceptedCollocations)
+        ]
+
+        let acceptedBody = acceptedSections.map { tag, values in
+            let items = values
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            if items.isEmpty {
+                return "    <\(tag)>none</\(tag)>"
+            }
+
+            let renderedItems = items.map { value in
+                "      <item>\(PromptText.xmlEscaped(value))</item>"
+            }.joined(separator: "\n")
+
+            return [
+                "    <\(tag)>",
+                renderedItems,
+                "    </\(tag)>"
+            ].joined(separator: "\n")
+        }.joined(separator: "\n")
+
+        let anchorBody: String
+        if let anchor, !anchor.text.isEmpty {
+            let noteLine = anchor.note?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? "\n      <note>\(PromptText.xmlEscaped(anchor.note!.trimmingCharacters(in: .whitespacesAndNewlines)))</note>"
+                : ""
+            anchorBody = """
+                <anchor_snapshot>
+                  <text>\(PromptText.xmlEscaped(anchor.text))</text>\(noteLine)
+                </anchor_snapshot>
+            """
+        } else {
+            anchorBody = "    <anchor_snapshot>none</anchor_snapshot>"
+        }
+
+        return [
+            "<learning_aids_context>",
+            "  <target>\(PromptText.xmlEscaped(target))</target>",
+            "  <sense_inventory>",
+            senseBody,
+            "  </sense_inventory>",
+            "  <accepted_learning_material>",
+            acceptedBody,
+            "  </accepted_learning_material>",
+            anchorBody,
+            "</learning_aids_context>"
+        ].joined(separator: "\n")
     }
 
     private static func recallWordSignalsText(_ wordSignals: LLMRecallWordSignals) -> String {
