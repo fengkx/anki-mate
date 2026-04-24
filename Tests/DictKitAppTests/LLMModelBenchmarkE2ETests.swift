@@ -1,6 +1,8 @@
 import Foundation
 import XCTest
 @testable import AnkiMateLLM
+@testable import AnkiMateRPC
+@testable import DictKitAnkiExport
 
 @MainActor
 final class LLMModelBenchmarkE2ETests: XCTestCase {
@@ -49,12 +51,18 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
             let taskTimeouts = matrix.effectiveTaskTimeouts(forModelID: selection.modelId)
             let service = makeBenchmarkService(requestTimeoutSeconds: taskTimeouts.maximumSeconds)
             service.selectedModelId = selection.modelId
-            let tasks = try await runBenchmarkTasks(
-                service: service,
-                rounds: rounds,
-                taskTimeouts: taskTimeouts,
-                traceFileURL: traceFileURL
-            )
+            let tasks: [LLMBenchmarkReport.ModelResult.TaskResult]
+            do {
+                tasks = try await runBenchmarkTasks(
+                    service: service,
+                    rounds: rounds,
+                    taskTimeouts: taskTimeouts,
+                    traceFileURL: traceFileURL
+                )
+            } catch {
+                await service.stopServer()
+                throw error
+            }
             let summary = summarize(tasks: tasks)
 
             modelResults.append(
@@ -139,6 +147,25 @@ final class LLMModelBenchmarkE2ETests: XCTestCase {
         XCTAssertEqual(casesByWord["charge"]?.anchor?.note, "snapshot only")
         XCTAssertEqual(casesByWord["principal"]?.acceptedPitfalls, ["不要和 principle 混淆"])
     }
+
+    func testBenchmarkAgentEditCorpusExercisesProductPromptToolAndProposalPath() {
+        let casesByID = Dictionary(uniqueKeysWithValues: agentEditCases.map { ($0.caseID, $0) })
+
+        let addExample = casesByID["ravenous-add-dictionary-example"]
+        XCTAssertEqual(addExample?.word, "ravenous")
+        XCTAssertEqual(addExample?.expectedToolName, "propose_example")
+        XCTAssertEqual(addExample?.expectedOperations, [.add])
+        XCTAssertEqual(addExample?.forbiddenTargetIDs, ["sense-0-0"])
+        XCTAssertTrue(addExample?.snapshot.structuredJSON.contains(#""id":"sense-0-0""#) == true)
+        XCTAssertTrue(addExample?.snapshot.structuredJSON.contains("to be ravenous") == true)
+
+        let editMnemonics = casesByID["perpetual-delete-two-add-morphology-mnemonic"]
+        XCTAssertEqual(editMnemonics?.word, "perpetual")
+        XCTAssertEqual(editMnemonics?.expectedToolName, "propose_mnemonic")
+        XCTAssertEqual(editMnemonics?.expectedOperations, [.delete, .delete, .add])
+        XCTAssertEqual(editMnemonics?.requiredTargetIDs, ["mn-1", "mn-2"])
+        XCTAssertTrue(editMnemonics?.snapshot.structuredJSON.contains(#""id":"mn-3""#) == true)
+    }
 }
 
 private extension LLMModelBenchmarkE2ETests {
@@ -186,6 +213,23 @@ private extension LLMModelBenchmarkE2ETests {
         let acceptedMnemonics: [String]
         let acceptedCollocations: [String]
         let anchor: LLMAnchorSnapshot?
+    }
+
+    struct AgentEditCase {
+        let caseID: String
+        let word: String
+        let userMessage: String
+        let snapshot: CardRenderSnapshot
+        let expectedToolName: String
+        let expectedOperations: [ProposalOperationExpectation]
+        let requiredTargetIDs: [String]
+        let forbiddenTargetIDs: [String]
+    }
+
+    enum ProposalOperationExpectation: String, Equatable {
+        case add
+        case replace
+        case delete
     }
 
     var exampleCases: [ExampleCase] {
@@ -493,6 +537,55 @@ private extension LLMModelBenchmarkE2ETests {
         ]
     }
 
+    var agentEditCases: [AgentEditCase] {
+        [
+            .init(
+                caseID: "ravenous-add-dictionary-example",
+                word: "ravenous",
+                userMessage: "把字典里的 to be ravenous 饿极了 加到例子里",
+                snapshot: CardRenderSnapshot(
+                    kind: .standard,
+                    word: "ravenous",
+                    phonetic: "/ˈræv.ən.əs/",
+                    wireframe: "ravenous\nadjective: extremely hungry\nto be ravenous 饿极了",
+                    structuredJSON: """
+                    {"artifacts":{"collocations":[],"examples":[],"mnemonics":[],"pitfalls":[]},"kind":"standard","phonetic":"/ˈræv.ən.əs/","senses":[{"definition":"extremely hungry","examples":["to be ravenous 饿极了"],"id":"sense-0-0","pos":"adjective"}],"word":"ravenous"}
+                    """,
+                    aiSectionOrder: []
+                ),
+                expectedToolName: "propose_example",
+                expectedOperations: [.add],
+                requiredTargetIDs: [],
+                forbiddenTargetIDs: ["sense-0-0"]
+            ),
+            .init(
+                caseID: "perpetual-delete-two-add-morphology-mnemonic",
+                word: "perpetual",
+                userMessage: "删掉第一第二个记忆点，保留第三个，再加一个构词法角度的新增记忆点",
+                snapshot: CardRenderSnapshot(
+                    kind: .standard,
+                    word: "perpetual",
+                    phonetic: "/pərˈpetʃ.u.əl/",
+                    wireframe: """
+                    perpetual
+                    Mnemonics
+                    [mn-1] Perpetual = Repeat!
+                    [mn-2] Perpetual = Never End!
+                    [mn-3] per-PET-u-al, e 发短音 /e/
+                    """,
+                    structuredJSON: """
+                    {"artifacts":{"collocations":[],"examples":[],"mnemonics":[{"id":"mn-1","text":"Perpetual = Repeat!"},{"id":"mn-2","text":"Perpetual = Never End!"},{"id":"mn-3","text":"per-PET-u-al, e 发短音 /e/"}],"pitfalls":[]},"kind":"standard","phonetic":"/pərˈpetʃ.u.əl/","senses":[{"definition":"continuing forever or for a very long time","examples":[],"id":"sense-0-0","pos":"adjective"}],"word":"perpetual"}
+                    """,
+                    aiSectionOrder: [.mnemonics]
+                ),
+                expectedToolName: "propose_mnemonic",
+                expectedOperations: [.delete, .delete, .add],
+                requiredTargetIDs: ["mn-1", "mn-2"],
+                forbiddenTargetIDs: ["mn-3", "mnemonics", "perpetual"]
+            )
+        ]
+    }
+
     func runBenchmarkTasks(
         service: LLMService,
         rounds: Int,
@@ -547,6 +640,16 @@ private extension LLMModelBenchmarkE2ETests {
                         service: service,
                         testCase: testCase,
                         timeoutSeconds: taskTimeouts.seconds(for: "learning_aids"),
+                        traceFileURL: traceFileURL
+                    )
+                )
+            }
+            for testCase in agentEditCases {
+                tasks.append(
+                    await runAgentEditTask(
+                        service: service,
+                        testCase: testCase,
+                        timeoutSeconds: taskTimeouts.seconds(for: "agent_edit_proposal"),
                         traceFileURL: traceFileURL
                     )
                 )
@@ -877,6 +980,98 @@ private extension LLMModelBenchmarkE2ETests {
         }
     }
 
+    func runAgentEditTask(
+        service: LLMService,
+        testCase: AgentEditCase,
+        timeoutSeconds: Int,
+        traceFileURL: URL
+    ) async -> LLMBenchmarkReport.ModelResult.TaskResult {
+        await measureTask(
+            taskType: "agent_edit_proposal",
+            caseID: testCase.caseID,
+            word: testCase.word,
+            timeoutSeconds: timeoutSeconds,
+            traceFileURL: traceFileURL
+        ) {
+            let persistence = BenchmarkAgentPersistence()
+            let wordID = UUID()
+            let session = AgentSession(
+                wordID: wordID,
+                persistence: persistence,
+                snapshotProvider: BenchmarkAgentSnapshotProvider(snapshot: testCase.snapshot),
+                generator: BenchmarkAgentGenerator(service: service)
+            )
+
+            try session.reload()
+            try await session.sendUserMessage(testCase.userMessage)
+
+            let toolCalls = session.messages.compactMap { message -> (String, String)? in
+                guard case .toolCall(let name, let argsJSON) = message.content else { return nil }
+                return (name, argsJSON)
+            }
+            let proposals = session.messages.compactMap { message -> ProposalRecord? in
+                guard case .actionProposal(let proposal) = message.content else { return nil }
+                return proposal
+            }
+            let operations = proposals.map { self.operationExpectation(from: $0.operation) }
+            let targetIDs = proposals.compactMap { self.targetID(from: $0.operation) }
+            let proposalToolCalls = toolCalls.filter { $0.0.hasPrefix("propose_") }
+
+            var qualityIssues: [String] = []
+            if proposalToolCalls.isEmpty {
+                qualityIssues.append("missing_proposal_tool_call")
+            }
+            if proposalToolCalls.contains(where: { $0.0 != testCase.expectedToolName }) {
+                qualityIssues.append("wrong_proposal_tool")
+            }
+            if operations != testCase.expectedOperations {
+                qualityIssues.append("operation_sequence_mismatch")
+            }
+            if !testCase.requiredTargetIDs.allSatisfy(targetIDs.contains) {
+                qualityIssues.append("missing_required_target_id")
+            }
+            if testCase.forbiddenTargetIDs.contains(where: targetIDs.contains) {
+                qualityIssues.append("forbidden_target_id_used")
+            }
+            if proposals.count != testCase.expectedOperations.count {
+                qualityIssues.append("proposal_count_mismatch")
+            }
+
+            return .init(
+                qualityIssues: qualityIssues,
+                warnings: [],
+                metrics: [
+                    "proposal_count": .int(proposals.count),
+                    "proposal_tool_call_count": .int(proposalToolCalls.count),
+                    "target_id_count": .int(targetIDs.count),
+                    "timeout_seconds": .int(timeoutSeconds)
+                ],
+                output: [
+                    "user_message": .string(testCase.userMessage),
+                    "tool_calls": .array(
+                        toolCalls.map { name, argsJSON in
+                            .object([
+                                "name": .string(name),
+                                "args": .string(argsJSON)
+                            ])
+                        }
+                    ),
+                    "proposals": .array(
+                        proposals.map { proposal in
+                            .object([
+                                "kind": .string(proposal.kind.rawValue),
+                                "operation": .string(self.operationExpectation(from: proposal.operation).rawValue),
+                                "target_id": self.targetID(from: proposal.operation).map(JSONValue.string) ?? .null,
+                                "diff_summary": .string(proposal.diffSummary),
+                                "payload": .string(proposal.payloadJSON)
+                            ])
+                        }
+                    )
+                ]
+            )
+        }
+    }
+
     func measureTask(
         taskType: String,
         caseID: String,
@@ -1094,6 +1289,26 @@ private extension LLMModelBenchmarkE2ETests {
             acceptedMnemonics: testCase.acceptedMnemonics,
             acceptedCollocations: testCase.acceptedCollocations
         )
+    }
+
+    func operationExpectation(from operation: ProposalRecord.Operation) -> ProposalOperationExpectation {
+        switch operation {
+        case .add:
+            return .add
+        case .replace:
+            return .replace
+        case .delete:
+            return .delete
+        }
+    }
+
+    func targetID(from operation: ProposalRecord.Operation) -> String? {
+        switch operation {
+        case .add:
+            return nil
+        case .replace(let targetID), .delete(let targetID):
+            return targetID
+        }
     }
 
     func definitionOverlap(of text: String, senses: [LLMSensePromptInput]) -> Double {
@@ -1318,6 +1533,121 @@ private struct BenchmarkTimeoutError: Error, CustomStringConvertible {
 
     var description: String {
         "BenchmarkTimeoutError(seconds: \(seconds))"
+    }
+}
+
+private struct BenchmarkAgentSnapshotProvider: AgentCardSnapshotProviding {
+    let snapshot: CardRenderSnapshot
+
+    func snapshot(for wordID: UUID) throws -> CardRenderSnapshot {
+        snapshot
+    }
+}
+
+private struct BenchmarkAgentGenerator: AgentGenerating {
+    let service: LLMService
+
+    func generate(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition]
+    ) async throws -> GenerateResult {
+        try await service.generate(
+            messages: messages,
+            tools: tools,
+            parallelToolCalls: false
+        )
+    }
+
+    func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition],
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> GenerateResult {
+        try await service.generateStreaming(
+            messages: messages,
+            tools: tools,
+            parallelToolCalls: false,
+            onDelta: onDelta,
+            onReasoningDelta: onReasoningDelta
+        )
+    }
+}
+
+private final class BenchmarkAgentPersistence: AgentSessionPersisting {
+    private var sessionsByWordID: [UUID: AgentChatSession] = [:]
+    private var messagesBySessionID: [UUID: [AgentChatMessage]] = [:]
+
+    func upsertSession(for wordID: UUID, preferences: AgentSessionPreferences) throws -> AgentChatSession {
+        if var existing = sessionsByWordID[wordID] {
+            existing.preferences = preferences
+            existing.updatedAt = Date()
+            sessionsByWordID[wordID] = existing
+            return existing
+        }
+        let session = AgentChatSession(wordItemID: wordID, preferences: preferences)
+        sessionsByWordID[wordID] = session
+        messagesBySessionID[session.id] = []
+        return session
+    }
+
+    func session(for wordID: UUID) throws -> AgentChatSession? {
+        sessionsByWordID[wordID]
+    }
+
+    func loadMessages(sessionID: UUID) throws -> [AgentChatMessage] {
+        messagesBySessionID[sessionID] ?? []
+    }
+
+    func addMessage(
+        sessionID: UUID,
+        role: AgentChatMessage.Role,
+        status: AgentChatMessage.Status,
+        content: MessageContent,
+        createdAt: Date,
+        supersededBy: UUID?,
+        interrupted: Bool
+    ) throws -> AgentChatMessage {
+        let ordinal = messagesBySessionID[sessionID, default: []].count
+        let message = AgentChatMessage(
+            sessionID: sessionID,
+            ordinal: ordinal,
+            role: role,
+            createdAt: createdAt,
+            status: status,
+            content: content,
+            supersededBy: supersededBy,
+            interrupted: interrupted
+        )
+        messagesBySessionID[sessionID, default: []].append(message)
+        return message
+    }
+
+    func deleteMessages(ids: [UUID]) throws {
+        let idSet = Set(ids)
+        for sessionID in messagesBySessionID.keys {
+            messagesBySessionID[sessionID]?.removeAll { idSet.contains($0.id) }
+        }
+    }
+
+    func clearMessages(sessionID: UUID) throws {
+        messagesBySessionID[sessionID] = []
+    }
+
+    func resetSession(for wordID: UUID) throws {
+        guard let session = sessionsByWordID.removeValue(forKey: wordID) else { return }
+        messagesBySessionID.removeValue(forKey: session.id)
+    }
+
+    func updateProposal(messageID: UUID, proposal: ProposalRecord) throws -> AgentChatMessage {
+        for sessionID in messagesBySessionID.keys {
+            guard let index = messagesBySessionID[sessionID]?.firstIndex(where: { $0.id == messageID }) else {
+                continue
+            }
+            messagesBySessionID[sessionID]?[index].content = .actionProposal(proposal)
+            return messagesBySessionID[sessionID]![index]
+        }
+        throw AgentSessionError.sessionUnavailable
     }
 }
 

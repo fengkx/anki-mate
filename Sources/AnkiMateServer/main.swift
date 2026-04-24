@@ -34,6 +34,7 @@ let serverContext = ServerContext(startTime: startTime)
 let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 var serverChannel: Channel?
 var parentProcessMonitor: ParentProcessMonitor?
+var signalShutdownCoordinator: ServerSignalShutdownCoordinator?
 
 let bootstrap = ServerBootstrap(group: group)
     .serverChannelOption(.backlog, value: 8)
@@ -57,6 +58,20 @@ let childPort = actualPort + 1
 let supervisor = LlamaServerSupervisor(childPort: childPort)
 let dispatcher = RPCDispatcher(supervisor: supervisor)
 
+@Sendable func requestShutdown() {
+    Task {
+        await supervisor.shutdown()
+
+        guard let serverChannel else {
+            exit(EXIT_SUCCESS)
+        }
+
+        serverChannel.eventLoop.execute {
+            serverChannel.close(promise: nil)
+        }
+    }
+}
+
 serverContext.dispatcher = dispatcher
 serverContext.shutdownCallback = {
     guard let serverChannel else { return }
@@ -64,6 +79,9 @@ serverContext.shutdownCallback = {
         serverChannel.close(promise: nil)
     }
 }
+
+signalShutdownCoordinator = ServerSignalShutdownCoordinator(shutdown: requestShutdown)
+signalShutdownCoordinator?.start()
 
 // Signal port to parent process
 print("LISTENING:\(actualPort)")
@@ -76,23 +94,14 @@ if let expectedParentProcessID = launchConfiguration.expectedParentProcessID {
         fputs("Parent process \(expectedParentProcessID) exited; shutting down AnkiMateServer\n", stderr)
         fflush(stderr)
 
-        Task {
-            await supervisor.shutdown()
-
-            guard let serverChannel else {
-                exit(EXIT_SUCCESS)
-            }
-
-            serverChannel.eventLoop.execute {
-                serverChannel.close(promise: nil)
-            }
-        }
+        requestShutdown()
     }
     parentProcessMonitor?.start()
 }
 
 try channel.closeFuture.wait()
 parentProcessMonitor?.stop()
+signalShutdownCoordinator?.stop()
 
 // Best-effort child cleanup on exit
 let sema = DispatchSemaphore(value: 0)

@@ -9,7 +9,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testSmokeExampleGenerationUsesFixedMultiSenseCorpusWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "smoke")
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
         let testCase = ExampleSmokeCase(
             word: "light",
             senses: [
@@ -60,7 +60,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testSmokeUsageHintUsesFixedCorpusWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "smoke")
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
         let testCase = UsageSmokeCase(
             word: "charge",
             senses: [
@@ -101,7 +101,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testBaselineExampleSentenceArtifactsMeetFixedCorpusContractWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "baseline", requireBaseline: true)
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
 
         for testCase in exampleBaselineCorpus {
             let examples = try await service.generateExampleSentenceArtifacts(
@@ -149,7 +149,7 @@ final class LLMServiceE2ETests: XCTestCase {
         )
 
         let service = try configuredServiceOrSkip(suite: "baseline", requireBaseline: true)
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
 
         for testCase in recallBaselineCorpus {
             let appContext = appRecallGenerationContext(for: testCase)
@@ -240,7 +240,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testBaselineLearningAidsMeetFixedCorpusContractWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "baseline", requireBaseline: true)
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
 
         for testCase in learningAidsBaselineCorpus {
             let ranked = try await service.generateRankedLearningAids(
@@ -289,7 +289,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "comparison")
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
         let report = try await runLearningAidsStrategyComparison(
             service: service,
             corpus: learningAidsComparisonCorpus3,
@@ -301,7 +301,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityAcrossTwoDiagnosticWordsWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "comparison")
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
 
         let report = try await runLearningAidsStrategyComparison(
             service: service,
@@ -314,7 +314,7 @@ final class LLMServiceE2ETests: XCTestCase {
 
     func testLearningAidsJudgeStrategyComparisonReportsTimingAndQualityAcrossTenWordsWhenEnabled() async throws {
         let service = try configuredServiceOrSkip(suite: "comparison")
-        defer { Task { await service.stopServer() } }
+        addTeardownBlock { await service.stopServer() }
 
         let report = try await runLearningAidsStrategyComparison(
             service: service,
