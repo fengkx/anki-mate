@@ -11,7 +11,6 @@ final class AgentToolRegistryTests: XCTestCase {
         XCTAssertEqual(registry.definitions.map(\.name), [
             "read_card_snapshot",
             "list_accepted_artifacts",
-            "read_recall_card",
             "propose_usage_cue",
             "propose_example",
             "propose_recall_draft",
@@ -55,59 +54,18 @@ final class AgentToolRegistryTests: XCTestCase {
         XCTAssertTrue(resultJSON.contains(#""usageCue":{"text":"Capital-A Apple is the company."}"#))
     }
 
-    func testExecuteReadRecallCardReturnsAcceptedAndSuggestedDraftsFromArtifacts() throws {
-        let accepted = RecallCardDraft(
-            mode: .fullSpelling,
-            front: "根据中文提示回忆完整拼写：苹果",
-            back: "apple",
-            hint: "fruit"
-        )
-        let suggested = RecallCardDraft(
-            mode: .targetedLetterCloze,
-            front: "a____",
-            back: "apple",
-            hint: nil
-        )
-        let registry = AgentToolRegistry(
-            snapshotLoader: { _ in Self.sampleSnapshot() },
-            artifactsLoader: { _ in
-                AIArtifacts(
-                    recallCardDrafts: .init(
-                        suggested: [suggested],
-                        accepted: [accepted]
-                    )
-                )
-            }
-        )
-
-        let content = try registry.execute(
-            LLMToolCall(id: "call-recall", name: "read_recall_card", arguments: .object([:])),
-            for: UUID()
-        )
-
-        guard case .toolResult(let name, let resultJSON, let truncated) = content else {
-            return XCTFail("Expected tool result")
-        }
-        XCTAssertEqual(name, "read_recall_card")
-        XCTAssertFalse(truncated)
-        XCTAssertTrue(resultJSON.contains(#""word":"apple""#))
-        XCTAssertTrue(resultJSON.contains(#""hasAccepted":true"#))
-        XCTAssertTrue(resultJSON.contains(#""accepted":[{"back":"apple","front":"根据中文提示回忆完整拼写：苹果","hint":"fruit","mode":"full_spelling"}]"#))
-        XCTAssertTrue(resultJSON.contains(#""suggested":[{"back":"apple","front":"a____","mode":"targeted_letter_cloze"}]"#))
-    }
-
-    func testExecuteReadRecallCardRejectsLegacyMisspelling() {
+    func testReadRecallCardToolIsNotExposed() {
         let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
 
         XCTAssertThrowsError(
             try registry.execute(
-                LLMToolCall(id: "call-recall", name: "read_reacall_card", arguments: .object([:])),
+                LLMToolCall(id: "call-recall", name: "read_recall_card", arguments: .object([:])),
                 for: UUID()
             )
         ) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "Unsupported agent tool: read_reacall_card"
+                "Unsupported agent tool: read_recall_card"
             )
         }
     }
@@ -254,6 +212,57 @@ final class AgentToolRegistryTests: XCTestCase {
         }
     }
 
+    func testProposalToolDefinitionsExplainSelectiveDeleteContracts() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        let mnemonic = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_mnemonic" }))
+        let deleteAccepted = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
+        let mnemonicDescription = try XCTUnwrap(mnemonic.description)
+        let deleteAcceptedDescription = try XCTUnwrap(deleteAccepted.description)
+
+        XCTAssertTrue(mnemonicDescription.contains("Delete only the specific accepted mnemonic referenced by targetID"))
+        XCTAssertTrue(mnemonicDescription.contains("keep the other accepted mnemonics untouched"))
+        XCTAssertTrue(deleteAcceptedDescription.contains("Delete all accepted items in one section"))
+        XCTAssertTrue(deleteAcceptedDescription.contains("Do not use this tool when deleting only some existing items"))
+    }
+
+    func testProposalToolSchemasDescribeTargetIDAndWholeSectionDeleteSemantics() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        let mnemonic = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_mnemonic" }))
+        let deleteAccepted = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
+        let mnemonicParameters = try XCTUnwrap(mnemonic.parameters)
+        let deleteAcceptedParameters = try XCTUnwrap(deleteAccepted.parameters)
+
+        let mnemonicTargetDescription = try XCTUnwrap(
+            Self.stringPropertyDescription(
+                named: "targetID",
+                in: mnemonicParameters
+            )
+        )
+        XCTAssertTrue(mnemonicTargetDescription.contains("required for replace/delete"))
+        XCTAssertTrue(mnemonicTargetDescription.contains("real existing artifact id from the current card snapshot or accepted artifacts"))
+        XCTAssertTrue(mnemonicTargetDescription.contains("When deleting only some existing items while keeping others"))
+
+        let deleteAcceptedOperationDescription = try XCTUnwrap(
+            Self.stringPropertyDescription(
+                named: "operation",
+                in: deleteAcceptedParameters
+            )
+        )
+        XCTAssertTrue(deleteAcceptedOperationDescription.contains("Only use delete for this tool"))
+        XCTAssertTrue(deleteAcceptedOperationDescription.contains("section"))
+
+        let deleteAcceptedSectionDescription = try XCTUnwrap(
+            Self.stringPropertyDescription(
+                named: "section",
+                inPayloadOf: deleteAcceptedParameters
+            )
+        )
+        XCTAssertTrue(deleteAcceptedSectionDescription.contains("Remove all accepted items in this section"))
+        XCTAssertTrue(deleteAcceptedSectionDescription.contains("not for deleting only the first, second, or other subset"))
+    }
+
     func testExecuteProposePitfallRejectsMissingRequiredText() {
         let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
 
@@ -298,5 +307,33 @@ final class AgentToolRegistryTests: XCTestCase {
             structuredJSON: #"{"artifacts":{"examples":[{"id":"ex-1","text":"Apple Inc. released a new model."}],"usageCue":{"text":"Capital-A Apple is the company."}},"word":"apple"}"#,
             aiSectionOrder: [.usageCue, .examples]
         )
+    }
+
+    private static func stringPropertyDescription(
+        named propertyName: String,
+        in schema: AnkiMateRPC.JSONValue
+    ) -> String? {
+        guard case .object(let root) = schema,
+              case .object(let properties)? = root["properties"],
+              case .object(let property)? = properties[propertyName],
+              case .string(let description)? = property["description"] else {
+            return nil
+        }
+        return description
+    }
+
+    private static func stringPropertyDescription(
+        named propertyName: String,
+        inPayloadOf schema: AnkiMateRPC.JSONValue
+    ) -> String? {
+        guard case .object(let root) = schema,
+              case .object(let properties)? = root["properties"],
+              case .object(let payload)? = properties["payload"],
+              case .object(let payloadProperties)? = payload["properties"],
+              case .object(let property)? = payloadProperties[propertyName],
+              case .string(let description)? = property["description"] else {
+            return nil
+        }
+        return description
     }
 }

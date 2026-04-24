@@ -27,6 +27,7 @@ public struct AgentPromptBuilder {
 
     public struct Context: Sendable {
         public let cardSnapshot: CardRenderSnapshot
+        public let relatedSnapshots: [CardRenderSnapshot]
         public let messages: [AgentChatMessage]
         public let tools: [LLMToolDefinition]
         public let maxContextTokens: Int?
@@ -34,12 +35,14 @@ public struct AgentPromptBuilder {
 
         public init(
             cardSnapshot: CardRenderSnapshot,
+            relatedSnapshots: [CardRenderSnapshot] = [],
             messages: [AgentChatMessage],
             tools: [LLMToolDefinition] = [],
             maxContextTokens: Int? = nil,
             attachmentStore: AgentAttachmentStoring? = nil
         ) {
             self.cardSnapshot = cardSnapshot
+            self.relatedSnapshots = relatedSnapshots
             self.messages = messages
             self.tools = tools
             self.maxContextTokens = maxContextTokens
@@ -61,6 +64,7 @@ public struct AgentPromptBuilder {
         )
         let contextPrompt = buildContextPrompt(
             snapshot: context.cardSnapshot,
+            relatedSnapshots: context.relatedSnapshots,
             messages: context.messages
         )
 
@@ -74,8 +78,13 @@ public struct AgentPromptBuilder {
         )
 
         return [
-            LLMMessage(role: .system, content: identityPrompt),
-            LLMMessage(role: .system, content: contextPrompt),
+            LLMMessage(
+                role: .system,
+                content: PromptText.join([
+                    identityPrompt,
+                    contextPrompt
+                ])
+            ),
         ] + historyMessages
     }
 
@@ -163,6 +172,16 @@ public struct AgentPromptBuilder {
             - The current card headword is the default learning target for study and edit requests. If the user asks to add learning content without naming another target, do not ask which word or aspect the user means.
             - Attached images and existing artifacts are evidence for the current card, not alternative learning targets. Use them to infer style, section, and learning gaps; do not treat incidental words inside them as competing topics.
             - Existing artifacts can still be edit targets for replace/delete when the user refers to them; use their real artifact ids for targetID.
+            - First infer the learner's immediate task from the user's request and the card context.
+            - Prefer the information that most directly helps the learner succeed at that immediate task.
+            - When the learner is trying to distinguish, recall, choose, fill, or avoid an error, give discriminative help instead of broad background explanation.
+            - Do not drift into adjacent knowledge unless it clearly improves success on the learner's immediate task.
+            - When the user mentions a Recall Card, cloze, blank, hidden letters, front/back, or 挖空, use the Recall Card snapshot already in context as the source of truth for the actual hidden position and answer.
+            - For Recall Card questions, first identify the exact masked token and the hidden letters from the Recall snapshot before explaining anything else.
+            - When the hidden letters can be derived from the Recall snapshot, state them explicitly in the first sentence. Example: `当前挖空是 per__tual，缺的是 pe。`
+            - If the user asks for a mnemonic, 记忆点, or memory trick to help solve a Recall Card blank, answer in chat by default. Do not call propose_mnemonic unless the user explicitly asks to add that mnemonic to the standard card.
+            - Mnemonic proposals are for visible standard-card learning content. They are not the default response for Recall Card coaching, hidden-letter explanation, or blank-solving help.
+            - If the user explicitly asks to change the Recall Card itself, prefer propose_recall_draft rather than propose_mnemonic.
             - For content edit requests, call the matching propose_* tool as soon as the action, section, and content can be inferred from the current card or recent conversation.
             - Treat references to earlier suggestions, numbered items, the most recent candidate, current pending proposals, or existing card sections as usable context. Do not ask the user to repeat information already present in the conversation.
             - Proposal cards are the confirmation step. Do not ask the user to confirm before creating a proposal; the user will Apply or Dismiss it.
@@ -175,9 +194,9 @@ public struct AgentPromptBuilder {
 
             Tool argument contract:
             - operation=add must not include targetID because it creates new content.
-            - operation=replace and operation=delete require a real existing artifact id from the card snapshot or accepted artifacts.
-            - Never use the headword, section name, dictionary label, or sense label as targetID.
             - When adding an example without exact text, generate a useful example for the current headword yourself and propose it.
+            - Recall draft proposals still use the same top-level contract: include operation at the top level, then put mode/front/back/hint inside payload.
+            - Example recall-draft tool call: {"operation":"add","payload":{"mode":"targeted_letter_cloze","front":"per__tual","back":"perpetual","hint":"形容词 · 无休止的"}}
             """,
 
             // Scope limits
@@ -193,6 +212,7 @@ public struct AgentPromptBuilder {
 
     private func buildContextPrompt(
         snapshot: CardRenderSnapshot,
+        relatedSnapshots: [CardRenderSnapshot],
         messages: [AgentChatMessage]
     ) -> String {
         let pendingSummary = pendingProposalSummary(from: messages)
@@ -202,9 +222,116 @@ public struct AgentPromptBuilder {
             "Current card snapshot",
             PromptText.labeledBlock("ASCII wireframe", value: snapshot.wireframe),
             PromptText.labeledBlock("Structured JSON", value: snapshot.structuredJSON),
+            recallFocusSummaryText(currentSnapshot: snapshot, relatedSnapshots: relatedSnapshots),
+            relatedSnapshotsText(relatedSnapshots),
             pendingSummary.map { PromptText.labeledBlock("Pending proposals", value: $0) },
             decisionSummary.map { PromptText.labeledBlock("Recent proposal decisions", value: $0) }
         ])
+    }
+
+    private func recallFocusSummaryText(
+        currentSnapshot: CardRenderSnapshot,
+        relatedSnapshots: [CardRenderSnapshot]
+    ) -> String? {
+        let candidates = [("current", currentSnapshot)] + relatedSnapshots.enumerated().map { ("related-\($0.offset + 1)", $0.element) }
+        let summaries = candidates.compactMap { source, snapshot in
+            recallSummary(for: snapshot, source: source)
+        }
+        guard !summaries.isEmpty else { return nil }
+        return PromptText.labeledBlock(
+            "Recall focus summary",
+            value: summaries.joined(separator: "\n\n")
+        )
+    }
+
+    private func recallSummary(for snapshot: CardRenderSnapshot, source: String) -> String? {
+        guard snapshot.kind == .recall else { return nil }
+        guard let jsonObject = structuredJSONObject(from: snapshot.structuredJSON),
+              let recall = jsonObject["recall"] as? [String: Any] else {
+            return nil
+        }
+
+        let front = recall["front"] as? String
+        let back = recall["back"] as? String
+        let mode = recall["mode"] as? String
+        let hint = recall["hint"] as? String
+        let maskedToken = front.flatMap { extractMaskedToken(in: $0, expectedLength: back?.count) }
+        let derivedHiddenSegment: String?
+        if let maskedToken, let back {
+            derivedHiddenSegment = deriveHiddenSegment(maskedToken: maskedToken, answer: back)
+        } else {
+            derivedHiddenSegment = nil
+        }
+
+        return PromptText.join([
+            "Source: \(source)",
+            front.map { "front: \($0)" },
+            back.map { "back: \($0)" },
+            mode.map { "mode: \($0)" },
+            hint.map { "hint: \($0)" },
+            maskedToken.map { "masked token: \($0)" },
+            derivedHiddenSegment.map { "hidden segment: \($0)" }
+        ])
+    }
+
+    private func structuredJSONObject(from json: String) -> [String: Any]? {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any] else {
+            return nil
+        }
+        return dictionary
+    }
+
+    private func extractMaskedToken(in front: String, expectedLength: Int?) -> String? {
+        let tokens = front
+            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_")).inverted)
+            .filter { $0.contains("_") }
+
+        if let expectedLength {
+            return tokens.first(where: { $0.count == expectedLength }) ?? tokens.first
+        }
+        return tokens.first
+    }
+
+    private func deriveHiddenSegment(maskedToken: String, answer: String) -> String? {
+        let maskedChars = Array(maskedToken)
+        let answerChars = Array(answer)
+        guard maskedChars.count == answerChars.count else { return nil }
+
+        var hidden: [Character] = []
+        var seenMask = false
+        var gapClosed = false
+
+        for (maskedChar, answerChar) in zip(maskedChars, answerChars) {
+            if maskedChar == "_" {
+                if gapClosed { return nil }
+                seenMask = true
+                hidden.append(answerChar)
+                continue
+            }
+
+            if seenMask, !hidden.isEmpty {
+                gapClosed = true
+            }
+
+            guard maskedChar == answerChar else { return nil }
+        }
+
+        guard seenMask, !hidden.isEmpty else { return nil }
+        return String(hidden)
+    }
+
+    private func relatedSnapshotsText(_ snapshots: [CardRenderSnapshot]) -> String? {
+        guard !snapshots.isEmpty else { return nil }
+        let rendered = snapshots.map { snapshot in
+            PromptText.join([
+                "Snapshot kind: \(snapshot.kind.rawValue)",
+                PromptText.labeledBlock("ASCII wireframe", value: snapshot.wireframe),
+                PromptText.labeledBlock("Structured JSON", value: snapshot.structuredJSON)
+            ])
+        }.joined(separator: "\n\n")
+        return PromptText.labeledBlock("Related card snapshots", value: rendered)
     }
 
     private func pendingProposalSummary(from messages: [AgentChatMessage]) -> String? {
@@ -271,12 +398,13 @@ public struct AgentPromptBuilder {
             return userInputContent(text: text, attachments: attachments, attachmentStore: attachmentStore)
         case .toolCall(let name, let argsJSON):
             return .text(PromptText.join([
-                "[Tool call] \(name)",
+                "Assistant used tool: \(name)",
+                "Tool arguments JSON:",
                 argsJSON
             ]))
         case .toolResult(let name, let resultJSON, let truncated):
             return .text(PromptText.join([
-                "[Tool result] \(name)\(truncated ? " (truncated)" : "")",
+                "Tool result from \(name)\(truncated ? " (truncated)" : ""):",
                 resultJSON
             ]))
         case .actionProposal(let proposal):

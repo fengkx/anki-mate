@@ -1092,12 +1092,9 @@ struct AIContentView: View {
             }
 
             do {
-                let optimized = try await llmService.optimizeDefinitionStreaming(
+                let optimized = try await llmService.generateUsageHintText(
                     word: item.word,
-                    senses: senses,
-                    onDelta: { delta in
-                        Task { @MainActor in streamingUsageText += delta }
-                    }
+                    senses: senses
                 )
                 viewModel.saveAISuggestedDefinitionNote(optimized, for: item)
                 suggestedDefinitionState.mergePersistedValue(optimized)

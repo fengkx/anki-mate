@@ -327,6 +327,21 @@ private extension NSImage {
     }
 }
 
+enum AgentDraftAttachmentCapabilities {
+    static func sanitize(
+        _ attachments: [AgentAttachment],
+        canAttachImages: Bool
+    ) -> (kept: [AgentAttachment], removed: [AgentAttachment]) {
+        guard !canAttachImages else {
+            return (attachments, [])
+        }
+
+        let kept = attachments.filter { $0.kind != .image }
+        let removed = attachments.filter { $0.kind == .image }
+        return (kept, removed)
+    }
+}
+
 struct AgentChatView: View {
     @ObservedObject var item: WordItem
     @ObservedObject var session: AgentSession
@@ -408,6 +423,12 @@ struct AgentChatView: View {
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+        .onAppear {
+            synchronizeDraftAttachmentsWithCapabilities()
+        }
+        .onChange(of: canAttachImages) { _ in
+            synchronizeDraftAttachmentsWithCapabilities()
         }
         .onReceive(session.$previewOverrideArtifacts) { value in
             previewOverrideArtifacts = value
@@ -1292,6 +1313,18 @@ struct AgentChatView: View {
     private func removeDraftAttachment(_ attachment: AgentAttachment) {
         draftAttachments.removeAll { $0.id == attachment.id }
         try? attachmentStore.delete([attachment])
+    }
+
+    private func synchronizeDraftAttachmentsWithCapabilities() {
+        let result = AgentDraftAttachmentCapabilities.sanitize(
+            draftAttachments,
+            canAttachImages: canAttachImages
+        )
+        guard !result.removed.isEmpty else { return }
+
+        draftAttachments = result.kept
+        try? attachmentStore.delete(result.removed)
+        errorMessage = "Switched to a text-only model. Pending image attachments were removed."
     }
 
     private func pasteImageAttachment() -> Bool {

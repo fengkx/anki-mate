@@ -275,61 +275,44 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertTrue(generator.calls[1].contains { $0.content.contains(#""word":"apple""#) })
     }
 
-    func testSendUserMessageExecutesReadRecallCardToolAgainstArtifactsManager() async throws {
+    func testSendUserMessageInjectsRelatedRecallSnapshotIntoPrompt() async throws {
         let persistence = InMemoryAgentPersistence()
         let generator = RecordingGenerator(
-            results: [
-                GenerateResult(
-                    text: "",
-                    tokensUsed: 12,
-                    durationMs: 4,
-                    toolCalls: [
-                        LLMToolCall(id: "call-recall", name: "read_recall_card", arguments: .object([:]))
-                    ]
-                ),
-                GenerateResult(
-                    text: "已有一张 Recall Card。",
-                    tokensUsed: 18,
-                    durationMs: 6
-                )
-            ]
+            result: GenerateResult(text: "可以，按 recall 挖空来设计。", tokensUsed: 18, durationMs: 6)
         )
         let wordID = UUID()
-        let accepted = RecallCardDraft(
-            mode: .fullSpelling,
-            front: "根据中文提示回忆完整拼写：苹果",
-            back: "apple",
-            hint: "fruit"
-        )
-        let artifactsManager = InMemoryArtifactsManager(
-            artifactsByWordID: [
-                wordID: AIArtifacts(recallCardDrafts: .init(accepted: [accepted]))
-            ]
-        )
         let sut = AgentSession(
             wordID: wordID,
             persistence: persistence,
-            snapshotProvider: StaticSnapshotProvider(),
-            artifactsManager: artifactsManager,
+            snapshotProvider: StaticSnapshotProvider(
+                relatedSnapshots: [
+                    CardRenderSnapshot(
+                        kind: .recall,
+                        word: "apple",
+                        phonetic: "/ˈæp.əl/",
+                        wireframe: "RECALL FRONT\np_rpetual\nRECALL BACK\nperpetual",
+                        structuredJSON: #"{"kind":"recall","recall":{"front":"p_rpetual","back":"perpetual"}}"#,
+                        aiSectionOrder: []
+                    )
+                ]
+            ),
             generator: generator
         )
 
         try sut.reload()
-        try await sut.sendUserMessage("看看有没有 Recall Card")
+        try await sut.sendUserMessage("recall card 的挖空我总记错")
 
-        guard case .toolResult(let resultName, let resultJSON, _) = sut.messages[2].content else {
-            return XCTFail("Expected persisted tool result")
-        }
-        XCTAssertEqual(resultName, "read_recall_card")
-        XCTAssertTrue(resultJSON.contains(#""hasAccepted":true"#))
-        XCTAssertTrue(resultJSON.contains("根据中文提示回忆完整拼写"))
-        XCTAssertTrue(generator.calls[1].contains { $0.role == .tool && $0.content.contains("read_recall_card") })
+        XCTAssertEqual(generator.calls.count, 1)
+        let prompt = generator.calls[0].map(\.content.plainText).joined(separator: "\n")
+        XCTAssertTrue(prompt.contains("Related card snapshots"))
+        XCTAssertTrue(prompt.contains("p_rpetual"))
+        XCTAssertTrue(prompt.contains(#""kind":"recall""#))
     }
 
-    func testSendUserMessageShortCircuitsLayoutRequestsIntoDeclinedMessage() async throws {
+    func testSendUserMessagePassesLayoutRequestsToAgentPrompt() async throws {
         let persistence = InMemoryAgentPersistence()
         let generator = RecordingGenerator(
-            result: GenerateResult(text: "unused", tokensUsed: 1, durationMs: 1)
+            result: GenerateResult(text: "我不能改布局，但可以调整内容。", tokensUsed: 9, durationMs: 2)
         )
         let wordID = UUID()
         let sut = AgentSession(
@@ -342,13 +325,30 @@ final class AgentSessionTests: XCTestCase {
         try sut.reload()
         try await sut.sendUserMessage("把 pitfalls 挪到 examples 前面")
 
-        XCTAssertEqual(generator.calls.count, 0)
+        XCTAssertEqual(generator.calls.count, 1)
         XCTAssertEqual(sut.messages.count, 2)
-        guard case .layoutRequestDeclined(let userText, let detectedKind) = sut.messages[1].content else {
-            return XCTFail("Expected layout_request_declined message")
-        }
-        XCTAssertEqual(userText, "把 pitfalls 挪到 examples 前面")
-        XCTAssertEqual(detectedKind, .layout)
+        XCTAssertEqual(extractText(from: sut.messages[1].content), "我不能改布局，但可以调整内容。")
+    }
+
+    func testSendUserMessageDoesNotTreatClozePositionAsLayoutRequest() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let generator = RecordingGenerator(
+            result: GenerateResult(text: "你说的是 recall 挖空的位置。", tokensUsed: 8, durationMs: 2)
+        )
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: generator
+        )
+
+        try sut.reload()
+        try await sut.sendUserMessage("我说的挖空位置")
+
+        XCTAssertEqual(generator.calls.count, 1)
+        XCTAssertEqual(sut.messages.count, 2)
+        XCTAssertEqual(extractText(from: sut.messages[1].content), "你说的是 recall 挖空的位置。")
     }
 
     func testSendUserMessagePersistsAssistantTextAndPendingProposalForWriteToolCalls() async throws {
@@ -831,6 +831,8 @@ private func extractText(from content: MessageContent) -> String? {
 }
 
 private struct StaticSnapshotProvider: AgentCardSnapshotProviding {
+    var relatedSnapshots: [CardRenderSnapshot] = []
+
     func snapshot(for wordID: UUID) throws -> CardRenderSnapshot {
         CardRenderSnapshot(
             kind: .standard,
@@ -844,6 +846,10 @@ private struct StaticSnapshotProvider: AgentCardSnapshotProviding {
             structuredJSON: #"{"word":"apple"}"#,
             aiSectionOrder: []
         )
+    }
+
+    func relatedSnapshots(for wordID: UUID) throws -> [CardRenderSnapshot] {
+        relatedSnapshots
     }
 }
 

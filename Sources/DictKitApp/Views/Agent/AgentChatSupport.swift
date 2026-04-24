@@ -129,6 +129,39 @@ final class WordItemAgentBridge: AgentCardSnapshotProviding, AgentArtifactsManag
         }
     }
 
+    nonisolated func relatedSnapshots(for wordID: UUID) throws -> [CardRenderSnapshot] {
+        try MainActor.assumeIsolated {
+            guard wordID == item.id else {
+                throw AgentBridgeError.wordMismatch
+            }
+            guard let result = item.lookupResult else {
+                throw AgentBridgeError.lookupUnavailable
+            }
+
+            switch snapshotMode() {
+            case .standard:
+                guard !(item.aiArtifacts.recallCardDrafts.accepted?.isEmpty ?? true) else {
+                    return []
+                }
+                return [
+                    CardRenderSnapshotBuilder.recall(
+                        word: item.word,
+                        lookupResult: result,
+                        aiArtifacts: item.aiArtifacts
+                    )
+                ]
+            case .recall:
+                return [
+                    CardRenderSnapshotBuilder.standard(
+                        word: item.word,
+                        lookupResult: result,
+                        aiArtifacts: item.aiArtifacts
+                    )
+                ]
+            }
+        }
+    }
+
     nonisolated func loadArtifacts(for wordID: UUID) throws -> AIArtifacts {
         try MainActor.assumeIsolated {
             guard wordID == item.id else {

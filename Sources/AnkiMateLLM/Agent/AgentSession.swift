@@ -50,6 +50,13 @@ public extension AgentSessionPersisting {
 
 public protocol AgentCardSnapshotProviding {
     func snapshot(for wordID: UUID) throws -> CardRenderSnapshot
+    func relatedSnapshots(for wordID: UUID) throws -> [CardRenderSnapshot]
+}
+
+public extension AgentCardSnapshotProviding {
+    func relatedSnapshots(for wordID: UUID) throws -> [CardRenderSnapshot] {
+        []
+    }
 }
 
 public protocol AgentAttachmentStoring: AnyObject, Sendable {
@@ -175,20 +182,6 @@ public final class AgentSession: ObservableObject {
         )
         messages.append(userMessage)
         refreshDerivedState()
-
-        if let declinedKind = AgentCapabilityBoundaryClassifier.classify(trimmed) {
-            let declinedMessage = try persistence.addMessage(
-                sessionID: sessionRecord.id,
-                role: .assistant,
-                content: .layoutRequestDeclined(
-                    userText: trimmed,
-                    detectedKind: declinedKind
-                )
-            )
-            messages.append(declinedMessage)
-            refreshDerivedState()
-            return
-        }
 
         isGenerating = true
         defer {
@@ -436,6 +429,7 @@ public final class AgentSession: ObservableObject {
 
     private func runAssistantTurn(sessionID: UUID) async throws {
         let snapshot = try snapshotProvider.snapshot(for: wordID)
+        let relatedSnapshots = try snapshotProvider.relatedSnapshots(for: wordID)
         let availableTools = mergeTools()
         var toolIteration = 0
 
@@ -443,6 +437,7 @@ public final class AgentSession: ObservableObject {
             let promptMessages = promptBuilder.buildMessages(
                 context: .init(
                     cardSnapshot: snapshot,
+                    relatedSnapshots: relatedSnapshots,
                     messages: messages,
                     tools: availableTools,
                     attachmentStore: attachmentStore
@@ -600,37 +595,6 @@ public enum AgentSessionError: LocalizedError {
         case .proposalUnavailable:
             return "Agent proposal is unavailable."
         }
-    }
-}
-
-private enum AgentCapabilityBoundaryClassifier {
-    static func classify(_ text: String) -> DeclinedRequestKind? {
-        let normalized = text.lowercased()
-
-        if containsAny(normalized, keywords: [
-            "template", "html", "css", "note type", "模板", "卡片模板", "html/css"
-        ]) {
-            return .template
-        }
-
-        if containsAny(normalized, keywords: [
-            "style", "font", "fontsize", "font size", "spacing", "color", "颜色", "字号", "字体", "样式", "间距"
-        ]) {
-            return .style
-        }
-
-        if containsAny(normalized, keywords: [
-            "layout", "section order", "move", "reorder", "before", "after",
-            "布局", "顺序", "前面", "后面", "挪到", "移到", "放到", "位置"
-        ]) {
-            return .layout
-        }
-
-        return nil
-    }
-
-    private static func containsAny(_ text: String, keywords: [String]) -> Bool {
-        keywords.contains { text.contains($0) }
     }
 }
 

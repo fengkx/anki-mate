@@ -36,10 +36,6 @@ public struct AgentToolRegistry {
                 name: "list_accepted_artifacts",
                 description: "Return the currently accepted card artifacts grouped by section."
             ),
-            Self.toolDefinition(
-                name: "read_recall_card",
-                description: "Return accepted and suggested Recall Card drafts for the current word."
-            ),
             Self.proposalToolDefinition(
                 name: "propose_usage_cue",
                 description: "Create a pending usage-cue edit proposal.",
@@ -62,7 +58,9 @@ public struct AgentToolRegistry {
             ),
             Self.proposalToolDefinition(
                 name: "propose_mnemonic",
-                description: "Create a pending mnemonic proposal.",
+                description: """
+                Create a pending mnemonic proposal. Use add to create a new mnemonic. Use replace/delete only for a specific accepted mnemonic referenced by targetID. Delete only the specific accepted mnemonic referenced by targetID and keep the other accepted mnemonics untouched.
+                """,
                 payloadSchema: Self.mnemonicPayloadSchema()
             ),
             Self.proposalToolDefinition(
@@ -72,8 +70,12 @@ public struct AgentToolRegistry {
             ),
             Self.proposalToolDefinition(
                 name: "propose_delete_accepted",
-                description: "Create a pending accepted-artifact deletion proposal.",
-                payloadSchema: Self.deleteAcceptedPayloadSchema()
+                description: """
+                Create a pending accepted-artifact deletion proposal. Only use this tool for delete-only requests against already accepted content. Delete all accepted items in one section only when the user explicitly wants to clear that section. Do not use this tool when deleting only some existing items if a section-specific propose_* tool can target those items directly.
+                """,
+                payloadSchema: Self.deleteAcceptedPayloadSchema(),
+                operationDescription: "Only use delete for this tool. It is for delete-only accepted-artifact removal in the section named in payload.section.",
+                targetIDDescription: "Provide only when deleting one specific accepted artifact inside payload.section. Must be a real existing artifact id from the current card snapshot or accepted artifacts; never use the headword or section name."
             )
         ]
     }
@@ -85,8 +87,6 @@ public struct AgentToolRegistry {
             return try executeReadCardSnapshot(for: wordID)
         case "list_accepted_artifacts":
             return try executeListAcceptedArtifacts(for: wordID)
-        case "read_recall_card":
-            return try executeReadRecallCard(for: wordID)
         case "propose_usage_cue",
              "propose_example",
              "propose_recall_draft",
@@ -161,24 +161,6 @@ public struct AgentToolRegistry {
         )
     }
 
-    private func executeReadRecallCard(for wordID: UUID) throws -> MessageContent {
-        let snapshot = try snapshotLoader(wordID)
-        let artifacts = try (artifactsLoader?(wordID) ?? .empty).normalized()
-        let accepted = artifacts.recallCardDrafts.accepted ?? []
-        let suggested = artifacts.recallCardDrafts.suggested ?? []
-        let payload = RecallCardPayload(
-            word: snapshot.word,
-            hasAccepted: !accepted.isEmpty,
-            accepted: accepted,
-            suggested: suggested
-        )
-        return .toolResult(
-            name: "read_recall_card",
-            resultJSON: try encode(payload),
-            truncated: false
-        )
-    }
-
     private static func toolDefinition(name: String, description: String) -> LLMToolDefinition {
         LLMToolDefinition(
             name: name,
@@ -194,7 +176,9 @@ public struct AgentToolRegistry {
     private static func proposalToolDefinition(
         name: String,
         description: String,
-        payloadSchema: JSONValue
+        payloadSchema: JSONValue,
+        operationDescription: String = "Use add for new content, replace for editing an existing artifact, delete for removing an existing artifact.",
+        targetIDDescription: String = "targetID is required for replace/delete. It must be a real existing artifact id from the current card snapshot or accepted artifacts; never use the headword or section name. When deleting only some existing items while keeping others, use the targetID for each specific artifact you want to delete."
     ) -> LLMToolDefinition {
         LLMToolDefinition(
             name: name,
@@ -204,7 +188,7 @@ public struct AgentToolRegistry {
                 "properties": .object([
                     "operation": .object([
                         "type": .string("string"),
-                        "description": .string("Use add for new content, replace for editing an existing artifact, delete for removing an existing artifact."),
+                        "description": .string(operationDescription),
                         "enum": .array([
                             .string("add"),
                             .string("replace"),
@@ -213,7 +197,7 @@ public struct AgentToolRegistry {
                     ]),
                     "targetID": .object([
                         "type": .string("string"),
-                        "description": .string("Only provide for replace/delete. Must be a real existing artifact id; never use the headword or section name.")
+                        "description": .string(targetIDDescription)
                     ]),
                     "diffSummary": .object([
                         "type": .string("string")
@@ -255,6 +239,14 @@ public struct AgentToolRegistry {
             "type": .string("string"),
             "enum": .array(values.map(JSONValue.string))
         ])
+    }
+
+    private static func describedSchema(_ schema: JSONValue, description: String) -> JSONValue {
+        guard case .object(var object) = schema else {
+            return schema
+        }
+        object["description"] = .string(description)
+        return .object(object)
     }
 
     private static func objectSchema(
@@ -369,14 +361,17 @@ public struct AgentToolRegistry {
     private static func deleteAcceptedPayloadSchema() -> JSONValue {
         objectSchema(
             properties: [
-                "section": enumStringSchema([
-                    "usage_cue",
-                    "example",
-                    "recall_draft",
-                    "pitfall",
-                    "mnemonic",
-                    "collocation"
-                ])
+                "section": describedSchema(
+                    enumStringSchema([
+                        "usage_cue",
+                        "example",
+                        "recall_draft",
+                        "pitfall",
+                        "mnemonic",
+                        "collocation"
+                    ]),
+                    description: "Remove all accepted items in this section only when the user explicitly wants to clear that section. This is not for deleting only the first, second, or other subset of accepted items."
+                )
             ],
             required: ["section"]
         )
@@ -722,13 +717,6 @@ private struct ReadCardSnapshotPayload: Encodable {
 private struct AcceptedArtifactsPayload: Encodable {
     let word: String
     let artifacts: JSONValue
-}
-
-private struct RecallCardPayload: Encodable {
-    let word: String
-    let hasAccepted: Bool
-    let accepted: [RecallCardDraft]
-    let suggested: [RecallCardDraft]
 }
 
 private struct DeleteAcceptedPayload: Decodable {
