@@ -21,21 +21,45 @@ enum AgentProposalArtifactsProjector {
 
         switch proposal.kind {
         case .usageCue:
+            guard !proposal.operation.isDelete else {
+                applyDefinitionNoteDelete(to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(DefinitionNoteArtifact.self, from: proposal.payloadJSON)
             applyDefinitionNote(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .example:
+            guard !proposal.operation.isDelete else {
+                try applyExampleDelete(operation: proposal.operation, to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(ExampleSentenceArtifact.self, from: proposal.payloadJSON)
             try applyExample(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .recallDraft:
+            guard !proposal.operation.isDelete else {
+                applyRecallDraftDelete(to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(RecallCardDraft.self, from: proposal.payloadJSON)
             applyRecallDraft(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .pitfall:
+            guard !proposal.operation.isDelete else {
+                try applyPitfallDelete(operation: proposal.operation, to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(PitfallArtifact.self, from: proposal.payloadJSON)
             try applyPitfall(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .mnemonic:
+            guard !proposal.operation.isDelete else {
+                try applyMnemonicDelete(operation: proposal.operation, to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(MnemonicArtifact.self, from: proposal.payloadJSON)
             try applyMnemonic(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .collocation:
+            guard !proposal.operation.isDelete else {
+                try applyCollocationDelete(operation: proposal.operation, to: &updated, mode: mode)
+                return updated.normalized()
+            }
             let payload = try decodePayload(CollocationArtifact.self, from: proposal.payloadJSON)
             try applyCollocation(payload, operation: proposal.operation, to: &updated, mode: mode)
         case .deleteAccepted:
@@ -66,6 +90,18 @@ enum AgentProposalArtifactsProjector {
         }
     }
 
+    private static func applyDefinitionNoteDelete(
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) {
+        switch mode {
+        case .persist:
+            artifacts.definitionNote.suggested = nil
+        case .preview:
+            artifacts.definitionNote.accepted = nil
+        }
+    }
+
     private static func applyRecallDraft(
         _ artifact: RecallCardDraft,
         operation: ProposalRecord.Operation,
@@ -86,6 +122,18 @@ enum AgentProposalArtifactsProjector {
         }
     }
 
+    private static func applyRecallDraftDelete(
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) {
+        switch mode {
+        case .persist:
+            artifacts.recallCardDrafts.suggested = nil
+        case .preview:
+            artifacts.recallCardDrafts.accepted = nil
+        }
+    }
+
     private static func applyPitfall(
         _ artifact: PitfallArtifact,
         operation: ProposalRecord.Operation,
@@ -95,6 +143,17 @@ enum AgentProposalArtifactsProjector {
         var values = artifactBase(from: artifacts.pitfalls, mode: mode)
         let targetIndex = collectionTargetIndex(operation: operation, prefix: "pf-", ids: values.map(\.id))
         try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        assign(values, to: &artifacts.pitfalls, mode: mode)
+    }
+
+    private static func applyPitfallDelete(
+        operation: ProposalRecord.Operation,
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) throws {
+        var values = artifactBase(from: artifacts.pitfalls, mode: mode)
+        let targetIndex = collectionTargetIndex(operation: operation, prefix: "pf-", ids: values.map(\.id))
+        try deleteFromCollection(&values, operation: operation, targetIndex: targetIndex)
         assign(values, to: &artifacts.pitfalls, mode: mode)
     }
 
@@ -110,6 +169,17 @@ enum AgentProposalArtifactsProjector {
         assign(values, to: &artifacts.mnemonics, mode: mode)
     }
 
+    private static func applyMnemonicDelete(
+        operation: ProposalRecord.Operation,
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) throws {
+        var values = artifactBase(from: artifacts.mnemonics, mode: mode)
+        let targetIndex = collectionTargetIndex(operation: operation, prefix: "mn-", ids: values.map(\.id))
+        try deleteFromCollection(&values, operation: operation, targetIndex: targetIndex)
+        assign(values, to: &artifacts.mnemonics, mode: mode)
+    }
+
     private static func applyCollocation(
         _ artifact: CollocationArtifact,
         operation: ProposalRecord.Operation,
@@ -119,6 +189,17 @@ enum AgentProposalArtifactsProjector {
         var values = artifactBase(from: artifacts.collocations, mode: mode)
         let targetIndex = collectionTargetIndex(operation: operation, prefix: "co-", ids: values.map(\.id))
         try mutateCollection(&values, operation: operation, targetIndex: targetIndex, replacement: artifact)
+        assign(values, to: &artifacts.collocations, mode: mode)
+    }
+
+    private static func applyCollocationDelete(
+        operation: ProposalRecord.Operation,
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) throws {
+        var values = artifactBase(from: artifacts.collocations, mode: mode)
+        let targetIndex = collectionTargetIndex(operation: operation, prefix: "co-", ids: values.map(\.id))
+        try deleteFromCollection(&values, operation: operation, targetIndex: targetIndex)
         assign(values, to: &artifacts.collocations, mode: mode)
     }
 
@@ -176,6 +257,20 @@ enum AgentProposalArtifactsProjector {
         }
     }
 
+    private static func deleteFromCollection<Value>(
+        _ values: inout [Value],
+        operation: ProposalRecord.Operation,
+        targetIndex: Int?
+    ) throws {
+        guard case .delete = operation else {
+            throw AgentProposalArtifactsError.invalidDeleteOperation
+        }
+        guard let targetIndex, values.indices.contains(targetIndex) else {
+            throw AgentProposalArtifactsError.targetUnavailable
+        }
+        values.remove(at: targetIndex)
+    }
+
     private static func collectionTargetIndex(
         operation: ProposalRecord.Operation,
         prefix: String,
@@ -197,6 +292,23 @@ enum AgentProposalArtifactsProjector {
             return
         }
         values.remove(at: targetIndex)
+    }
+
+    private static func applyExampleDelete(
+        operation: ProposalRecord.Operation,
+        to artifacts: inout AIArtifacts,
+        mode: Mode
+    ) throws {
+        var values = exampleBase(from: artifacts, mode: mode)
+        let targetIndex: Int?
+        switch operation {
+        case .delete(let targetID):
+            targetIndex = resolveSyntheticIndex(targetID, prefix: "ex-")
+        case .add, .replace:
+            targetIndex = nil
+        }
+        try deleteFromCollection(&values, operation: operation, targetIndex: targetIndex)
+        assign(values, to: &artifacts.exampleSentences, mode: mode)
     }
 
     private static func applyExample(

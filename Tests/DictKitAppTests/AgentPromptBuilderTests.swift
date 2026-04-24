@@ -59,8 +59,12 @@ final class AgentPromptBuilderTests: XCTestCase {
         let combined = messages.map(\.content.plainText).joined(separator: "\n---\n")
 
         XCTAssertTrue(combined.contains("Current card snapshot"))
-        XCTAssertTrue(combined.contains("┌─────────── FRONT"))
-        XCTAssertTrue(combined.contains(#""word":"apple""#))
+        XCTAssertTrue(combined.contains("Card XML"))
+        XCTAssertTrue(combined.contains(#"<card_snapshot source="current" kind="standard" word="apple">"#))
+        XCTAssertTrue(combined.contains(#"<example id="ex-2" editable="true">"#))
+        XCTAssertFalse(combined.contains("ASCII wireframe"))
+        XCTAssertFalse(combined.contains("Structured JSON"))
+        XCTAssertFalse(combined.contains("┌─────────── FRONT"))
         XCTAssertTrue(combined.contains("Pending proposals"))
         XCTAssertTrue(combined.contains("Replace example #2 with business context"))
         XCTAssertTrue(combined.contains("Recent proposal decisions"))
@@ -82,24 +86,24 @@ final class AgentPromptBuilderTests: XCTestCase {
         )
 
         let combined = messages.map(\.content.plainText).joined(separator: "\n")
+        let systemPrompt = messages.first(where: { $0.role == .system })?.content.plainText ?? ""
 
         XCTAssertTrue(combined.contains("Current card snapshot"))
         XCTAssertTrue(combined.contains("Related card snapshots"))
-        XCTAssertTrue(combined.contains("Recall focus summary"))
-        XCTAssertTrue(combined.contains("masked token: p_rpetual"))
-        XCTAssertTrue(combined.contains("hidden segment: e"))
-        XCTAssertTrue(combined.contains("RECALL FRONT"))
-        XCTAssertTrue(combined.contains(#""kind":"recall""#))
-        XCTAssertTrue(combined.contains(#""front":"p_rpetual""#))
+        XCTAssertTrue(combined.contains(#"<card_snapshot source="related-1" kind="recall" word="apple">"#))
+        XCTAssertTrue(combined.contains(#"<recall id="recall-draft" editable="true">"#))
+        XCTAssertTrue(combined.contains(#"masked_token="p_rpetual""#))
+        XCTAssertTrue(combined.contains(#"hidden_segment="e""#))
+        XCTAssertTrue(combined.contains(#">p_rpetual</front>"#))
         XCTAssertTrue(combined.contains("First infer the learner's immediate task from the user's request and the card context"))
         XCTAssertTrue(combined.contains("Prefer the information that most directly helps the learner succeed at that immediate task"))
         XCTAssertTrue(combined.contains("give discriminative help instead of broad background explanation"))
-        XCTAssertTrue(combined.contains("When the user mentions a Recall Card, cloze, blank, hidden letters, front/back, or 挖空, use the Recall Card snapshot already in context"))
-        XCTAssertTrue(combined.contains("For Recall Card questions, first identify the exact masked token and the hidden letters from the Recall snapshot before explaining anything else"))
-        XCTAssertTrue(combined.contains("If the user asks for a mnemonic, 记忆点, or memory trick to help solve a Recall Card blank, answer in chat by default"))
-        XCTAssertTrue(combined.contains("Do not call propose_mnemonic unless the user explicitly asks to add that mnemonic to the standard card"))
-        XCTAssertTrue(combined.contains("If the user explicitly asks to change the Recall Card itself, prefer propose_recall_draft rather than propose_mnemonic"))
-        XCTAssertTrue(combined.contains("Example recall-draft tool call"))
+        XCTAssertFalse(systemPrompt.contains("挖空"))
+        XCTAssertFalse(systemPrompt.contains("记忆点"))
+        XCTAssertFalse(systemPrompt.contains("Do not call propose_mnemonic unless the user explicitly asks to add that mnemonic to the standard card"))
+        XCTAssertTrue(combined.contains("When writing a mnemonic, consider sound, imagery, spelling, contrast, and plausible word structure"))
+        XCTAssertTrue(combined.contains("do not invent fake etymology"))
+        XCTAssertFalse(combined.contains("Example recall-draft tool call"))
     }
 
     func testSystemPromptDiscouragesInternalLabelQuestionsBeforeProposal() {
@@ -119,10 +123,33 @@ final class AgentPromptBuilderTests: XCTestCase {
 
         XCTAssertTrue(systemPrompt.contains("Do not ask the user to choose between internal labels or categories before creating a proposal"))
         XCTAssertTrue(systemPrompt.contains("Default to generating the content yourself unless the user explicitly requests sourced/cited/verbatim content"))
-        XCTAssertTrue(systemPrompt.contains("Existing artifacts can still be edit targets for replace/delete when the user refers to them"))
+        XCTAssertTrue(systemPrompt.contains("Use replace/delete only for XML nodes marked editable=\"true\""))
         XCTAssertTrue(systemPrompt.contains("For content edit requests, call the matching propose_* tool as soon as the action, section, and content can be inferred"))
+        XCTAssertTrue(systemPrompt.contains("Use source-only XML nodes as evidence or anchors, not as targetID values"))
+        XCTAssertTrue(systemPrompt.contains("If one user request needs multiple card changes, use multiple proposal tool calls"))
+        XCTAssertFalse(systemPrompt.contains("There is no batch or section-level delete tool"))
+        XCTAssertFalse(systemPrompt.contains("delete each targeted accepted mnemonic by targetID, then add the new mnemonic"))
         XCTAssertFalse(systemPrompt.contains("AI-generated"))
         XCTAssertFalse(systemPrompt.contains("natural context"))
+    }
+
+    func testBuildMessagesRendersDictionaryExamplesAsSourceOnlyXML() {
+        let builder = AgentPromptBuilder()
+        let messages = builder.buildMessages(
+            context: .init(
+                cardSnapshot: Self.dictionaryExampleSnapshot(),
+                messages: [
+                    Self.message(role: .user, ordinal: 1, content: .text("加到例子里"))
+                ],
+                tools: AgentToolRegistry(snapshotLoader: { _ in Self.dictionaryExampleSnapshot() }).definitions
+            )
+        )
+
+        let combined = messages.map(\.content.plainText).joined(separator: "\n")
+
+        XCTAssertTrue(combined.contains(#"<sense id="sense-0-0" editable="false" part_of_speech="adjective">"#))
+        XCTAssertTrue(combined.contains(#"<dictionary_example source_id="sense-0-0:example-0" editable="false">to be ravenous 饿极了</dictionary_example>"#))
+        XCTAssertFalse(combined.contains("sense-0-0\" targetID"))
     }
 
 }
@@ -273,6 +300,17 @@ private extension AgentPromptBuilderTests {
         )
     }
 
+    static func dictionaryExampleSnapshot() -> CardRenderSnapshot {
+        CardRenderSnapshot(
+            kind: .standard,
+            word: "ravenous",
+            phonetic: "/ˈravənəs/",
+            wireframe: "wireframe",
+            structuredJSON: #"{"kind":"standard","word":"ravenous","phonetic":"/ˈravənəs/","senses":[{"id":"sense-0-0","pos":"adjective","definition":"extremely hungry","examples":["to be ravenous 饿极了"]}],"artifacts":{"examples":[],"mnemonics":[],"pitfalls":[],"collocations":[]}}"#,
+            aiSectionOrder: []
+        )
+    }
+
     static func recallSnapshot() -> CardRenderSnapshot {
         CardRenderSnapshot(
             kind: .recall,
@@ -286,7 +324,7 @@ private extension AgentPromptBuilderTests {
             │ perpetual                                      │
             └───────────────────────────────────────────────┘
             """,
-            structuredJSON: #"{"kind":"recall","word":"apple","recall":{"front":"p_rpetual","back":"perpetual"}}"#,
+            structuredJSON: #"{"kind":"recall","word":"apple","recall":{"mode":"targeted_letter_cloze","front":"p_rpetual","back":"perpetual"}}"#,
             aiSectionOrder: []
         )
     }

@@ -373,6 +373,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("strict JSON learning aids"))
         XCTAssertTrue(prompt.system.contains("Use accepted learning material as already-covered teaching points and avoid repeating them. Accepted material may be in Chinese or English; concept overlap still counts."))
         XCTAssertTrue(prompt.system.contains("Your job is not to fill sections."))
+        XCTAssertTrue(prompt.system.contains("For mnemonics, consider pronunciation, spelling, imagery, contrast, and plausible word formation"))
         XCTAssertTrue(prompt.system.contains("For pitfalls, think like a language teacher (from a language learner perspective): surface likely learner misunderstandings, similar words misspelling or misuses, not generic advice about better wording."))
         XCTAssertTrue(prompt.system.contains("A pitfall should describe misunderstanding the word itself, not criticizing the practice or style the word refers to."))
         XCTAssertTrue(prompt.system.contains("Prefer omission over low-information correctness."))
@@ -386,6 +387,8 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("\"recallRelevant\""))
         XCTAssertTrue(prompt.user.contains("\"senseIndex\""))
         XCTAssertTrue(prompt.user.contains("\"clue\""))
+        XCTAssertTrue(prompt.user.contains("\"kind\": \"sound_hook | image_hook | spelling_hook | contrast_hook | word_structure\""))
+        XCTAssertTrue(prompt.user.contains("\"focus\": \"memory_hook | spelling_segment | meaning_contrast | morphology\""))
         XCTAssertTrue(prompt.user.contains("\"phrase\""))
         XCTAssertTrue(prompt.user.contains("\"gloss\""))
         XCTAssertTrue(prompt.user.contains("<learning_aids_context>"))
@@ -426,6 +429,8 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("pitfalls: describe confusion about the word's meaning or use, not a judgment about whether the thing it names is good or bad"))
         XCTAssertTrue(prompt.user.contains("pitfalls: avoid turning words like jargon, slang, or formality labels into generic advice about clearer communication"))
         XCTAssertTrue(prompt.user.contains("mnemonics: require a vivid image, a concrete spelling chunk, or a memorable contrast that still works without seeing the headword"))
+        XCTAssertTrue(prompt.user.contains("mnemonics: also consider useful word structure, such as prefixes, roots, suffixes, or meaningful chunks"))
+        XCTAssertTrue(prompt.user.contains("mnemonics: word-structure hooks must be plausible and learner-facing; do not invent fake etymology"))
         XCTAssertTrue(prompt.user.contains("mnemonics: for abstract words, a concrete scene is acceptable; a synonym paraphrase is not"))
         XCTAssertTrue(prompt.user.contains("mnemonics: no acrostics, no whole-word spelling, no \"think of a <word> person\""))
         XCTAssertTrue(prompt.user.contains("mnemonics: reject abstract slogan-like cues that still require the learner to re-derive the meaning from scratch"))
@@ -434,6 +439,8 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("collocations: prefer 1 to 2 high-value collocations; zero is better than filler"))
         XCTAssertTrue(prompt.user.contains("Bad pitfall: fragile -> \"Means weak or delicate\""))
         XCTAssertTrue(prompt.user.contains("Good mnemonic: reluctant -> \"dragging feet at the doorway\""))
+        XCTAssertTrue(prompt.user.contains("Good word-structure mnemonic: predictable"))
+        XCTAssertTrue(prompt.user.contains("Bad word-structure mnemonic: corpus"))
         XCTAssertTrue(prompt.user.contains("Bad mnemonic: reluctant -> \"Think of a person who is hesitant to agree\""))
         XCTAssertTrue(prompt.user.contains("Bad collocation: principal -> \"principal of the school\""))
         XCTAssertTrue(prompt.user.contains("Why bad: this just restates the dictionary sense instead of teaching a reusable pattern"))
@@ -490,6 +497,7 @@ final class LLMPromptTests: XCTestCase {
         )
         XCTAssertTrue(prompt.user.contains("Overlap means teaching the same learning point even if wording or language differs"))
         XCTAssertTrue(prompt.user.contains("A Chinese accepted item and an English candidate can still overlap if they teach the same trap or distinction"))
+        XCTAssertTrue(prompt.user.contains("For mnemonics, value plausible word-structure hooks when they connect form to meaning or spelling without inventing fake etymology"))
     }
 
     func testLearningAidCombinedJudgePromptRequestsSectionScopedSelections() {
@@ -517,6 +525,7 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("It is acceptable for a section to return null if none of its candidates adds clear learning value"))
         XCTAssertTrue(prompt.user.contains("Do not fill a weak section just to make every section non-empty"))
         XCTAssertTrue(prompt.user.contains("Do not let a strong section suppress selection quality in another section"))
+        XCTAssertTrue(prompt.user.contains("For mnemonics, value plausible word-structure hooks when they connect form to meaning or spelling without inventing fake etymology"))
     }
 
     func testPhoneticIPAPromptRequestsPureIPAJSON() {
@@ -558,10 +567,9 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.system.contains("Convert dictionary pronunciation data into strict JSON only"))
         XCTAssertTrue(prompt.user.contains("\"stressSyllables\""))
         XCTAssertTrue(prompt.user.contains("\"ipa\": \"pure IPA only or null\""))
-        XCTAssertTrue(prompt.user.contains("Start from the exact written word"))
-        XCTAssertTrue(prompt.user.contains("Do not copy helper spellings from the pronunciation guide"))
-        XCTAssertTrue(prompt.user.contains("For monosyllable words, return the plain word only, for example \"flock\""))
-        XCTAssertTrue(prompt.user.contains("choose one default variant and return one string only"))
+        XCTAssertTrue(prompt.user.contains("Build stressSyllables using only the exact written target letters, in order"))
+        XCTAssertTrue(prompt.user.contains("Use the pronunciation guide only to decide stress placement. Never copy its letters"))
+        XCTAssertTrue(prompt.user.contains("For monosyllable words, return the plain word only, e.g. \"flock\""))
         XCTAssertTrue(prompt.user.contains("keep \"ipa\" as null unless correction is necessary"))
     }
 
@@ -586,9 +594,9 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("4: p"))
         XCTAssertTrue(prompt.user.contains("5: u"))
         XCTAssertTrue(prompt.user.contains("6: s"))
-        XCTAssertTrue(prompt.user.contains("Keep the original letters in the same order"))
-        XCTAssertTrue(prompt.user.contains("Insert hyphens only to show learner-friendly chunks"))
-        XCTAssertTrue(prompt.user.contains("Change casing only on existing target letters"))
+        XCTAssertTrue(prompt.user.contains("Build stressSyllables using only the exact written target letters, in order"))
+        XCTAssertTrue(prompt.user.contains("Split multi-syllable words into hyphen-joined chunks"))
+        XCTAssertTrue(prompt.user.contains("Uppercase only the primary-stressed chunk"))
     }
 
     func testPronunciationEnhancementRetryPromptIncludesSpecificCorrection() {

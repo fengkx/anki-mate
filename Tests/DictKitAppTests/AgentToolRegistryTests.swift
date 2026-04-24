@@ -16,8 +16,7 @@ final class AgentToolRegistryTests: XCTestCase {
             "propose_recall_draft",
             "propose_pitfall",
             "propose_mnemonic",
-            "propose_collocation",
-            "propose_delete_accepted"
+            "propose_collocation"
         ])
     }
 
@@ -66,6 +65,33 @@ final class AgentToolRegistryTests: XCTestCase {
             XCTAssertEqual(
                 error.localizedDescription,
                 "Unsupported agent tool: read_recall_card"
+            )
+        }
+    }
+
+    func testDeleteAcceptedToolIsNotExposedOrExecutable() {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        XCTAssertNil(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
+        XCTAssertThrowsError(
+            try registry.execute(
+                LLMToolCall(
+                    id: "call-delete-accepted",
+                    name: "propose_delete_accepted",
+                    arguments: .object([
+                        "operation": .string("delete"),
+                        "targetID": .string("mnemonic-0-perpetual-repeat"),
+                        "payload": .object([
+                            "section": .string("mnemonic")
+                        ])
+                    ])
+                ),
+                for: UUID()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Unsupported agent tool: propose_delete_accepted"
             )
         }
     }
@@ -210,29 +236,95 @@ final class AgentToolRegistryTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error.localizedDescription, "Invalid arguments for agent tool: propose_example")
         }
+
+        XCTAssertThrowsError(
+            try registry.normalizedToolCall(
+                LLMToolCall(
+                    id: "call-replace-sense-id",
+                    name: "propose_example",
+                    arguments: .object([
+                        "operation": .string("replace"),
+                        "targetID": .string("sense-0-0"),
+                        "diffSummary": .string("Replace dictionary example"),
+                        "payload": .object([
+                            "text": .string("The model was ravenous for tokens.")
+                        ])
+                    ])
+                ),
+                for: UUID()
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Invalid arguments for agent tool: propose_example")
+        }
+    }
+
+    func testNormalizeProposalReplaceAcceptsRenderedMnemonicArtifactID() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.acceptedArtifactsSnapshot() })
+
+        let normalized = try registry.normalizedToolCall(
+            LLMToolCall(
+                id: "call-replace-mnemonic",
+                name: "propose_mnemonic",
+                arguments: .object([
+                    "operation": .string("replace"),
+                    "targetID": .string("mnemonic-0-perpetual-repeat"),
+                    "diffSummary": .string("Replace translation mnemonic with a word-structure mnemonic"),
+                    "payload": .object([
+                        "text": .string("perpetual starts with per-, so anchor the first blank to per rather than pa.")
+                    ])
+                ])
+            ),
+            for: UUID()
+        )
+
+        let content = try registry.execute(normalized, for: UUID())
+        guard case .actionProposal(let proposal) = content else {
+            return XCTFail("Expected proposal content")
+        }
+        XCTAssertEqual(proposal.kind, .mnemonic)
+        XCTAssertEqual(proposal.operation, .replace(targetID: "mnemonic-0-perpetual-repeat"))
+    }
+
+    func testExecuteProposeMnemonicDeleteDoesNotRequirePayload() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.acceptedArtifactsSnapshot() })
+
+        let content = try registry.execute(
+            LLMToolCall(
+                id: "call-delete-mnemonic",
+                name: "propose_mnemonic",
+                arguments: .object([
+                    "operation": .string("delete"),
+                    "targetID": .string("mnemonic-0-perpetual-repeat"),
+                    "diffSummary": .string("Delete translation mnemonic")
+                ])
+            ),
+            for: UUID()
+        )
+
+        guard case .actionProposal(let proposal) = content else {
+            return XCTFail("Expected proposal content")
+        }
+        XCTAssertEqual(proposal.kind, .mnemonic)
+        XCTAssertEqual(proposal.operation, .delete(targetID: "mnemonic-0-perpetual-repeat"))
+        XCTAssertEqual(proposal.payloadJSON, "{}")
     }
 
     func testProposalToolDefinitionsExplainSelectiveDeleteContracts() throws {
         let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
 
         let mnemonic = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_mnemonic" }))
-        let deleteAccepted = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
         let mnemonicDescription = try XCTUnwrap(mnemonic.description)
-        let deleteAcceptedDescription = try XCTUnwrap(deleteAccepted.description)
 
         XCTAssertTrue(mnemonicDescription.contains("Delete only the specific accepted mnemonic referenced by targetID"))
         XCTAssertTrue(mnemonicDescription.contains("keep the other accepted mnemonics untouched"))
-        XCTAssertTrue(deleteAcceptedDescription.contains("Delete all accepted items in one section"))
-        XCTAssertTrue(deleteAcceptedDescription.contains("Do not use this tool when deleting only some existing items"))
+        XCTAssertNil(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
     }
 
-    func testProposalToolSchemasDescribeTargetIDAndWholeSectionDeleteSemantics() throws {
+    func testProposalToolSchemasDescribeTargetIDForSelectiveDeletes() throws {
         let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
 
         let mnemonic = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_mnemonic" }))
-        let deleteAccepted = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_delete_accepted" }))
         let mnemonicParameters = try XCTUnwrap(mnemonic.parameters)
-        let deleteAcceptedParameters = try XCTUnwrap(deleteAccepted.parameters)
 
         let mnemonicTargetDescription = try XCTUnwrap(
             Self.stringPropertyDescription(
@@ -240,27 +332,57 @@ final class AgentToolRegistryTests: XCTestCase {
                 in: mnemonicParameters
             )
         )
+        let required = Self.requiredProperties(in: mnemonicParameters)
         XCTAssertTrue(mnemonicTargetDescription.contains("required for replace/delete"))
         XCTAssertTrue(mnemonicTargetDescription.contains("real existing artifact id from the current card snapshot or accepted artifacts"))
         XCTAssertTrue(mnemonicTargetDescription.contains("When deleting only some existing items while keeping others"))
+        XCTAssertEqual(
+            Self.objectPropertyDescription(named: "payload", in: mnemonicParameters),
+            "Required for add/replace. Omit it for delete; delete only needs operation and targetID."
+        )
+        XCTAssertEqual(required, ["operation"])
+    }
 
-        let deleteAcceptedOperationDescription = try XCTUnwrap(
+    func testExampleToolDefinitionDistinguishesAcceptedExamplesFromDictionaryExamples() throws {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        let example = try XCTUnwrap(registry.definitions.first(where: { $0.name == "propose_example" }))
+        let description = try XCTUnwrap(example.description)
+        let parameters = try XCTUnwrap(example.parameters)
+        let targetDescription = try XCTUnwrap(
             Self.stringPropertyDescription(
-                named: "operation",
-                in: deleteAcceptedParameters
+                named: "targetID",
+                in: parameters
             )
         )
-        XCTAssertTrue(deleteAcceptedOperationDescription.contains("Only use delete for this tool"))
-        XCTAssertTrue(deleteAcceptedOperationDescription.contains("section"))
 
-        let deleteAcceptedSectionDescription = try XCTUnwrap(
-            Self.stringPropertyDescription(
-                named: "section",
-                inPayloadOf: deleteAcceptedParameters
+        XCTAssertTrue(description.contains("Use add when the user asks to add an example"))
+        XCTAssertTrue(description.contains("dictionary sense examples are source material, not replace targets"))
+        XCTAssertTrue(targetDescription.contains("accepted example id such as ex-1"))
+        XCTAssertTrue(targetDescription.contains("Never use sense ids like sense-0-0"))
+        XCTAssertTrue(targetDescription.contains("anchor.exampleIndex is only citation metadata"))
+    }
+
+    func testExecuteProposeExampleAddRejectsMissingPayload() {
+        let registry = AgentToolRegistry(snapshotLoader: { _ in Self.sampleSnapshot() })
+
+        XCTAssertThrowsError(
+            try registry.execute(
+                LLMToolCall(
+                    id: "call-add-missing-payload",
+                    name: "propose_example",
+                    arguments: .object([
+                        "operation": .string("add")
+                    ])
+                ),
+                for: UUID()
             )
-        )
-        XCTAssertTrue(deleteAcceptedSectionDescription.contains("Remove all accepted items in this section"))
-        XCTAssertTrue(deleteAcceptedSectionDescription.contains("not for deleting only the first, second, or other subset"))
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Invalid arguments for agent tool: propose_example"
+            )
+        }
     }
 
     func testExecuteProposePitfallRejectsMissingRequiredText() {
@@ -322,6 +444,19 @@ final class AgentToolRegistryTests: XCTestCase {
         return description
     }
 
+    private static func objectPropertyDescription(
+        named propertyName: String,
+        in schema: AnkiMateRPC.JSONValue
+    ) -> String? {
+        guard case .object(let root) = schema,
+              case .object(let properties)? = root["properties"],
+              case .object(let property)? = properties[propertyName],
+              case .string(let description)? = property["description"] else {
+            return nil
+        }
+        return description
+    }
+
     private static func stringPropertyDescription(
         named propertyName: String,
         inPayloadOf schema: AnkiMateRPC.JSONValue
@@ -335,5 +470,16 @@ final class AgentToolRegistryTests: XCTestCase {
             return nil
         }
         return description
+    }
+
+    private static func requiredProperties(in schema: AnkiMateRPC.JSONValue) -> [String] {
+        guard case .object(let root) = schema,
+              case .array(let values)? = root["required"] else {
+            return []
+        }
+        return values.compactMap { value in
+            guard case .string(let name) = value else { return nil }
+            return name
+        }
     }
 }

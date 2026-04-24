@@ -65,3 +65,4 @@ Open only the docs needed for the task:
 2. Treat CLI checks as the first validation loop for parser and dictionary behavior.
 3. For app state changes, make source of truth, propagation, and persistence explicit.
 4. Add or update focused tests for every bug fix; do not rely on manual app verification alone.
+5. When building chat-completion requests for local LLMs, emit at most one `system` message and keep it as the first message. Do not insert `system` messages into later history turns. If multiple system-level instructions exist, merge them before sending the request.

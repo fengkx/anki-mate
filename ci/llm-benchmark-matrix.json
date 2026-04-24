@@ -2,6 +2,7 @@
   "name": "default",
   "defaults": {
     "taskTimeoutSeconds": {
+      "agent_edit_proposal": 180,
       "default": 120
     }
   },

@@ -120,7 +120,7 @@ enum AgentComposerInputCommandResolver {
             return .passthrough
         }
 
-        if modifierFlags.contains(.command) {
+        if modifierFlags.contains(.command) || modifierFlags.contains(.shift) {
             return .insertNewline
         }
 
@@ -362,6 +362,8 @@ struct AgentChatView: View {
     @State private var thinkingElapsedRefresh = Date()
     @State private var expandedThinkingMessages: Set<UUID> = []
     @State private var draftAttachments: [AgentAttachment] = []
+    @State private var generationTask: Task<Void, Never>?
+    @State private var generationTaskID: UUID?
 
     private var reloadTaskKey: String {
         "\(item.id.uuidString)-\(ObjectIdentifier(session))"
@@ -994,27 +996,15 @@ struct AgentChatView: View {
         editingMessageID = nil
         editText = ""
         errorMessage = nil
-        Task {
-            do {
-                try await session.editLastUserMessage(newText)
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                }
-            }
+        startGenerationTask {
+            try await session.editLastUserMessage(newText)
         }
     }
 
     private func regenerateLastResponse() {
         errorMessage = nil
-        Task {
-            do {
-                try await session.regenerateLastResponse()
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                }
-            }
+        startGenerationTask {
+            try await session.regenerateLastResponse()
         }
     }
 
@@ -1029,15 +1019,37 @@ struct AgentChatView: View {
         composerText = ""
         draftAttachments = []
         errorMessage = nil
-        Task {
-            do {
-                try await session.sendUserMessage(text, attachments: attachments)
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
+        startGenerationTask {
+            try await session.sendUserMessage(text, attachments: attachments)
+        }
+    }
+
+    private func startGenerationTask(_ operation: @escaping @MainActor () async throws -> Void) {
+        generationTask?.cancel()
+        let taskID = UUID()
+        generationTaskID = taskID
+        generationTask = Task { @MainActor in
+            defer {
+                if generationTaskID == taskID {
+                    generationTask = nil
+                    generationTaskID = nil
                 }
             }
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    private func stopGeneration() {
+        session.interruptGeneration()
+        generationTask?.cancel()
+        generationTask = nil
+        generationTaskID = nil
     }
 
     // MARK: - Tool Trace
@@ -1204,17 +1216,27 @@ struct AgentChatView: View {
                 Spacer()
 
                 Button {
-                    sendMessage()
+                    if session.isGenerating {
+                        stopGeneration()
+                    } else {
+                        sendMessage()
+                    }
                 } label: {
-                    Image(systemName: "arrow.up")
+                    Image(systemName: session.isGenerating ? "stop.fill" : "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
                         .frame(width: 30, height: 30)
-                        .foregroundStyle(canSendDraft ? Color.white : Color.secondary)
-                        .background(Circle().fill(canSendDraft ? Color.primary : Color.secondary.opacity(0.14)))
+                        .foregroundStyle(session.isGenerating || canSendDraft ? Color.white : Color.secondary)
+                        .background(
+                            Circle().fill(
+                                session.isGenerating || canSendDraft
+                                    ? Color.primary
+                                    : Color.secondary.opacity(0.14)
+                            )
+                        )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSendDraft)
-                .help("Send")
+                .disabled(!session.isGenerating && !canSendDraft)
+                .help(session.isGenerating ? "Stop" : "Send")
             }
         }
         .padding(10)

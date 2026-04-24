@@ -67,6 +67,7 @@ final class LLMBenchmarkSupportTests: XCTestCase {
         )
         XCTAssertEqual(Set(matrix.models.map(\.family)), ["gemma-4", "gemma-3n", "qwen35"])
         XCTAssertEqual(matrix.effectiveTaskTimeouts(forModelID: "gemma-4-e2b-it-q4km").seconds(for: "example_sentences"), 120)
+        XCTAssertEqual(matrix.effectiveTaskTimeouts(forModelID: "gemma-4-e2b-it-q4km").seconds(for: "agent_edit_proposal"), 180)
         XCTAssertEqual(matrix.effectiveTaskTimeouts(forModelID: "qwen35-4b-q6k").seconds(for: "learning_aids"), 180)
         XCTAssertEqual(matrix.effectiveTaskTimeouts(forModelID: "qwen35-4b-q6k").maximumSeconds, 180)
     }

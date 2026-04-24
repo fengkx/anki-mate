@@ -320,6 +320,13 @@ public struct ProposalRecord: Codable, Equatable, Identifiable, Sendable {
         case replace(targetID: String)
         case delete(targetID: String)
 
+        public var isDelete: Bool {
+            if case .delete = self {
+                return true
+            }
+            return false
+        }
+
         private enum CodingKeys: String, CodingKey {
             case type
             case targetID

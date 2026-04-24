@@ -115,6 +115,8 @@ public final class AgentSession: ObservableObject {
     private let extraTools: [LLMToolDefinition]
     private let preferences: AgentSessionPreferences
     private let maxToolIterations: Int
+    private var activeGenerationID: UUID?
+    private var interruptedGenerationIDs = Set<UUID>()
 
     public init(
         wordID: UUID,
@@ -158,6 +160,16 @@ public final class AgentSession: ObservableObject {
         try await sendUserMessage(text, attachments: attachments, deleteAttachmentsOnFailure: true)
     }
 
+    public func interruptGeneration() {
+        guard let generationID = activeGenerationID else { return }
+        interruptedGenerationIDs.insert(generationID)
+        persistInterruptedAssistantSnapshotIfNeeded()
+        activeGenerationID = nil
+        isGenerating = false
+        streamingText = ""
+        streamingReasoning = ""
+    }
+
     private func sendUserMessage(
         _ text: String,
         attachments: [AgentAttachment],
@@ -183,16 +195,17 @@ public final class AgentSession: ObservableObject {
         messages.append(userMessage)
         refreshDerivedState()
 
-        isGenerating = true
+        let generationID = beginGeneration()
         defer {
-            isGenerating = false
-            streamingText = ""
-            streamingReasoning = ""
+            finishGeneration(generationID)
         }
 
         do {
-            try await runAssistantTurn(sessionID: sessionRecord.id)
+            try await runAssistantTurn(sessionID: sessionRecord.id, generationID: generationID)
+        } catch AgentGenerationInterruption.interrupted {
+            return
         } catch {
+            guard isGenerationCurrent(generationID) else { return }
             // Model service errors should not pollute the conversation context.
             // Roll back all messages added during this turn (including the user message)
             // so the user can simply re-send.
@@ -339,11 +352,13 @@ public final class AgentSession: ObservableObject {
 
     private func generateWithStreaming(
         promptMessages: [LLMMessage],
-        tools: [LLMToolDefinition]
+        tools: [LLMToolDefinition],
+        generationID: UUID
     ) async throws -> GenerateResult {
         streamingText = ""
         streamingReasoning = ""
         let accumulator = StreamingDeltaAccumulator { [weak self] text, reasoning in
+            guard self?.isGenerationCurrent(generationID) == true else { return }
             self?.streamingText += text
             self?.streamingReasoning += reasoning
         }
@@ -360,7 +375,9 @@ public final class AgentSession: ObservableObject {
                 accumulator.append(reasoning: delta)
             }
         )
+        try checkGenerationStillActive(generationID)
         await accumulator.flushAndClose()
+        try checkGenerationStillActive(generationID)
         return result
     }
 
@@ -410,30 +427,32 @@ public final class AgentSession: ObservableObject {
     }
 
     private func regenerateFromCurrentTranscript(sessionID: UUID) async throws {
-        isGenerating = true
+        let generationID = beginGeneration()
         defer {
-            isGenerating = false
-            streamingText = ""
-            streamingReasoning = ""
+            finishGeneration(generationID)
         }
 
         let messageCountBeforeRegen = messages.count
 
         do {
-            try await runAssistantTurn(sessionID: sessionID)
+            try await runAssistantTurn(sessionID: sessionID, generationID: generationID)
+        } catch AgentGenerationInterruption.interrupted {
+            return
         } catch {
+            guard isGenerationCurrent(generationID) else { return }
             try rollbackMessages(from: messageCountBeforeRegen)
             throw error
         }
     }
 
-    private func runAssistantTurn(sessionID: UUID) async throws {
+    private func runAssistantTurn(sessionID: UUID, generationID: UUID) async throws {
         let snapshot = try snapshotProvider.snapshot(for: wordID)
         let relatedSnapshots = try snapshotProvider.relatedSnapshots(for: wordID)
         let availableTools = mergeTools()
         var toolIteration = 0
 
         while toolIteration <= maxToolIterations {
+            try checkGenerationStillActive(generationID)
             let promptMessages = promptBuilder.buildMessages(
                 context: .init(
                     cardSnapshot: snapshot,
@@ -443,10 +462,16 @@ public final class AgentSession: ObservableObject {
                     attachmentStore: attachmentStore
                 )
             )
-            let result = try await generateWithStreaming(promptMessages: promptMessages, tools: availableTools)
+            let result = try await generateWithStreaming(
+                promptMessages: promptMessages,
+                tools: availableTools,
+                generationID: generationID
+            )
+            try checkGenerationStillActive(generationID)
 
             if let toolCalls = result.toolCalls, !toolCalls.isEmpty {
                 try persistAssistantTextIfPresent(result, sessionID: sessionID)
+                try checkGenerationStillActive(generationID)
 
                 // Once the visible assistant text is persisted, switch the bottom-row
                 // indicator back to a loading state while tool calls are being resolved.
@@ -454,6 +479,7 @@ public final class AgentSession: ObservableObject {
                 streamingReasoning = ""
 
                 let shouldContinue = try executeToolCalls(toolCalls, sessionID: sessionID)
+                try checkGenerationStillActive(generationID)
                 refreshDerivedState()
                 if shouldContinue {
                     toolIteration += 1
@@ -473,6 +499,57 @@ public final class AgentSession: ObservableObject {
         )
         messages.append(toolLoopError)
         refreshDerivedState()
+    }
+
+    private func beginGeneration() -> UUID {
+        let generationID = UUID()
+        activeGenerationID = generationID
+        interruptedGenerationIDs.remove(generationID)
+        isGenerating = true
+        streamingText = ""
+        streamingReasoning = ""
+        return generationID
+    }
+
+    private func finishGeneration(_ generationID: UUID) {
+        if activeGenerationID == generationID {
+            activeGenerationID = nil
+            isGenerating = false
+            streamingText = ""
+            streamingReasoning = ""
+        }
+        interruptedGenerationIDs.remove(generationID)
+    }
+
+    private func isGenerationCurrent(_ generationID: UUID) -> Bool {
+        activeGenerationID == generationID && !interruptedGenerationIDs.contains(generationID)
+    }
+
+    private func checkGenerationStillActive(_ generationID: UUID) throws {
+        guard isGenerationCurrent(generationID), !Task.isCancelled else {
+            interruptedGenerationIDs.insert(generationID)
+            throw AgentGenerationInterruption.interrupted
+        }
+    }
+
+    private func persistInterruptedAssistantSnapshotIfNeeded() {
+        let assistantText = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !assistantText.isEmpty, let sessionID = sessionRecord?.id else { return }
+        let reasoning = streamingReasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        let assistantMessage = try? persistence.addMessage(
+            sessionID: sessionID,
+            role: .assistant,
+            status: .canceled,
+            content: .text(
+                assistantText,
+                reasoning: reasoning.isEmpty ? nil : reasoning
+            ),
+            interrupted: true
+        )
+        if let assistantMessage {
+            messages.append(assistantMessage)
+            refreshDerivedState()
+        }
     }
 
     private func persistAssistantTextIfPresent(_ result: GenerateResult, sessionID: UUID) throws {
@@ -596,6 +673,10 @@ public enum AgentSessionError: LocalizedError {
             return "Agent proposal is unavailable."
         }
     }
+}
+
+private enum AgentGenerationInterruption: Error {
+    case interrupted
 }
 
 private final class StreamingDeltaAccumulator: @unchecked Sendable {

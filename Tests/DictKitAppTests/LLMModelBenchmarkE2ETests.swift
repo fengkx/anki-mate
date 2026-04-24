@@ -1554,7 +1554,7 @@ private struct BenchmarkAgentGenerator: AgentGenerating {
         try await service.generate(
             messages: messages,
             tools: tools,
-            parallelToolCalls: false
+            parallelToolCalls: true
         )
     }
 
@@ -1567,7 +1567,7 @@ private struct BenchmarkAgentGenerator: AgentGenerating {
         try await service.generateStreaming(
             messages: messages,
             tools: tools,
-            parallelToolCalls: false,
+            parallelToolCalls: true,
             onDelta: onDelta,
             onReasoningDelta: onReasoningDelta
         )

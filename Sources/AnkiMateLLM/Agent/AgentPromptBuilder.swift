@@ -171,17 +171,15 @@ public struct AgentPromptBuilder {
             - For explanation, nuance, etymology, usage, or comparison questions, answer in chat and do not call tools.
             - The current card headword is the default learning target for study and edit requests. If the user asks to add learning content without naming another target, do not ask which word or aspect the user means.
             - Attached images and existing artifacts are evidence for the current card, not alternative learning targets. Use them to infer style, section, and learning gaps; do not treat incidental words inside them as competing topics.
-            - Existing artifacts can still be edit targets for replace/delete when the user refers to them; use their real artifact ids for targetID.
+            - The XML card context is the source of truth for visible content, editable ids, source-only ids, and related card variants.
+            - Use replace/delete only for XML nodes marked editable="true"; their id attribute is the targetID.
+            - Use source-only XML nodes as evidence or anchors, not as targetID values.
             - First infer the learner's immediate task from the user's request and the card context.
             - Prefer the information that most directly helps the learner succeed at that immediate task.
             - When the learner is trying to distinguish, recall, choose, fill, or avoid an error, give discriminative help instead of broad background explanation.
             - Do not drift into adjacent knowledge unless it clearly improves success on the learner's immediate task.
-            - When the user mentions a Recall Card, cloze, blank, hidden letters, front/back, or 挖空, use the Recall Card snapshot already in context as the source of truth for the actual hidden position and answer.
-            - For Recall Card questions, first identify the exact masked token and the hidden letters from the Recall snapshot before explaining anything else.
-            - When the hidden letters can be derived from the Recall snapshot, state them explicitly in the first sentence. Example: `当前挖空是 per__tual，缺的是 pe。`
-            - If the user asks for a mnemonic, 记忆点, or memory trick to help solve a Recall Card blank, answer in chat by default. Do not call propose_mnemonic unless the user explicitly asks to add that mnemonic to the standard card.
-            - Mnemonic proposals are for visible standard-card learning content. They are not the default response for Recall Card coaching, hidden-letter explanation, or blank-solving help.
-            - If the user explicitly asks to change the Recall Card itself, prefer propose_recall_draft rather than propose_mnemonic.
+            - If the user asks for help solving, understanding, or remembering visible content, answer in chat unless they also ask to change card content.
+            - When writing a mnemonic, consider sound, imagery, spelling, contrast, and plausible word structure. Use prefixes, roots, suffixes, or meaningful chunks when they make a compact memory hook, but do not invent fake etymology.
             - For content edit requests, call the matching propose_* tool as soon as the action, section, and content can be inferred from the current card or recent conversation.
             - Treat references to earlier suggestions, numbered items, the most recent candidate, current pending proposals, or existing card sections as usable context. Do not ask the user to repeat information already present in the conversation.
             - Proposal cards are the confirmation step. Do not ask the user to confirm before creating a proposal; the user will Apply or Dismiss it.
@@ -194,9 +192,9 @@ public struct AgentPromptBuilder {
 
             Tool argument contract:
             - operation=add must not include targetID because it creates new content.
+            - operation=replace and operation=delete must include targetID from an editable="true" XML node.
+            - If one user request needs multiple card changes, use multiple proposal tool calls instead of merging the changes into one invalid replace/delete.
             - When adding an example without exact text, generate a useful example for the current headword yourself and propose it.
-            - Recall draft proposals still use the same top-level contract: include operation at the top level, then put mode/front/back/hint inside payload.
-            - Example recall-draft tool call: {"operation":"add","payload":{"mode":"targeted_letter_cloze","front":"per__tual","back":"perpetual","hint":"形容词 · 无休止的"}}
             """,
 
             // Scope limits
@@ -220,57 +218,10 @@ public struct AgentPromptBuilder {
 
         return PromptText.join([
             "Current card snapshot",
-            PromptText.labeledBlock("ASCII wireframe", value: snapshot.wireframe),
-            PromptText.labeledBlock("Structured JSON", value: snapshot.structuredJSON),
-            recallFocusSummaryText(currentSnapshot: snapshot, relatedSnapshots: relatedSnapshots),
+            PromptText.labeledBlock("Card XML", value: cardSnapshotXML(snapshot, source: "current")),
             relatedSnapshotsText(relatedSnapshots),
             pendingSummary.map { PromptText.labeledBlock("Pending proposals", value: $0) },
             decisionSummary.map { PromptText.labeledBlock("Recent proposal decisions", value: $0) }
-        ])
-    }
-
-    private func recallFocusSummaryText(
-        currentSnapshot: CardRenderSnapshot,
-        relatedSnapshots: [CardRenderSnapshot]
-    ) -> String? {
-        let candidates = [("current", currentSnapshot)] + relatedSnapshots.enumerated().map { ("related-\($0.offset + 1)", $0.element) }
-        let summaries = candidates.compactMap { source, snapshot in
-            recallSummary(for: snapshot, source: source)
-        }
-        guard !summaries.isEmpty else { return nil }
-        return PromptText.labeledBlock(
-            "Recall focus summary",
-            value: summaries.joined(separator: "\n\n")
-        )
-    }
-
-    private func recallSummary(for snapshot: CardRenderSnapshot, source: String) -> String? {
-        guard snapshot.kind == .recall else { return nil }
-        guard let jsonObject = structuredJSONObject(from: snapshot.structuredJSON),
-              let recall = jsonObject["recall"] as? [String: Any] else {
-            return nil
-        }
-
-        let front = recall["front"] as? String
-        let back = recall["back"] as? String
-        let mode = recall["mode"] as? String
-        let hint = recall["hint"] as? String
-        let maskedToken = front.flatMap { extractMaskedToken(in: $0, expectedLength: back?.count) }
-        let derivedHiddenSegment: String?
-        if let maskedToken, let back {
-            derivedHiddenSegment = deriveHiddenSegment(maskedToken: maskedToken, answer: back)
-        } else {
-            derivedHiddenSegment = nil
-        }
-
-        return PromptText.join([
-            "Source: \(source)",
-            front.map { "front: \($0)" },
-            back.map { "back: \($0)" },
-            mode.map { "mode: \($0)" },
-            hint.map { "hint: \($0)" },
-            maskedToken.map { "masked token: \($0)" },
-            derivedHiddenSegment.map { "hidden segment: \($0)" }
         ])
     }
 
@@ -281,6 +232,226 @@ public struct AgentPromptBuilder {
             return nil
         }
         return dictionary
+    }
+
+    private func cardSnapshotXML(_ snapshot: CardRenderSnapshot, source: String) -> String {
+        guard let object = structuredJSONObject(from: snapshot.structuredJSON) else {
+            return PromptText.join([
+                #"<card_snapshot source="\#(xmlAttribute(source))" kind="\#(xmlAttribute(snapshot.kind.rawValue))" word="\#(xmlAttribute(snapshot.word))">"#,
+                xmlElement("pronunciation", snapshot.phonetic, indent: "  "),
+                "</card_snapshot>"
+            ])
+        }
+
+        let kind = stringValue("kind", in: object) ?? snapshot.kind.rawValue
+        var lines: [String] = [
+            #"<card_snapshot source="\#(xmlAttribute(source))" kind="\#(xmlAttribute(kind))" word="\#(xmlAttribute(snapshot.word))">"#
+        ]
+        if !snapshot.phonetic.isEmpty {
+            lines.append(xmlElement("pronunciation", snapshot.phonetic, indent: "  "))
+        }
+
+        if kind == CardRenderSnapshot.Kind.recall.rawValue {
+            lines.append(contentsOf: recallXML(from: object))
+        } else {
+            lines.append(contentsOf: standardXML(from: object))
+        }
+
+        lines.append("</card_snapshot>")
+        return lines.joined(separator: "\n")
+    }
+
+    private func standardXML(from object: [String: Any]) -> [String] {
+        var lines: [String] = []
+        let senses = arrayOfObjects("senses", in: object)
+        if !senses.isEmpty {
+            lines.append("  <dictionary>")
+            for sense in senses {
+                let senseID = stringValue("id", in: sense) ?? "sense"
+                let pos = stringValue("pos", in: sense) ?? ""
+                lines.append(#"    <sense id="\#(xmlAttribute(senseID))" editable="false" part_of_speech="\#(xmlAttribute(pos))">"#)
+                if let definition = stringValue("definition", in: sense) {
+                    lines.append(xmlElement("definition", definition, indent: "      "))
+                }
+                for (index, example) in arrayOfStrings("examples", in: sense).enumerated() {
+                    let sourceID = "\(senseID):example-\(index)"
+                    lines.append(xmlElement(
+                        "dictionary_example",
+                        example,
+                        attributes: [
+                            ("source_id", sourceID),
+                            ("editable", "false"),
+                        ],
+                        indent: "      "
+                    ))
+                }
+                lines.append("    </sense>")
+            }
+            lines.append("  </dictionary>")
+        }
+
+        if let artifacts = object["artifacts"] as? [String: Any] {
+            lines.append(contentsOf: acceptedArtifactsXML(from: artifacts))
+        }
+        return lines
+    }
+
+    private func recallXML(from object: [String: Any]) -> [String] {
+        var lines: [String] = []
+        if let recall = object["recall"] as? [String: Any] {
+            let mode = stringValue("mode", in: recall)
+            let front = stringValue("front", in: recall)
+            let back = stringValue("back", in: recall)
+            let maskedToken = front.flatMap { extractMaskedToken(in: $0, expectedLength: back?.count) }
+            let hiddenSegment = maskedToken.flatMap { token in
+                back.flatMap { deriveHiddenSegment(maskedToken: token, answer: $0) }
+            }
+
+            lines.append(#"  <recall id="recall-draft" editable="true">"#)
+            if let mode {
+                lines.append(xmlElement("mode", mode, indent: "    "))
+            }
+            if let front {
+                lines.append(xmlElement(
+                    "front",
+                    front,
+                    attributes: [
+                        ("masked_token", maskedToken),
+                        ("hidden_segment", hiddenSegment),
+                    ],
+                    indent: "    "
+                ))
+            }
+            if let back {
+                lines.append(xmlElement("back", back, indent: "    "))
+            }
+            if let hint = stringValue("hint", in: recall) {
+                lines.append(xmlElement("hint", hint, indent: "    "))
+            }
+            lines.append("  </recall>")
+        } else {
+            lines.append(#"  <recall id="recall-draft" editable="false" />"#)
+        }
+
+        let references = arrayOfObjects("reference", in: object)
+        if !references.isEmpty {
+            lines.append("  <reference>")
+            for reference in references {
+                let senseID = stringValue("id", in: reference) ?? "sense"
+                let pos = stringValue("pos", in: reference) ?? ""
+                lines.append(#"    <sense id="\#(xmlAttribute(senseID))" editable="false" part_of_speech="\#(xmlAttribute(pos))">"#)
+                if let definition = stringValue("definition", in: reference) {
+                    lines.append(xmlElement("definition", definition, indent: "      "))
+                }
+                lines.append("    </sense>")
+            }
+            lines.append("  </reference>")
+        }
+        return lines
+    }
+
+    private func acceptedArtifactsXML(from artifacts: [String: Any]) -> [String] {
+        var lines: [String] = ["  <accepted_artifacts>"]
+        if let usageCue = artifacts["usageCue"] as? [String: Any],
+           let text = stringValue("text", in: usageCue) {
+            lines.append(xmlElement(
+                "usage_cue",
+                text,
+                attributes: [("id", "usage-cue"), ("editable", "true")],
+                indent: "    "
+            ))
+        }
+        appendArtifactCollection(
+            tag: "examples",
+            itemTag: "example",
+            items: arrayOfObjects("examples", in: artifacts),
+            textKeys: ["text", "translation", "note"],
+            lines: &lines
+        )
+        appendArtifactCollection(
+            tag: "pitfalls",
+            itemTag: "pitfall",
+            items: arrayOfObjects("pitfalls", in: artifacts),
+            textKeys: ["text", "translation", "category"],
+            lines: &lines
+        )
+        appendArtifactCollection(
+            tag: "mnemonics",
+            itemTag: "mnemonic",
+            items: arrayOfObjects("mnemonics", in: artifacts),
+            textKeys: ["text", "translation", "kind"],
+            lines: &lines
+        )
+        appendArtifactCollection(
+            tag: "collocations",
+            itemTag: "collocation",
+            items: arrayOfObjects("collocations", in: artifacts),
+            textKeys: ["phrase", "note"],
+            lines: &lines
+        )
+        lines.append("  </accepted_artifacts>")
+        return lines
+    }
+
+    private func appendArtifactCollection(
+        tag: String,
+        itemTag: String,
+        items: [[String: Any]],
+        textKeys: [String],
+        lines: inout [String]
+    ) {
+        guard !items.isEmpty else { return }
+        lines.append("    <\(tag)>")
+        for item in items {
+            let id = stringValue("id", in: item) ?? itemTag
+            lines.append(#"      <\#(itemTag) id="\#(xmlAttribute(id))" editable="true">"#)
+            for key in textKeys {
+                if let value = stringValue(key, in: item), !value.isEmpty {
+                    lines.append(xmlElement(key, value, indent: "        "))
+                }
+            }
+            lines.append("      </\(itemTag)>")
+        }
+        lines.append("    </\(tag)>")
+    }
+
+    private func stringValue(_ key: String, in object: [String: Any]) -> String? {
+        guard let value = object[key] as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func arrayOfObjects(_ key: String, in object: [String: Any]) -> [[String: Any]] {
+        object[key] as? [[String: Any]] ?? []
+    }
+
+    private func arrayOfStrings(_ key: String, in object: [String: Any]) -> [String] {
+        object[key] as? [String] ?? []
+    }
+
+    private func xmlElement(
+        _ name: String,
+        _ text: String,
+        attributes: [(String, String?)] = [],
+        indent: String
+    ) -> String {
+        let renderedAttributes = attributes.compactMap { key, value -> String? in
+            guard let value else { return nil }
+            return #"\#(key)="\#(xmlAttribute(value))""#
+        }.joined(separator: " ")
+        let suffix = renderedAttributes.isEmpty ? "" : " \(renderedAttributes)"
+        return "\(indent)<\(name)\(suffix)>\(xmlText(text))</\(name)>"
+    }
+
+    private func xmlAttribute(_ value: String) -> String {
+        xmlText(value).replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func xmlText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     private func extractMaskedToken(in front: String, expectedLength: Int?) -> String? {
@@ -324,11 +495,13 @@ public struct AgentPromptBuilder {
 
     private func relatedSnapshotsText(_ snapshots: [CardRenderSnapshot]) -> String? {
         guard !snapshots.isEmpty else { return nil }
-        let rendered = snapshots.map { snapshot in
+        let rendered = snapshots.enumerated().map { index, snapshot in
             PromptText.join([
                 "Snapshot kind: \(snapshot.kind.rawValue)",
-                PromptText.labeledBlock("ASCII wireframe", value: snapshot.wireframe),
-                PromptText.labeledBlock("Structured JSON", value: snapshot.structuredJSON)
+                PromptText.labeledBlock(
+                    "Card XML",
+                    value: cardSnapshotXML(snapshot, source: "related-\(index + 1)")
+                )
             ])
         }.joined(separator: "\n\n")
         return PromptText.labeledBlock("Related card snapshots", value: rendered)

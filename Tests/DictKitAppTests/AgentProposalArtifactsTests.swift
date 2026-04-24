@@ -113,4 +113,29 @@ final class AgentProposalArtifactsTests: XCTestCase {
 
         XCTAssertEqual(projected.acceptedPitfallTexts, ["Avoid generic cues"])
     }
+
+    func testMnemonicDeleteDoesNotRequirePayload() throws {
+        let baseline = AIArtifacts(
+            mnemonics: .init(
+                accepted: [
+                    MnemonicArtifact(id: "mnemonic-0-perpetual-repeat", text: "Perpetual = Repeat!"),
+                    MnemonicArtifact(id: "mnemonic-1-word-structure", text: "per- + pet + -ual")
+                ]
+            )
+        )
+        let proposal = ProposalRecord(
+            kind: .mnemonic,
+            operation: .delete(targetID: "mnemonic-0-perpetual-repeat"),
+            payloadJSON: #"{}"#,
+            diffSummary: "Delete weak mnemonic"
+        )
+
+        let projected = try AgentProposalArtifactsProjector.project(
+            proposal: proposal,
+            onto: baseline,
+            mode: .preview
+        )
+
+        XCTAssertEqual(projected.acceptedMnemonicTexts, ["per- + pet + -ual"])
+    }
 }

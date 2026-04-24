@@ -67,6 +67,15 @@ final class LLMBenchmarkEvaluationTests: XCTestCase {
         )
     }
 
+    func testBenchmarkErrorClassificationTreatsInvalidAgentToolArgumentsAsQualityIssue() {
+        XCTAssertEqual(
+            LLMBenchmarkErrorEvaluation.qualityIssues(
+                from: AgentToolRegistryError.invalidArguments("propose_example")
+            ),
+            ["invalid_agent_tool_arguments: propose_example"]
+        )
+    }
+
     func testBenchmarkErrorClassificationDoesNotDowngradeTransportTimeout() {
         XCTAssertNil(
             LLMBenchmarkErrorEvaluation.qualityIssues(

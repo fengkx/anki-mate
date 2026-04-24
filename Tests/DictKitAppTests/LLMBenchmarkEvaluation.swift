@@ -6,6 +6,8 @@ enum LLMBenchmarkErrorEvaluation {
         switch error {
         case LLMServiceError.invalidStructuredOutput(let message):
             return ["invalid_structured_output: \(message)"]
+        case AgentToolRegistryError.invalidArguments(let toolName):
+            return ["invalid_agent_tool_arguments: \(toolName)"]
         default:
             return nil
         }

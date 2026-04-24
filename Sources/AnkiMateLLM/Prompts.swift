@@ -610,6 +610,7 @@ public enum LLMPrompt {
             "Generate strict JSON learning aids for a vocabulary learner.",
             "Your job is not to fill sections. Your job is to return only items that add non-obvious learning value beyond the dictionary senses.",
             "A good item must teach at least one of: a likely learner mistake, a word-specific retrieval hook, or a reusable phrase pattern that is more informative than the definition itself.",
+            "For mnemonics, consider pronunciation, spelling, imagery, contrast, and plausible word formation. Use morphology when prefixes, roots, suffixes, or meaningful chunks give a compact retrieval hook.",
             "For pitfalls, think like a language teacher (from a language learner perspective): surface likely learner misunderstandings, similar words misspelling or misuses, not generic advice about better wording.",
             "A pitfall should describe misunderstanding the word itself, not criticizing the practice or style the word refers to.",
             "If a section does not contain that level of value, return an empty array.",
@@ -664,8 +665,8 @@ public enum LLMPrompt {
                 "    {",
                 "      \"clue\": \"very short mnemonic cue\",",
                 "      \"translation\": \"可选中文提示\",",
-                "      \"kind\": \"sound_hook | image_hook | spelling_hook | contrast_hook\",",
-                "      \"focus\": \"memory_hook | spelling_segment | meaning_contrast\",",
+                "      \"kind\": \"sound_hook | image_hook | spelling_hook | contrast_hook | word_structure\",",
+                "      \"focus\": \"memory_hook | spelling_segment | meaning_contrast | morphology\",",
                 "      \"recallRelevant\": true,",
                 "      \"senseIndex\": 1,",
                 "      \"anchor\": { \"text\": \"optional display snapshot\", \"note\": \"optional note\" } | null",
@@ -710,6 +711,8 @@ public enum LLMPrompt {
                     "pitfalls: describe confusion about the word's meaning or use, not a judgment about whether the thing it names is good or bad",
                     "pitfalls: avoid turning words like jargon, slang, or formality labels into generic advice about clearer communication",
                     "mnemonics: require a vivid image, a concrete spelling chunk, or a memorable contrast that still works without seeing the headword",
+                    "mnemonics: also consider useful word structure, such as prefixes, roots, suffixes, or meaningful chunks, when it helps connect form to meaning or spelling",
+                    "mnemonics: word-structure hooks must be plausible and learner-facing; do not invent fake etymology just to make a clever story",
                     "mnemonics: for abstract words, a concrete scene is acceptable; a synonym paraphrase is not",
                     "mnemonics: no acrostics, no whole-word spelling, no \"think of a <word> person\"",
                     "mnemonics: reject abstract slogan-like cues that still require the learner to re-derive the meaning from scratch",
@@ -730,7 +733,9 @@ public enum LLMPrompt {
                 "Examples",
                 value: PromptText.bulletList([
                     "Good mnemonic: reluctant -> \"dragging feet at the doorway\"",
+                    "Good word-structure mnemonic: predictable -> \"pre- says before; dict says say: can be said before it happens\"",
                     "Bad mnemonic: reluctant -> \"Think of a person who is hesitant to agree\"",
+                    "Bad word-structure mnemonic: corpus -> \"cor + pus means data\"",
                     "Bad pitfall: fragile -> \"Means weak or delicate\"",
                     "Bad collocation: principal -> \"principal of the school\"",
                     "Why bad: this just restates the dictionary sense instead of teaching a reusable pattern",
@@ -789,6 +794,7 @@ public enum LLMPrompt {
                     "Pick one candidate that adds the most learning value if the learner accepts only one item in this section",
                     "Prefer short, specific, actionable items",
                     "Prefer candidates that help recall or help avoid likely mistakes",
+                    "For mnemonics, value plausible word-structure hooks when they connect form to meaning or spelling without inventing fake etymology",
                     "Avoid recommending candidates whose main learning point is already covered by accepted material",
                     "A Chinese accepted item and an English candidate can still overlap if they teach the same trap or distinction",
                     "Overlap means teaching the same learning point even if wording or language differs",
@@ -857,6 +863,7 @@ public enum LLMPrompt {
                     "Pick one candidate per non-empty section that adds the most learning value if the learner accepts only one item in that section",
                     "Prefer short, specific, actionable items",
                     "Prefer candidates that help recall or help avoid likely mistakes",
+                    "For mnemonics, value plausible word-structure hooks when they connect form to meaning or spelling without inventing fake etymology",
                     "Avoid recommending candidates whose main learning point is already covered by accepted material",
                     "A Chinese accepted item and an English candidate can still overlap if they teach the same trap or distinction",
                     "Prefer no recommendation over a low-increment recommendation",
@@ -930,7 +937,8 @@ public enum LLMPrompt {
         pronunciationGuide: String?,
         existingIPA: String?,
         senses: [LLMSensePromptInput],
-        retryCorrection: String? = nil
+        retryCorrection: String? = nil,
+        isRetry: Bool = false
     ) -> (system: String, user: String) {
         let trimmedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSenses = senses.isEmpty
@@ -956,20 +964,68 @@ public enum LLMPrompt {
             ])
         }
 
+        let contextBlocks: [String?] = isRetry
+            ? [retryReminder]
+            : [
+                PromptText.labeledBlock("Dialect", value: trimmedDialect ?? "unspecified"),
+                PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
+                PromptText.labeledBlock(
+                    "Existing pronunciation guide",
+                    value: trimmedGuide.map { "\"\($0)\"" } ?? "none"
+                ),
+                PromptText.labeledBlock(
+                    "Existing IPA",
+                    value: trimmedExistingIPA.map { "\"\($0)\"" } ?? "none"
+                ),
+                retryReminder
+            ]
+
+        let rulesBlock = PromptText.labeledBlock(
+            "Rules",
+            value: [
+                "Spelling invariant (MUST):",
+                PromptText.bulletList([
+                    "stressSyllables is a spelling display, not a pronunciation respelling",
+                    "Build stressSyllables using only the exact written target letters, in order",
+                    "After removing hyphens and lowercasing, stressSyllables must equal the target word exactly",
+                    "Use the pronunciation guide only to decide stress placement. Never copy its letters",
+                    "A single all-uppercase chunk without hyphens is invalid for multi-syllable words"
+                ]),
+                "",
+                "Format:",
+                PromptText.bulletList([
+                    "Split multi-syllable words into hyphen-joined chunks",
+                    "Uppercase only the primary-stressed chunk",
+                    "For monosyllable words, return the plain word only, e.g. \"flock\""
+                ]),
+                "",
+                "Before returning:",
+                PromptText.bulletList([
+                    "Check: strip hyphens + lowercase the result. It must equal the target word in lowercase.",
+                    "If not equal, fix stressSyllables now before outputting."
+                ]),
+                "",
+                "Output:",
+                PromptText.bulletList([
+                    "Output JSON only",
+                    "\"stressSyllables\" is required",
+                    "Do not include spaces, labels, markdown, commentary, slashes, or alternatives in the string"
+                ]),
+                "",
+                "IPA:",
+                PromptText.bulletList([
+                    "If existing IPA is already provided, keep \"ipa\" as null unless correction is necessary",
+                    "If \"ipa\" is present, it must be a single IPA string without slashes",
+                    "Do not return respelling notation such as SH, TH, CH as IPA",
+                    "Use the pronunciation guide as a hint only; correct it into real IPA when needed"
+                ])
+            ].joined(separator: "\n")
+        )
+
         let user = PromptText.join([
             #"Generate pronunciation enhancement data for the target word "\#(trimmedWord)"."#,
-            PromptText.labeledBlock("Dialect", value: trimmedDialect ?? "unspecified"),
-            PromptText.labeledBlock("Sense inventory", value: senseInventoryText(from: trimmedSenses)),
-            PromptText.labeledBlock(
-                "Existing pronunciation guide",
-                value: trimmedGuide.map { "\"\($0)\"" } ?? "none"
-            ),
-            PromptText.labeledBlock(
-                "Existing IPA",
-                value: trimmedExistingIPA.map { "\"\($0)\"" } ?? "none"
-            ),
             PromptText.labeledBlock("Target characters", value: targetCharacterListText(for: trimmedWord)),
-            retryReminder,
+            PromptText.join(contextBlocks.compactMap { $0 }),
             PromptText.jsonBlock([
                 "Return a single JSON object with this shape:",
                 "{",
@@ -977,28 +1033,7 @@ public enum LLMPrompt {
                 "  \"stressSyllables\": \"hyphen-joined syllables with the primary-stress syllable uppercased\"",
                 "}"
             ]),
-            PromptText.labeledBlock(
-                "Rules",
-                value: PromptText.bulletList([
-                    "Output JSON only",
-                    "\"stressSyllables\" is required",
-                    "Start from the exact written word",
-                    "Keep the original letters in the same order",
-                    "Insert hyphens only to show learner-friendly chunks",
-                    "Change casing only on existing target letters",
-                    "Do not copy helper spellings from the pronunciation guide into stressSyllables",
-                    "After removing hyphens and case markers, the result must still spell the original word",
-                    "Use uppercase to mark stress if you mark it",
-                    "For monosyllable words, return the plain word only, for example \"flock\"",
-                    "If the dialect has multiple accepted variants, choose one default variant and return one string only",
-                    "Do not include spaces, labels, bullets, markdown, commentary, alternatives, slashes, commas, or \"or\"",
-                    "If existing IPA is already provided, keep \"ipa\" as null unless correction is necessary",
-                    "If \"ipa\" is present, it must be a single IPA string without slashes",
-                    "Do not return respelling notation such as SH, TH, CH, or uppercase helper text as IPA",
-                    "Prefer the requested dialect if one is provided",
-                    "Use the pronunciation guide as a hint only; correct it into real IPA when needed"
-                ])
-            )
+            rulesBlock
         ])
 
         return (system, user)

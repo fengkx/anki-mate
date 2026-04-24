@@ -222,6 +222,49 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(sut.streamingReasoning, "")
     }
 
+    func testInterruptGenerationPersistsVisiblePartialAndIgnoresLateDeltas() async throws {
+        let persistence = InMemoryAgentPersistence()
+        let generator = ControlledStreamingGenerator(
+            initialContent: "partial",
+            initialReasoning: "thinking",
+            result: GenerateResult(text: "final should not persist", tokensUsed: 8, durationMs: 3)
+        )
+        let wordID = UUID()
+        let sut = AgentSession(
+            wordID: wordID,
+            persistence: persistence,
+            snapshotProvider: StaticSnapshotProvider(),
+            generator: generator
+        )
+
+        try sut.reload()
+        let sendTask = Task {
+            try await sut.sendUserMessage("stream")
+        }
+
+        while sut.streamingText != "partial" {
+            await Task.yield()
+        }
+
+        sut.interruptGeneration()
+        generator.emitLateDelta(content: " late", reasoning: " late reasoning")
+        generator.finish()
+        try await sendTask.value
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        XCTAssertFalse(sut.isGenerating)
+        XCTAssertEqual(sut.streamingText, "")
+        XCTAssertEqual(sut.streamingReasoning, "")
+        XCTAssertEqual(sut.messages.count, 2)
+        XCTAssertEqual(sut.messages[0].role, .user)
+        XCTAssertEqual(sut.messages[1].role, .assistant)
+        XCTAssertEqual(sut.messages[1].status, .canceled)
+        XCTAssertTrue(sut.messages[1].interrupted)
+        XCTAssertEqual(sut.messages[1].content, .text("partial", reasoning: "thinking"))
+    }
+
     func testSendUserMessageExecutesReadToolCallsBeforePersistingAssistantReply() async throws {
         let persistence = InMemoryAgentPersistence()
         let generator = RecordingGenerator(
@@ -907,6 +950,60 @@ private final class BurstStreamingGenerator: AgentGenerating {
             onReasoningDelta("r")
         }
         return GenerateResult(text: "done", tokensUsed: 1, durationMs: 1)
+    }
+}
+
+private final class ControlledStreamingGenerator: AgentGenerating, @unchecked Sendable {
+    private let initialContent: String
+    private let initialReasoning: String
+    private let result: GenerateResult
+    private var continuation: CheckedContinuation<GenerateResult, Never>?
+    private var onDelta: (@Sendable (String) -> Void)?
+    private var onReasoningDelta: (@Sendable (String) -> Void)?
+
+    init(initialContent: String, initialReasoning: String, result: GenerateResult) {
+        self.initialContent = initialContent
+        self.initialReasoning = initialReasoning
+        self.result = result
+    }
+
+    func generate(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition]
+    ) async throws -> GenerateResult {
+        result
+    }
+
+    func generateStreaming(
+        messages: [LLMMessage],
+        tools: [LLMToolDefinition],
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: @escaping @Sendable (String) -> Void
+    ) async throws -> GenerateResult {
+        self.onDelta = onDelta
+        self.onReasoningDelta = onReasoningDelta
+
+        onDelta(initialContent)
+        onReasoningDelta(initialReasoning)
+
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func emitLateDelta(content: String, reasoning: String) {
+        let onDelta = self.onDelta
+        let onReasoningDelta = self.onReasoningDelta
+
+        onDelta?(content)
+        onReasoningDelta?(reasoning)
+    }
+
+    func finish() {
+        let continuation = self.continuation
+        self.continuation = nil
+
+        continuation?.resume(returning: result)
     }
 }
 

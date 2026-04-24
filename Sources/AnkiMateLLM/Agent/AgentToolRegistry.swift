@@ -43,8 +43,11 @@ public struct AgentToolRegistry {
             ),
             Self.proposalToolDefinition(
                 name: "propose_example",
-                description: "Create a pending example edit proposal.",
-                payloadSchema: Self.examplePayloadSchema()
+                description: """
+                Create a pending example edit proposal. Use add when the user asks to add an example, even if the new sentence is based on a dictionary example or prior chat. Use replace/delete only for accepted example artifacts; dictionary sense examples are source material, not replace targets.
+                """,
+                payloadSchema: Self.examplePayloadSchema(),
+                targetIDDescription: "targetID is required for replace/delete and must be an accepted example id such as ex-1. Never use sense ids like sense-0-0, dictionary sense ids, the headword, or section names. anchor.exampleIndex is only citation metadata inside payload, not a replace/delete target."
             ),
             Self.proposalToolDefinition(
                 name: "propose_recall_draft",
@@ -67,15 +70,6 @@ public struct AgentToolRegistry {
                 name: "propose_collocation",
                 description: "Create a pending collocation proposal.",
                 payloadSchema: Self.collocationPayloadSchema()
-            ),
-            Self.proposalToolDefinition(
-                name: "propose_delete_accepted",
-                description: """
-                Create a pending accepted-artifact deletion proposal. Only use this tool for delete-only requests against already accepted content. Delete all accepted items in one section only when the user explicitly wants to clear that section. Do not use this tool when deleting only some existing items if a section-specific propose_* tool can target those items directly.
-                """,
-                payloadSchema: Self.deleteAcceptedPayloadSchema(),
-                operationDescription: "Only use delete for this tool. It is for delete-only accepted-artifact removal in the section named in payload.section.",
-                targetIDDescription: "Provide only when deleting one specific accepted artifact inside payload.section. Must be a real existing artifact id from the current card snapshot or accepted artifacts; never use the headword or section name."
             )
         ]
     }
@@ -92,8 +86,7 @@ public struct AgentToolRegistry {
              "propose_recall_draft",
              "propose_pitfall",
              "propose_mnemonic",
-             "propose_collocation",
-             "propose_delete_accepted":
+             "propose_collocation":
             return try executeProposal(toolCall)
         default:
             throw AgentToolRegistryError.unsupportedTool(toolCall.name)
@@ -205,11 +198,13 @@ public struct AgentToolRegistry {
                     "rationale": .object([
                         "type": .string("string")
                     ]),
-                    "payload": payloadSchema
+                    "payload": describedSchema(
+                        payloadSchema,
+                        description: "Required for add/replace. Omit it for delete; delete only needs operation and targetID."
+                    )
                 ]),
                 "required": .array([
-                    .string("operation"),
-                    .string("payload")
+                    .string("operation")
                 ]),
                 "additionalProperties": .bool(false)
             ])
@@ -358,25 +353,6 @@ public struct AgentToolRegistry {
         )
     }
 
-    private static func deleteAcceptedPayloadSchema() -> JSONValue {
-        objectSchema(
-            properties: [
-                "section": describedSchema(
-                    enumStringSchema([
-                        "usage_cue",
-                        "example",
-                        "recall_draft",
-                        "pitfall",
-                        "mnemonic",
-                        "collocation"
-                    ]),
-                    description: "Remove all accepted items in this section only when the user explicitly wants to clear that section. This is not for deleting only the first, second, or other subset of accepted items."
-                )
-            ],
-            required: ["section"]
-        )
-    }
-
     private func executeProposal(_ toolCall: LLMToolCall) throws -> MessageContent {
         guard case .object(let arguments) = toolCall.arguments else {
             throw AgentToolRegistryError.invalidArguments(toolCall.name)
@@ -384,7 +360,11 @@ public struct AgentToolRegistry {
         let proposalKind = try proposalKind(for: toolCall.name)
         let operation = try proposalOperation(from: arguments)
         let rationale = optionalString("rationale", in: arguments)
-        let payload = try requiredObject("payload", in: arguments, toolName: toolCall.name)
+        let payload = try proposalPayload(
+            from: arguments,
+            operation: operation,
+            toolName: toolCall.name
+        )
         let payloadJSON = try encode(payload)
         let diffSummary = proposalDiffSummary(
             from: arguments,
@@ -451,8 +431,6 @@ public struct AgentToolRegistry {
             return .mnemonic
         case "propose_collocation":
             return .collocation
-        case "propose_delete_accepted":
-            return .deleteAccepted
         default:
             throw AgentToolRegistryError.unsupportedTool(toolName)
         }
@@ -465,8 +443,7 @@ public struct AgentToolRegistry {
              "propose_recall_draft",
              "propose_pitfall",
              "propose_mnemonic",
-             "propose_collocation",
-             "propose_delete_accepted":
+             "propose_collocation":
             return true
         default:
             return false
@@ -490,18 +467,18 @@ public struct AgentToolRegistry {
         case .recallDraft:
             return trimmed == "recall-draft"
         case .pitfall:
-            return hasArtifactIDShape(trimmed, prefix: "pf-")
+            return hasArtifactIDShape(trimmed, prefixes: ["pf-", "pitfall-"])
         case .mnemonic:
-            return hasArtifactIDShape(trimmed, prefix: "mn-")
+            return hasArtifactIDShape(trimmed, prefixes: ["mn-", "mnemonic-"])
         case .collocation:
-            return hasArtifactIDShape(trimmed, prefix: "co-")
+            return hasArtifactIDShape(trimmed, prefixes: ["co-", "collocation-"])
         case .deleteAccepted:
             return trimmed == "usage-cue" ||
                 trimmed == "recall-draft" ||
                 isSyntheticID(trimmed, prefix: "ex-") ||
-                hasArtifactIDShape(trimmed, prefix: "pf-") ||
-                hasArtifactIDShape(trimmed, prefix: "mn-") ||
-                hasArtifactIDShape(trimmed, prefix: "co-")
+                hasArtifactIDShape(trimmed, prefixes: ["pf-", "pitfall-"]) ||
+                hasArtifactIDShape(trimmed, prefixes: ["mn-", "mnemonic-"]) ||
+                hasArtifactIDShape(trimmed, prefixes: ["co-", "collocation-"])
         }
     }
 
@@ -516,6 +493,12 @@ public struct AgentToolRegistry {
         let suffix = value.dropFirst(prefix.count)
         return !suffix.isEmpty && suffix.allSatisfy { character in
             character.isLetter || character.isNumber || character == "-"
+        }
+    }
+
+    private func hasArtifactIDShape(_ value: String, prefixes: [String]) -> Bool {
+        prefixes.contains { prefix in
+            hasArtifactIDShape(value, prefix: prefix)
         }
     }
 
@@ -569,6 +552,22 @@ public struct AgentToolRegistry {
         return arguments[key] ?? .object([:])
     }
 
+    private func proposalPayload(
+        from arguments: [String: JSONValue],
+        operation: ProposalRecord.Operation,
+        toolName: String
+    ) throws -> JSONValue {
+        switch operation {
+        case .delete:
+            guard case .object? = arguments["payload"] else {
+                return .object([:])
+            }
+            return arguments["payload"] ?? .object([:])
+        case .add, .replace:
+            return try requiredObject("payload", in: arguments, toolName: toolName)
+        }
+    }
+
     private func validateProposalPayload(
         kind: ProposalRecord.ProposalKind,
         operation: ProposalRecord.Operation,
@@ -593,7 +592,7 @@ public struct AgentToolRegistry {
         case .collocation:
             try decodePayload(CollocationArtifact.self, from: payloadJSON, toolName: toolName)
         case .deleteAccepted:
-            try decodePayload(DeleteAcceptedPayload.self, from: payloadJSON, toolName: toolName)
+            return
         }
     }
 
@@ -717,17 +716,4 @@ private struct ReadCardSnapshotPayload: Encodable {
 private struct AcceptedArtifactsPayload: Encodable {
     let word: String
     let artifacts: JSONValue
-}
-
-private struct DeleteAcceptedPayload: Decodable {
-    let section: Section
-
-    enum Section: String, Decodable {
-        case usageCue = "usage_cue"
-        case example
-        case recallDraft = "recall_draft"
-        case pitfall
-        case mnemonic
-        case collocation
-    }
 }

@@ -167,6 +167,16 @@ final class AgentComposerInputTests: XCTestCase {
         XCTAssertEqual(command, .insertNewline)
     }
 
+    func testCommandReturnsInsertNewlineForShiftEnter() {
+        let command = AgentComposerInputCommandResolver.command(
+            for: #selector(NSResponder.insertNewline(_:)),
+            modifierFlags: [.shift],
+            hasMarkedText: false
+        )
+
+        XCTAssertEqual(command, .insertNewline)
+    }
+
     func testCommandDefersEnterWhileInputMethodHasMarkedText() {
         let command = AgentComposerInputCommandResolver.command(
             for: #selector(NSResponder.insertNewline(_:)),
