@@ -183,6 +183,10 @@ struct CollectionsSidebarView: View {
     }
 
     private var serverStatusLabel: String {
+        if llmService.isWarmingUp {
+            return "Warming up AI"
+        }
+
         switch llmService.serverState {
         case .running:
             return "AI is ready"
@@ -223,7 +227,7 @@ struct CollectionsSidebarView: View {
     }
 
     private var shouldPulseServerStatus: Bool {
-        llmService.serverState.shouldPulseStatusIndicator
+        llmService.shouldPulseStatusIndicator
     }
 
     private var syncStatusColor: Color {

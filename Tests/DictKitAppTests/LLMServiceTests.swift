@@ -144,6 +144,33 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertFalse(ServerProcessManager.State.failed("boom").shouldPulseStatusIndicator)
     }
 
+    func testServiceStatusIndicatorPulsesWhileWarmupIsActive() {
+        XCTAssertTrue(
+            LLMService.shouldPulseStatusIndicator(
+                serverState: .running(port: 8080),
+                isWarmingUp: true
+            )
+        )
+        XCTAssertFalse(
+            LLMService.shouldPulseStatusIndicator(
+                serverState: .running(port: 8080),
+                isWarmingUp: false
+            )
+        )
+        XCTAssertTrue(
+            LLMService.shouldPulseStatusIndicator(
+                serverState: .starting,
+                isWarmingUp: false
+            )
+        )
+        XCTAssertFalse(
+            LLMService.shouldPulseStatusIndicator(
+                serverState: .failed("boom"),
+                isWarmingUp: true
+            )
+        )
+    }
+
     func testActiveDownloadSummaryUsesHumanReadableTransferStatus() {
         let manager = ModelDownloadManager()
         manager.downloads["test-model"] = .init(

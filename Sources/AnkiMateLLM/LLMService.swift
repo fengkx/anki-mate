@@ -28,6 +28,7 @@ public final class LLMService: ObservableObject {
     static let recallMaskPlanMaxTokens = 512
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
+    @Published public private(set) var isWarmingUp = false
     @Published public private(set) var loadedModelId: String?
     @Published public var selectedModelId: String {
         didSet {
@@ -190,6 +191,7 @@ public final class LLMService: ObservableObject {
         warmupTask?.cancel()
         warmupTask = nil
         warmupTaskID = nil
+        isWarmingUp = false
         await warmupCoordinator.reset()
         await serverManager.stop()
         loadedModelId = nil
@@ -506,7 +508,8 @@ public final class LLMService: ObservableObject {
             pronunciationGuide: pronunciationGuide,
             existingIPA: existingIPA,
             senses: senses,
-            retryCorrection: retryCorrection
+            retryCorrection: retryCorrection,
+            isRetry: retryCorrection != nil
         )
 
         let response: GeneratedPronunciationEnhancementPayload = try await generateStructuredOutput(
@@ -1521,6 +1524,20 @@ public final class LLMService: ObservableObject {
         serverState.isRunning && loadedModelId != nil
     }
 
+    public var shouldPulseStatusIndicator: Bool {
+        Self.shouldPulseStatusIndicator(
+            serverState: serverState,
+            isWarmingUp: isWarmingUp
+        )
+    }
+
+    static func shouldPulseStatusIndicator(
+        serverState: ServerProcessManager.State,
+        isWarmingUp: Bool
+    ) -> Bool {
+        serverState.shouldPulseStatusIndicator || (serverState.isRunning && isWarmingUp)
+    }
+
     /// Whether a model is selected and downloaded.
     public var hasModel: Bool {
         guard let model = registry.models.first(where: { $0.id == selectedModelId }) else {
@@ -1574,6 +1591,7 @@ public final class LLMService: ObservableObject {
                 self.clearWarmupTaskIfCurrent(taskID)
                 return
             }
+            self.isWarmingUp = true
             defer {
                 Task {
                     await self.inferenceRequestGate.release(lease)
@@ -1601,6 +1619,7 @@ public final class LLMService: ObservableObject {
         guard warmupTaskID == taskID else { return }
         warmupTask = nil
         warmupTaskID = nil
+        isWarmingUp = false
     }
 
     private func withForegroundInferenceAccess<T>(
@@ -2971,22 +2990,10 @@ extension LLMService {
         pronunciationGuide: String?
     ) -> String {
         switch failureReason {
-        case .copiedGuideLetters:
-            let guideSuffix: String
-            if let pronunciationGuide, !pronunciationGuide.isEmpty {
-                guideSuffix = #" Do not copy guide spellings like "\#(pronunciationGuide)"."#
-            } else {
-                guideSuffix = ""
-            }
-            return #"Your previous value copied helper spellings from the pronunciation guide. Build stressSyllables from the exact letters of "\#(word)" only.\#(guideSuffix)"#
-        case .doesNotPreserveSpelling:
-            return #"Your previous value changed the original spelling. Keep the exact letters of "\#(word)" in the same order and insert hyphens only."#
-        case .missingHyphenation:
-            return "Your previous value did not split this word into hyphen-joined chunks. Return the same word letters with hyphens added between chunks."
-        case .missingPrimaryStressMarker:
-            return "Your previous value split the word into chunks but did not mark stress. Mark stress with uppercase in the returned chunks."
-        case .invalidCharacters:
-            return "Your previous value used invalid characters. Use letters from the original word plus hyphens only."
+        case .copiedGuideLetters, .doesNotPreserveSpelling, .invalidCharacters:
+            return "Your previous value changed the written word. Return the exact target letters in order, with hyphens inserted only between learner-friendly chunks and the stressed chunk uppercased. Do not copy letters from the pronunciation guide."
+        case .missingHyphenation, .missingPrimaryStressMarker:
+            return "Your previous value did not properly split the word. For multi-syllable words, split into hyphen-joined chunks with one chunk uppercased for stress. A single chunk without hyphens is not valid."
         case nil:
             return #"Your previous value was not a valid stressSyllables string. Build it from the exact letters of "\#(word)" only, keeping the same order and inserting hyphens only when needed."#
         }

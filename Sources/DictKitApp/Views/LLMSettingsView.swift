@@ -781,7 +781,7 @@ struct LLMSettingsView: View {
     }
 
     private var shouldPulseServerStatus: Bool {
-        llmService.serverState.shouldPulseStatusIndicator
+        llmService.shouldPulseStatusIndicator
     }
 
     private var serverStatusText: String {
