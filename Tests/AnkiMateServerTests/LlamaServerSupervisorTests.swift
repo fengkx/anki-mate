@@ -52,7 +52,7 @@ final class LlamaServerSupervisorTests: XCTestCase {
         )
     }
 
-    func testLaunchArgumentsDisableReasoningByDefault() {
+    func testLaunchArgumentsUseAutoReasoningByDefault() {
         XCTAssertEqual(
             LlamaServerSupervisor.launchArguments(
                 port: 8080,
@@ -65,7 +65,7 @@ final class LlamaServerSupervisorTests: XCTestCase {
                 "--port", "8080",
                 "--jinja",
                 "--no-webui",
-                "--reasoning", "off",
+                "--reasoning", "auto",
                 "--flash-attn", "on",
                 "-m", "/tmp/model.gguf",
                 "-c", "4096",

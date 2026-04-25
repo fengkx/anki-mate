@@ -6,6 +6,7 @@
 // - Crash detection via termination handler
 // - Single-model restart strategy (no router mode)
 
+import Darwin
 import Foundation
 import AnkiMateRPC
 
@@ -70,13 +71,19 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
     private var process: Process?
     private let internalPort: Int
     private let healthCheckTimeoutSeconds: TimeInterval
+    private let childRegistry: LlamaServerChildRegistry
 
     var loadedModelPath: String? { state.modelPath }
     var childPort: Int? { state.port }
 
-    init(childPort: Int, healthCheckTimeoutSeconds: TimeInterval = 120) {
+    init(
+        childPort: Int,
+        healthCheckTimeoutSeconds: TimeInterval = 120,
+        childRegistry: LlamaServerChildRegistry = LlamaServerChildRegistry()
+    ) {
         self.internalPort = childPort
         self.healthCheckTimeoutSeconds = healthCheckTimeoutSeconds
+        self.childRegistry = childRegistry
     }
 
     // MARK: - Public
@@ -100,9 +107,12 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
             state = .failed("llama-server binary not found")
             throw SupervisorError.binaryNotFound
         }
+        let normalizedBinaryPath = Self.normalizedExecutablePath(binaryPath)
+
+        childRegistry.reapStaleChildren()
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: binaryPath)
+        proc.executableURL = URL(fileURLWithPath: normalizedBinaryPath)
         proc.arguments = Self.launchArguments(
             port: internalPort,
             modelPath: path,
@@ -136,11 +146,18 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
         }
 
         self.process = proc
+        childRegistry.recordChild(
+            processID: proc.processIdentifier,
+            ownerProcessID: ProcessInfo.processInfo.processIdentifier,
+            executablePath: normalizedBinaryPath,
+            port: internalPort
+        )
 
         // Crash detection
         proc.terminationHandler = { [weak self] terminatedProcess in
             guard let self else { return }
             let exitCode = terminatedProcess.terminationStatus
+            self.childRegistry.removeChild(processID: terminatedProcess.processIdentifier)
             // Only mark as failed if we didn't stop it intentionally
             if case .ready = self.state {
                 fputs("llama-server child exited unexpectedly with code \(exitCode)\n", stderr)
@@ -175,6 +192,7 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
 
     private func stopChild() async {
         guard let proc = process else { return }
+        let processID = proc.processIdentifier
 
         // Mark state before stopping so terminationHandler doesn't fire spuriously
         let previousState = state
@@ -193,11 +211,17 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
 
                 if !exitedAfterTerm, proc.isRunning {
                     proc.interrupt()
-                    _ = await Self.waitForExit(of: proc, timeout: .seconds(1))
+                    let exitedAfterInterrupt = await Self.waitForExit(of: proc, timeout: .seconds(1))
+
+                    if !exitedAfterInterrupt, proc.isRunning {
+                        Darwin.kill(processID, SIGKILL)
+                        _ = await Self.waitForExit(of: proc, timeout: .seconds(1))
+                    }
                 }
             }
         }
 
+        childRegistry.removeChild(processID: processID)
         process = nil
     }
 
@@ -296,7 +320,7 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
             "--port", "\(port)",
             "--jinja",
             "--no-webui",
-            "--reasoning", "off",
+            "--reasoning", "auto",
             "--flash-attn", "on",
             "-m", modelPath,
             "-c", "\(contextSize)",
@@ -306,6 +330,10 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
             arguments.append(contentsOf: ["--mmproj", mmprojPath])
         }
         return arguments
+    }
+
+    static func normalizedExecutablePath(_ path: String) -> String {
+        LlamaServerChildRegistry.normalizedPath(path)
     }
 
     // MARK: - Environment

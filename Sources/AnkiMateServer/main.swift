@@ -55,6 +55,7 @@ guard let localAddress = channel.localAddress, let actualPort = localAddress.por
 }
 
 let childPort = actualPort + 1
+LlamaServerChildRegistry().reapStaleChildren()
 let supervisor = LlamaServerSupervisor(childPort: childPort)
 let dispatcher = RPCDispatcher(supervisor: supervisor)
 
