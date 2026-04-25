@@ -15,6 +15,7 @@ final class WebDAVClient: Sendable, WebDAVClientProtocol {
     let baseURL: URL
     private let session: URLSession
     private let authHeader: String
+    private let authDelegate: WebDAVAuthenticationDelegate
 
     init(credentials: WebDAVCredentials) throws {
         guard let url = credentials.baseURL else {
@@ -25,11 +26,15 @@ final class WebDAVClient: Sendable, WebDAVClientProtocol {
         let credString = "\(credentials.username):\(credentials.password)"
         let credData = Data(credString.utf8)
         self.authHeader = "Basic \(credData.base64EncodedString())"
+        self.authDelegate = WebDAVAuthenticationDelegate(
+            username: credentials.username,
+            password: credentials.password
+        )
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: config)
+        self.session = URLSession(configuration: config, delegate: authDelegate, delegateQueue: nil)
     }
 
     // MARK: - Core operations
@@ -173,6 +178,34 @@ final class WebDAVClient: Sendable, WebDAVClientProtocol {
     private func checkStatus(_ response: HTTPURLResponse, data: Data, expected: Int) throws {
         guard response.statusCode == expected else {
             throw WebDAVError.httpError(response.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+}
+
+final class WebDAVAuthenticationDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let username: String
+    private let password: String
+
+    init(username: String, password: String) {
+        self.username = username
+        self.password = password
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        switch challenge.protectionSpace.authenticationMethod {
+        case NSURLAuthenticationMethodHTTPBasic,
+             NSURLAuthenticationMethodHTTPDigest,
+             NSURLAuthenticationMethodDefault:
+            return (
+                .useCredential,
+                URLCredential(user: username, password: password, persistence: .forSession)
+            )
+        default:
+            return (.performDefaultHandling, nil)
         }
     }
 }

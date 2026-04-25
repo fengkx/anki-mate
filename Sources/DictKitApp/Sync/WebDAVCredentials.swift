@@ -397,10 +397,24 @@ enum WebDAVError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL: return "Invalid WebDAV URL"
-        case .httpError(let code, let msg): return "HTTP \(code): \(msg)"
+        case .httpError(let code, let msg):
+            return "HTTP \(code): \(Self.userFacingHTTPMessage(code: code, body: msg))"
         case .networkError(let error): return "Network error: \(error.localizedDescription)"
         case .locked: return "Sync is locked by another device"
         case .notFound: return "Resource not found"
         }
+    }
+
+    private static func userFacingHTTPMessage(code: Int, body: String) -> String {
+        if code == 401 {
+            return "Authentication was rejected. Check the server URL, username, and WebDAV/app password."
+        }
+
+        let message = body
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return message.isEmpty ? "Unexpected WebDAV response." : message
     }
 }
