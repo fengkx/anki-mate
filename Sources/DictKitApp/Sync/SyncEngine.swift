@@ -73,6 +73,7 @@ final class SyncEngine {
                         audioData: audioData
                     )
                     try await pushManifest(upgradedRemote, client: client)
+                    try? await cleanExpiredBackups(client: client)
                     try store.setSyncMetadata(String(Date().timeIntervalSince1970), forKey: "last_sync_timestamp")
 
                     status.state = .idle
@@ -125,6 +126,7 @@ final class SyncEngine {
                 updatePhase("Uploading manifest...")
                 try await pushManifest(mergeResult.mergedManifest, client: client)
                 try? await backupManifest(client: client)
+                try? await cleanExpiredBackups(client: client)
                 try? await cleanOrphanAudioIfNeeded(manifest: mergeResult.mergedManifest, client: client)
                 try store.purgeLocalTombstones(
                     collectionIDs: mergeResult.localCollectionTombstonesToPurge,
@@ -229,6 +231,34 @@ final class SyncEngine {
         if let data = try await client.get("anki-mate/manifest.json") {
             try await client.put("anki-mate/backups/manifest-\(timestamp).json", data: data, contentType: "application/json")
         }
+    }
+
+    private func cleanExpiredBackups(client: any WebDAVClientProtocol) async throws {
+        let retention: TimeInterval = 14 * 24 * 3600
+        let cutoff = Date().addingTimeInterval(-retention)
+        let backupFiles = try await client.listFiles(in: "anki-mate/backups/")
+
+        for file in backupFiles {
+            guard let backupDate = Self.backupDate(from: file), backupDate < cutoff else {
+                continue
+            }
+            try await client.delete("anki-mate/backups/\(file)")
+        }
+    }
+
+    static func backupDate(from fileName: String) -> Date? {
+        let prefixes = ["manifest-v1-", "manifest-"]
+        guard fileName.hasSuffix(".json"),
+              let prefix = prefixes.first(where: { fileName.hasPrefix($0) })
+        else {
+            return nil
+        }
+
+        let start = fileName.index(fileName.startIndex, offsetBy: prefix.count)
+        let end = fileName.index(fileName.endIndex, offsetBy: -".json".count)
+        guard start < end else { return nil }
+
+        return ISO8601DateFormatter().date(from: String(fileName[start..<end]))
     }
 
     private func cleanOrphanAudioIfNeeded(manifest: SyncManifest, client: any WebDAVClientProtocol) async throws {

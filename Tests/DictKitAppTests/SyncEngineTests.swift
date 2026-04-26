@@ -289,11 +289,83 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertFalse(syncWordSnapshots.contains { $0.record.id == deletedWord.id })
     }
 
+    func testSyncDeletesManifestBackupsOlderThanFourteenDays() async throws {
+        let store = try makeStore()
+        let status = SyncStatus()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let remoteManifest = SyncManifest(deviceId: "remote-device", collections: [], words: [])
+        let oldBackup = backupFileName(prefix: "manifest-", ageInDays: 15)
+        let recentBackup = backupFileName(prefix: "manifest-", ageInDays: 13)
+        let oldLegacyBackup = backupFileName(prefix: "manifest-v1-", ageInDays: 20)
+        let unrelatedFile = "notes.json"
+        let client = FakeWebDAVClient(
+            files: [
+                "anki-mate/manifest.json": try encoder.encode(remoteManifest),
+                "anki-mate/backups/\(oldBackup)": Data("old".utf8),
+                "anki-mate/backups/\(recentBackup)": Data("recent".utf8),
+                "anki-mate/backups/\(oldLegacyBackup)": Data("old legacy".utf8),
+                "anki-mate/backups/\(unrelatedFile)": Data("keep".utf8)
+            ]
+        )
+        let engine = SyncEngine(
+            store: store,
+            status: status,
+            environment: .init(
+                loadCredentials: { testWebDAVCredentials },
+                makeClient: { _ in client }
+            )
+        )
+
+        await engine.sync()
+
+        let oldBackupData = await client.file(at: "anki-mate/backups/\(oldBackup)")
+        let oldLegacyBackupData = await client.file(at: "anki-mate/backups/\(oldLegacyBackup)")
+        let recentBackupData = await client.file(at: "anki-mate/backups/\(recentBackup)")
+        let unrelatedData = await client.file(at: "anki-mate/backups/\(unrelatedFile)")
+        XCTAssertNil(oldBackupData)
+        XCTAssertNil(oldLegacyBackupData)
+        XCTAssertNotNil(recentBackupData)
+        XCTAssertNotNil(unrelatedData)
+        let backupPaths = await client.paths(withPrefix: "anki-mate/backups/manifest-")
+        XCTAssertTrue(backupPaths.contains { path in
+            !path.hasSuffix(oldBackup) && !path.hasSuffix(recentBackup)
+        })
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertNil(status.lastError)
+    }
+
+    func testBackupDateParsesCurrentAndLegacyManifestBackupNames() {
+        let formatter = ISO8601DateFormatter()
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let timestamp = formatter.string(from: date)
+        let currentBackupDate = SyncEngine.backupDate(from: "manifest-\(timestamp).json")
+        let legacyBackupDate = SyncEngine.backupDate(from: "manifest-v1-\(timestamp).json")
+
+        XCTAssertEqual(
+            currentBackupDate?.timeIntervalSince1970 ?? 0,
+            date.timeIntervalSince1970,
+            accuracy: 1
+        )
+        XCTAssertEqual(
+            legacyBackupDate?.timeIntervalSince1970 ?? 0,
+            date.timeIntervalSince1970,
+            accuracy: 1
+        )
+        XCTAssertNil(SyncEngine.backupDate(from: "notes.json"))
+        XCTAssertNil(SyncEngine.backupDate(from: "manifest-not-a-date.json"))
+    }
+
     private func makeStore() throws -> WordListStore {
         let baseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
         return try WordListStore(databaseURL: baseURL.appendingPathComponent("word-list.sqlite3"))
+    }
+
+    private func backupFileName(prefix: String, ageInDays: Int) -> String {
+        let date = Date().addingTimeInterval(TimeInterval(-ageInDays * 24 * 3600))
+        return "\(prefix)\(ISO8601DateFormatter().string(from: date)).json"
     }
 }
 
