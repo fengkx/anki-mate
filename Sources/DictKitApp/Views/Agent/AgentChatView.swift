@@ -1,6 +1,7 @@
 import AnkiMateLLM
 import DictKitAnkiExport
 import AppKit
+import MarkdownView
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -364,6 +365,20 @@ struct AgentChatView: View {
     @State private var draftAttachments: [AgentAttachment] = []
     @State private var generationTask: Task<Void, Never>?
     @State private var generationTaskID: UUID?
+    @StateObject private var streamingDisplay = AdaptiveStreamingTextDisplay()
+    @StateObject private var reasoningDisplay = AdaptiveStreamingTextDisplay()
+    @State private var streamingMarkdownRenderedText = ""
+    @State private var streamingMarkdownRenderTask: Task<Void, Never>?
+    @State private var lastStreamingMarkdownRenderDate = Date.distantPast
+    @State private var lastStreamingFollowScrollDate = Date.distantPast
+    @State private var isScrollPinnedToBottom = true
+    @State private var scrollViewportHeight: CGFloat = 0
+
+    private static let streamingMarkdownRenderInterval: TimeInterval = 0.22
+    private static let streamingFollowScrollInterval: TimeInterval = 0.18
+    private static let scrollPinnedTolerance: CGFloat = 56
+    private static let chatScrollCoordinateSpace = "agent-chat-scroll"
+    private static let chatBottomAnchorID = "agent-chat-bottom-anchor"
 
     private var reloadTaskKey: String {
         "\(item.id.uuidString)-\(ObjectIdentifier(session))"
@@ -389,23 +404,71 @@ struct AgentChatView: View {
                                 streamingOrTypingIndicator
                                     .id("streaming-indicator")
                             }
+
+                            chatBottomAnchor
                         }
                     }
                     .padding(.trailing, 14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .coordinateSpace(name: Self.chatScrollCoordinateSpace)
+                .frame(minHeight: 0, maxHeight: .infinity)
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: AgentChatViewportHeightPreferenceKey.self,
+                            value: geometry.size.height
+                        )
+                    }
+                )
+                .onPreferenceChange(AgentChatViewportHeightPreferenceKey.self) { height in
+                    scrollViewportHeight = height
+                }
+                .onPreferenceChange(AgentChatBottomOffsetPreferenceKey.self) { bottomMaxY in
+                    updateScrollPinnedState(bottomMaxY: bottomMaxY)
+                }
                 .onChange(of: session.messages.count) { _ in
-                    scrollToBottom(proxy)
+                    scrollToBottom(proxy, requiresPinned: true)
                 }
                 .onChange(of: session.streamingText) { _ in
-                    scrollToBottom(proxy)
+                    streamingDisplay.setTarget(session.streamingText)
                 }
                 .onChange(of: session.streamingReasoning) { _ in
-                    scrollToBottom(proxy)
+                    reasoningDisplay.setTarget(session.streamingReasoning)
+                }
+                .onChange(of: streamingDisplay.committedText) { committed in
+                    scheduleStreamingMarkdownRender(for: streamingMarkdownStablePrefix(in: committed))
+                    scrollToBottom(proxy, animated: false, throttled: true, requiresPinned: true)
+                }
+                .onChange(of: streamingDisplay.previewText) { _ in
+                    scrollToBottom(proxy, animated: false, throttled: true, requiresPinned: true)
+                }
+                .onChange(of: streamingMarkdownRenderedText) { _ in
+                    scrollToBottom(proxy, animated: false, throttled: true, requiresPinned: true)
+                }
+                .onChange(of: reasoningDisplay.committedText) { _ in
+                    scrollToBottom(proxy, animated: false, throttled: true, requiresPinned: true)
+                }
+                .onChange(of: reasoningDisplay.previewText) { _ in
+                    scrollToBottom(proxy, animated: false, throttled: true, requiresPinned: true)
                 }
                 .onChange(of: session.isGenerating) { generating in
                     if generating {
-                        scrollToBottom(proxy)
+                        cancelStreamingMarkdownRender()
+                        streamingMarkdownRenderedText = ""
+                        lastStreamingMarkdownRenderDate = .distantPast
+                        lastStreamingFollowScrollDate = .distantPast
+                        streamingDisplay.reset()
+                        reasoningDisplay.reset()
+                        streamingDisplay.setTarget(session.streamingText)
+                        reasoningDisplay.setTarget(session.streamingReasoning)
+                        scrollToBottom(proxy, animated: false, requiresPinned: true)
+                    } else {
+                        streamingDisplay.stop()
+                        reasoningDisplay.stop()
+                        cancelStreamingMarkdownRender()
+                        applyStreamingMarkdownRender(session.streamingText)
+                        scrollToBottom(proxy, requiresPinned: true)
                     }
                 }
             }
@@ -418,6 +481,7 @@ struct AgentChatView: View {
 
             composer
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: reloadTaskKey) {
             do {
                 try session.reload()
@@ -437,6 +501,11 @@ struct AgentChatView: View {
             if value == nil {
                 previewingProposalID = nil
             }
+        }
+        .onDisappear {
+            cancelStreamingMarkdownRender()
+            streamingDisplay.stop()
+            reasoningDisplay.stop()
         }
     }
 
@@ -737,7 +806,11 @@ struct AgentChatView: View {
 
                 // Content section
                 if hasContent {
-                    markdownText(session.streamingText)
+                    streamingMarkdownText(
+                        rendered: streamingMarkdownRenderedText,
+                        committed: streamingDisplay.committedText,
+                        preview: streamingDisplay.previewText
+                    )
                         .textSelection(.enabled)
                         .padding(12)
                 } else if !hasReasoning {
@@ -785,6 +858,20 @@ struct AgentChatView: View {
         }
     }
 
+    private var chatBottomAnchor: some View {
+        Color.clear
+            .frame(height: 1)
+            .id(Self.chatBottomAnchorID)
+            .background(
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: AgentChatBottomOffsetPreferenceKey.self,
+                        value: geometry.frame(in: .named(Self.chatScrollCoordinateSpace)).maxY
+                    )
+                }
+            )
+    }
+
     @ViewBuilder
     private func streamingThinkingSection(isThinking: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -826,9 +913,11 @@ struct AgentChatView: View {
                 Divider()
                     .padding(.horizontal, 12)
 
-                Text(session.streamingReasoning)
+                streamingPlainText(
+                    committed: reasoningDisplay.committedText,
+                    preview: reasoningDisplay.previewText
+                )
                     .font(.caption)
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -866,33 +955,139 @@ struct AgentChatView: View {
 
     @ViewBuilder
     private func markdownText(_ text: String) -> some View {
-        let lines = AgentMarkdownRenderer.renderLines(text)
+        markdownDocument(text)
+    }
 
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                if line.isBlank {
-                    Color.clear
-                        .frame(height: 8)
-                } else {
-                    Text(line.content)
-                        .font(line.isCode ? .system(.body, design: .monospaced) : .body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+    @ViewBuilder
+    private func streamingMarkdownText(rendered: String, committed: String, preview: String) -> some View {
+        let tail = streamingTailSegments(rendered: rendered, committed: committed, preview: preview)
+
+        VStack(alignment: .leading, spacing: tail.committed.isEmpty && tail.preview.isEmpty ? 0 : 4) {
+            markdownDocument(rendered)
+
+            if !tail.committed.isEmpty || !tail.preview.isEmpty {
+                (Text(tail.committed) + Text(tail.preview).foregroundColor(.secondary.opacity(0.48)))
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transaction { transaction in
+                        transaction.disablesAnimations = true
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        if session.isGenerating {
-            withAnimation(.easeOut(duration: 0.16)) {
-                proxy.scrollTo("streaming-indicator", anchor: .bottom)
-            }
-        } else if let lastID = session.messages.last?.id {
-            withAnimation(.easeOut(duration: 0.16)) {
-                proxy.scrollTo(lastID, anchor: .bottom)
+    private func markdownDocument(_ text: String) -> some View {
+        MarkdownView(text)
+            .markdownViewStyle(.default)
+            .markdownTableStyle(.github)
+            .blockQuoteStyle(.github)
+            .codeBlockStyle(.default(lightTheme: "github", darkTheme: "github-dark"))
+            .font(.largeTitle.weight(.bold), for: .h1)
+            .font(.title2.weight(.bold), for: .h2)
+            .font(.title3.weight(.semibold), for: .h3)
+            .font(.body, for: .body)
+            .font(.system(.body, design: .monospaced), for: .codeBlock)
+            .font(.headline, for: .tableHeader)
+            .font(.body, for: .tableBody)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func streamingPreviewLine(_ text: String) -> String {
+        let line = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        return String(line)
+    }
+
+    private func streamingTailSegments(
+        rendered: String,
+        committed: String,
+        preview: String
+    ) -> (committed: String, preview: String) {
+        let committedTail = committed.hasPrefix(rendered)
+            ? String(committed.dropFirst(rendered.count))
+            : committed
+        guard committedTail.firstIndex(of: "\n") == nil else {
+            return (streamingPreviewLine(committedTail), "")
+        }
+
+        return (streamingPreviewLine(committedTail), streamingPreviewLine(preview))
+    }
+
+    private func streamingPlainText(committed: String, preview: String) -> Text {
+        Text(committed) + Text(preview).foregroundColor(.secondary.opacity(0.42))
+    }
+
+    private func streamingMarkdownStablePrefix(in text: String) -> String {
+        guard let newlineIndex = text.lastIndex(of: "\n") else { return "" }
+        return String(text[...newlineIndex])
+    }
+
+    private func scheduleStreamingMarkdownRender(for text: String) {
+        guard text != streamingMarkdownRenderedText else { return }
+
+        streamingMarkdownRenderTask?.cancel()
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastStreamingMarkdownRenderDate)
+        guard elapsed < Self.streamingMarkdownRenderInterval else {
+            applyStreamingMarkdownRender(text)
+            return
+        }
+
+        let delay = Self.streamingMarkdownRenderInterval - elapsed
+        streamingMarkdownRenderTask = Task { [text] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                applyStreamingMarkdownRender(text)
             }
         }
+    }
+
+    private func applyStreamingMarkdownRender(_ text: String) {
+        streamingMarkdownRenderTask?.cancel()
+        streamingMarkdownRenderTask = nil
+        streamingMarkdownRenderedText = text
+        lastStreamingMarkdownRenderDate = Date()
+    }
+
+    private func cancelStreamingMarkdownRender() {
+        streamingMarkdownRenderTask?.cancel()
+        streamingMarkdownRenderTask = nil
+    }
+
+    private func scrollToBottom(
+        _ proxy: ScrollViewProxy,
+        animated: Bool = true,
+        throttled: Bool = false,
+        requiresPinned: Bool = false
+    ) {
+        guard !requiresPinned || isScrollPinnedToBottom else { return }
+
+        if throttled {
+            let now = Date()
+            guard now.timeIntervalSince(lastStreamingFollowScrollDate) >= Self.streamingFollowScrollInterval else { return }
+            lastStreamingFollowScrollDate = now
+        }
+
+        let scroll = {
+            if session.isGenerating || !session.messages.isEmpty {
+                proxy.scrollTo(Self.chatBottomAnchorID, anchor: .bottom)
+            }
+        }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.16), scroll)
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, scroll)
+        }
+    }
+
+    private func updateScrollPinnedState(bottomMaxY: CGFloat) {
+        guard scrollViewportHeight > 0 else { return }
+        let distanceFromBottom = bottomMaxY - scrollViewportHeight
+        isScrollPinnedToBottom = distanceFromBottom <= Self.scrollPinnedTolerance
     }
 
     // MARK: - Action Buttons
@@ -1439,5 +1634,21 @@ struct AgentChatView: View {
 
     private static func formattedByteSize(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct AgentChatViewportHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct AgentChatBottomOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

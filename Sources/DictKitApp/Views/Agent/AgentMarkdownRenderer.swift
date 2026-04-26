@@ -35,10 +35,7 @@ enum AgentMarkdownRenderer {
             }
 
             let prepared = normalizeBlockPrefix(in: line)
-            let content = (try? AttributedString(
-                markdown: prepared,
-                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-            )) ?? AttributedString(prepared)
+            let content = renderInlineMarkdown(prepared)
 
             lines.append(
                 RenderedLine(
@@ -82,5 +79,12 @@ enum AgentMarkdownRenderer {
         }
 
         return line
+    }
+
+    private static func renderInlineMarkdown(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
     }
 }

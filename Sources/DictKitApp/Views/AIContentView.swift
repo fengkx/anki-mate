@@ -475,6 +475,7 @@ struct AIContentView: View {
                 structuredPanel
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding()
         .background(RoundedRectangle(cornerRadius: 14).fill(.quaternary.opacity(0.18)))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.05), lineWidth: 1))

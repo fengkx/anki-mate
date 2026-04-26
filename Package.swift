@@ -53,6 +53,10 @@ let package = Package(
             url: "https://github.com/apple/swift-nio",
             from: "2.65.0"
         ),
+        .package(
+            url: "https://github.com/LiYanan2004/MarkdownView.git",
+            exact: "2.6.1"
+        ),
     ],
     targets: [
         .target(
@@ -113,6 +117,7 @@ let package = Package(
                 "DictKitSystemDictionary",
                 "DictKitAnkiExport",
                 "AnkiMateLLM",
+                "MarkdownView",
             ],
             path: "Sources/DictKitApp"
         ),
