@@ -255,10 +255,6 @@ struct AIContentView: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var panelMode: AIPanelMode = .structured
-    @State private var examplesErrorMessage: String?
-    @State private var learningAidsErrorMessage: String?
-    @State private var usageErrorMessage: String?
-    @State private var recallErrorMessage: String?
     @State private var suggestedDefinitionState = AIInlineTextDraftState()
     @State private var acceptedDefinitionState = AIInlineTextDraftState()
     @State private var streamingExamplesText = ""
@@ -274,10 +270,6 @@ struct AIContentView: View {
     @State private var acceptedMnemonicState = AIDraftListState<MnemonicArtifact, String>()
     @State private var suggestedCollocationState = AIDraftListState<CollocationArtifact, String>()
     @State private var acceptedCollocationState = AIDraftListState<CollocationArtifact, String>()
-    @State private var examplesTask: Task<Void, Never>?
-    @State private var learningAidsTask: Task<Void, Never>?
-    @State private var usageTask: Task<Void, Never>?
-    @State private var recallTask: Task<Void, Never>?
     @State private var acceptedDefinitionAutosaveTask: Task<Void, Never>?
     @State private var acceptedExampleAutosaveTasks: [UUID: Task<Void, Never>] = [:]
     @State private var acceptedRecallAutosaveTasks: [UUID: Task<Void, Never>] = [:]
@@ -292,10 +284,14 @@ struct AIContentView: View {
 
     private let logger = Logger(subsystem: "AnkiMateApp", category: "AIContentView")
 
-    private var isGeneratingExamples: Bool { examplesTask != nil }
-    private var isGeneratingLearningAids: Bool { learningAidsTask != nil }
-    private var isGeneratingUsage: Bool { usageTask != nil }
-    private var isGeneratingRecall: Bool { recallTask != nil }
+    private var isGeneratingExamples: Bool { item.isGeneratingAI(for: .examples) }
+    private var isGeneratingLearningAids: Bool { item.isGeneratingAI(for: .learningAids) }
+    private var isGeneratingUsage: Bool { item.isGeneratingAI(for: .usage) }
+    private var isGeneratingRecall: Bool { item.isGeneratingAI(for: .recall) }
+    private var examplesErrorMessage: String? { item.aiGenerationError(for: .examples) }
+    private var learningAidsErrorMessage: String? { item.aiGenerationError(for: .learningAids) }
+    private var usageErrorMessage: String? { item.aiGenerationError(for: .usage) }
+    private var recallErrorMessage: String? { item.aiGenerationError(for: .recall) }
     private var activeAgentSession: AgentSession? {
         Self.resolvedAgentSession(for: item.id, session: agentSession)
     }
@@ -482,7 +478,10 @@ struct AIContentView: View {
         .onAppear {
             reloadPanelStateForCurrentItem(resetTransientFeedback: false)
         }
-        .onChange(of: item.aiSuggestedExampleArtifacts) { _ in syncExampleDrafts() }
+        .onChange(of: item.aiSuggestedExampleArtifacts) { _ in
+            syncExampleDrafts()
+            if !item.aiSuggestedExampleArtifacts.isEmpty { isExamplesSectionExpanded = true }
+        }
         .onChange(of: item.aiAcceptedExampleArtifacts) { _ in syncExampleDrafts() }
         .onChange(of: item.aiSuggestedDefinitionNote) { newValue in
             suggestedDefinitionState.mergePersistedValue(newValue ?? "")
@@ -491,7 +490,10 @@ struct AIContentView: View {
             acceptedDefinitionState.mergePersistedValue(newValue ?? "")
             if newValue != nil { isUsageSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedRecallCardDrafts) { _ in syncRecallDrafts() }
+        .onChange(of: item.aiSuggestedRecallCardDrafts) { _ in
+            syncRecallDrafts()
+            if !item.aiSuggestedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
+        }
         .onChange(of: item.aiAcceptedRecallCardDrafts) { _ in
             if consumeAcceptedRecallPersistedEchoIfNeeded() {
                 if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
@@ -500,17 +502,26 @@ struct AIContentView: View {
             syncRecallDrafts()
             if !item.aiAcceptedRecallCardDrafts.isEmpty { isRecallSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedPitfallArtifacts) { _ in syncPitfallDrafts() }
+        .onChange(of: item.aiSuggestedPitfallArtifacts) { _ in
+            syncPitfallDrafts()
+            if !item.aiSuggestedPitfallArtifacts.isEmpty { isLearningAidsSectionExpanded = true }
+        }
         .onChange(of: item.aiAcceptedPitfallArtifacts) { _ in
             syncPitfallDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedMnemonicArtifacts) { _ in syncMnemonicDrafts() }
+        .onChange(of: item.aiSuggestedMnemonicArtifacts) { _ in
+            syncMnemonicDrafts()
+            if !item.aiSuggestedMnemonicArtifacts.isEmpty { isLearningAidsSectionExpanded = true }
+        }
         .onChange(of: item.aiAcceptedMnemonicArtifacts) { _ in
             syncMnemonicDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
         }
-        .onChange(of: item.aiSuggestedCollocationArtifacts) { _ in syncCollocationDrafts() }
+        .onChange(of: item.aiSuggestedCollocationArtifacts) { _ in
+            syncCollocationDrafts()
+            if !item.aiSuggestedCollocationArtifacts.isEmpty { isLearningAidsSectionExpanded = true }
+        }
         .onChange(of: item.aiAcceptedCollocationArtifacts) { _ in
             syncCollocationDrafts()
             if hasAcceptedLearningAids { isLearningAidsSectionExpanded = true }
@@ -526,7 +537,6 @@ struct AIContentView: View {
         }
         .onDisappear {
             cancelTransientTasks()
-            syncGeneratingState()
         }
         .alert(item: $unavailableAlertContent) { content in
             Alert(
@@ -574,10 +584,6 @@ struct AIContentView: View {
     private func reloadPanelStateForCurrentItem(resetTransientFeedback: Bool) {
         cancelTransientTasks()
         if resetTransientFeedback {
-            examplesErrorMessage = nil
-            learningAidsErrorMessage = nil
-            usageErrorMessage = nil
-            recallErrorMessage = nil
             streamingExamplesText = ""
             streamingUsageText = ""
         }
@@ -590,24 +596,15 @@ struct AIContentView: View {
         suggestedDefinitionState.mergePersistedValue(item.aiSuggestedDefinitionNote ?? "")
         acceptedDefinitionState.mergePersistedValue(item.aiAcceptedDefinitionNote ?? "")
         syncDisclosureState()
-        syncGeneratingState()
     }
 
     private func cancelTransientTasks() {
-        examplesTask?.cancel()
-        learningAidsTask?.cancel()
-        usageTask?.cancel()
-        recallTask?.cancel()
         acceptedDefinitionAutosaveTask?.cancel()
         acceptedExampleAutosaveTasks.values.forEach { $0.cancel() }
         acceptedRecallAutosaveTasks.values.forEach { $0.cancel() }
         acceptedPitfallAutosaveTasks.values.forEach { $0.cancel() }
         acceptedMnemonicAutosaveTasks.values.forEach { $0.cancel() }
         acceptedCollocationAutosaveTasks.values.forEach { $0.cancel() }
-        examplesTask = nil
-        learningAidsTask = nil
-        usageTask = nil
-        recallTask = nil
         acceptedDefinitionAutosaveTask = nil
         acceptedExampleAutosaveTasks = [:]
         acceptedRecallAutosaveTasks = [:]
@@ -618,8 +615,8 @@ struct AIContentView: View {
 
     private func syncDisclosureState() {
         isExamplesSectionExpanded = true
-        isLearningAidsSectionExpanded = hasAcceptedLearningAids
-        isUsageSectionExpanded = hasSavedUsageNote
+        isLearningAidsSectionExpanded = hasAcceptedLearningAids || !suggestedPitfallArtifacts.isEmpty || !suggestedMnemonicArtifacts.isEmpty || !suggestedCollocationArtifacts.isEmpty
+        isUsageSectionExpanded = hasSavedUsageNote || hasSuggestedUsageNote
         isRecallSectionExpanded = !item.aiAcceptedRecallCardDrafts.isEmpty || !item.aiSuggestedRecallCardDrafts.isEmpty
     }
 
@@ -966,180 +963,143 @@ struct AIContentView: View {
     }
 
     private func generateSentences() {
-        guard examplesTask == nil else { return }
+        guard !item.isGeneratingAI(for: .examples) else { return }
         guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let contexts = exampleSenseContexts(from: result)
         let senses = contexts.map(\.promptInput)
         guard !contexts.isEmpty else { return }
 
-        examplesErrorMessage = nil
         streamingExamplesText = ""
-        logger.info("Regenerate Examples started for \(item.word, privacy: .public)")
+        let targetItem = item
+        let targetWord = item.word
+        logger.info("Regenerate Examples started for \(targetWord, privacy: .public)")
 
-        examplesTask?.cancel()
-        examplesTask = Task { @MainActor in
-            syncGeneratingState()
-            defer {
-                examplesTask = nil
-                streamingExamplesText = ""
-                syncGeneratingState()
-            }
-
+        AITrackedGenerationRunner.start(item: targetItem, action: .examples) {
             do {
                 let examples = try await llmService.generateExampleSentenceArtifacts(
-                    word: item.word,
+                    word: targetWord,
                     senses: senses
                 )
                 let artifacts = normalizeExampleArtifacts(examples, contexts: contexts)
-                viewModel.saveAISuggestedExampleArtifacts(artifacts, for: item)
+                viewModel.saveAISuggestedExampleArtifacts(artifacts, for: targetItem)
                 logger.info("Regenerate Examples finished, \(artifacts.count) lines")
             } catch {
-                if presentAIUnavailableAlertIfNeeded(for: error) {
-                    return
-                }
-                examplesErrorMessage = error.localizedDescription
                 logger.error("Regenerate Examples failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
     }
 
     private func generateLearningAids() {
-        guard learningAidsTask == nil else { return }
+        guard !item.isGeneratingAI(for: .learningAids) else { return }
         guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
 
-        learningAidsErrorMessage = nil
-        logger.info("Generate Learning Aids started for \(item.word, privacy: .public)")
+        let targetItem = item
+        let targetWord = item.word
+        logger.info("Generate Learning Aids started for \(targetWord, privacy: .public)")
 
-        learningAidsTask?.cancel()
-        learningAidsTask = Task { @MainActor in
-            syncGeneratingState()
-            defer {
-                learningAidsTask = nil
-                syncGeneratingState()
-            }
-
+        AITrackedGenerationRunner.start(item: targetItem, action: .learningAids) {
             do {
                 let ranked = try await llmService.generateRankedLearningAids(
-                    word: item.word,
+                    word: targetWord,
                     senses: senses,
                     acceptedContext: LLMLearningAidAcceptedContext(
                         acceptedPitfalls: acceptedPitfallArtifacts.map(\.text),
-                        acceptedUsageHints: item.aiAcceptedDefinitionNote.map { [$0] } ?? [],
+                        acceptedUsageHints: targetItem.aiAcceptedDefinitionNote.map { [$0] } ?? [],
                         acceptedMnemonics: acceptedMnemonicArtifacts.map(\.text),
                         acceptedCollocations: acceptedCollocationArtifacts.map(\.phrase)
                     )
                 )
                 viewModel.saveAISuggestedPitfallArtifacts(
                     ranked.aids.pitfalls.map(pitfallArtifact(from:)),
-                    for: item
+                    for: targetItem
                 )
                 viewModel.saveAISuggestedMnemonicArtifacts(
                     ranked.aids.mnemonics.map(mnemonicArtifact(from:)),
-                    for: item
+                    for: targetItem
                 )
                 viewModel.saveAISuggestedCollocationArtifacts(
                     ranked.aids.collocations.map(collocationArtifact(from:)),
-                    for: item
+                    for: targetItem
                 )
                 viewModel.saveLearningAidSelection(
                     pitfallSelection(from: ranked.selections.pitfalls),
                     for: .pitfalls,
-                    item: item
+                    item: targetItem
                 )
                 viewModel.saveLearningAidSelection(
                     pitfallSelection(from: ranked.selections.mnemonics),
                     for: .mnemonics,
-                    item: item
+                    item: targetItem
                 )
                 viewModel.saveLearningAidSelection(
                     pitfallSelection(from: ranked.selections.collocations),
                     for: .collocations,
-                    item: item
+                    item: targetItem
                 )
-                isLearningAidsSectionExpanded = true
                 logger.info("Generate Learning Aids finished")
             } catch {
-                if presentAIUnavailableAlertIfNeeded(for: error) {
-                    return
-                }
-                learningAidsErrorMessage = error.localizedDescription
                 logger.error("Generate Learning Aids failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
     }
 
     private func optimizeDefinition() {
-        guard usageTask == nil else { return }
+        guard !item.isGeneratingAI(for: .usage) else { return }
         guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
 
-        usageErrorMessage = nil
         streamingUsageText = ""
-        logger.info("Regenerate Usage started for \(item.word, privacy: .public)")
+        let targetItem = item
+        let targetWord = item.word
+        logger.info("Regenerate Usage started for \(targetWord, privacy: .public)")
 
-        usageTask?.cancel()
-        usageTask = Task { @MainActor in
-            syncGeneratingState()
-            defer {
-                usageTask = nil
-                streamingUsageText = ""
-                syncGeneratingState()
-            }
-
+        AITrackedGenerationRunner.start(item: targetItem, action: .usage) {
             do {
                 let optimized = try await llmService.generateUsageHintText(
-                    word: item.word,
+                    word: targetWord,
                     senses: senses
                 )
-                viewModel.saveAISuggestedDefinitionNote(optimized, for: item)
-                suggestedDefinitionState.mergePersistedValue(optimized)
+                viewModel.saveAISuggestedDefinitionNote(optimized, for: targetItem)
                 logger.info("Regenerate Usage finished")
             } catch {
-                if presentAIUnavailableAlertIfNeeded(for: error) {
-                    return
-                }
-                usageErrorMessage = error.localizedDescription
                 logger.error("Regenerate Usage failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
     }
 
     private func generateRecallDraft() {
-        guard recallTask == nil else { return }
+        guard !item.isGeneratingAI(for: .recall) else { return }
         guard prepareManualGeneration() else { return }
         guard let result = item.lookupResult else { return }
         let senses = exampleSenseContexts(from: result).map(\.promptInput)
         guard !senses.isEmpty else { return }
 
-        recallErrorMessage = nil
-        logger.info("Generate Recall Draft started for \(item.word, privacy: .public)")
+        let targetItem = item
+        let targetWord = item.word
+        logger.info("Generate Recall Draft started for \(targetWord, privacy: .public)")
 
-        recallTask?.cancel()
-        recallTask = Task { @MainActor in
-            syncGeneratingState()
-            defer {
-                recallTask = nil
-                syncGeneratingState()
-            }
-
+        AITrackedGenerationRunner.start(item: targetItem, action: .recall) {
             do {
                 let generated: LLMRecallCardDraft
                 if let forcedMode = preferredRecallGenerationMode {
                     generated = try await llmService.generateRecallCardDraft(
-                        word: item.word,
+                        word: targetWord,
                         senses: senses,
                         context: recallGenerationContext,
                         mode: forcedMode
                     )
                 } else {
                     let decision = try await llmService.generateRecallCardDraftDecision(
-                        word: item.word,
+                        word: targetWord,
                         senses: senses,
                         context: recallGenerationContext,
                         allowedModes: recommendedRecallAllowedModes,
@@ -1153,15 +1113,11 @@ struct AIContentView: View {
                     back: generated.back,
                     hint: generated.hint
                 )
-                viewModel.saveAISuggestedRecallCardDrafts([draft], for: item)
-                isRecallSectionExpanded = true
+                viewModel.saveAISuggestedRecallCardDrafts([draft], for: targetItem)
                 logger.info("Generate Recall Draft finished")
             } catch {
-                if presentAIUnavailableAlertIfNeeded(for: error) {
-                    return
-                }
-                recallErrorMessage = error.localizedDescription
                 logger.error("Generate Recall Draft failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
     }
@@ -1176,25 +1132,6 @@ struct AIContentView: View {
             return false
         }
 
-        return true
-    }
-
-    private func presentAIUnavailableAlertIfNeeded(for error: Error) -> Bool {
-        guard LLMGenerationAvailability.shouldPromptForManualAction(
-            hasModel: llmService.hasModel,
-            serverState: llmService.serverState,
-            error: error
-        ) else {
-            return false
-        }
-
-        unavailableAlertContent = LLMGenerationAvailability.alertContent(
-            for: LLMGenerationAvailability.resolvedState(
-                hasModel: llmService.hasModel,
-                serverState: llmService.serverState,
-                error: error
-            )
-        )
         return true
     }
 
@@ -1726,10 +1663,6 @@ struct AIContentView: View {
             tasks[rowID]?.cancel()
             tasks.removeValue(forKey: rowID)
         }
-    }
-
-    private func syncGeneratingState() {
-        item.isGeneratingAI = isGeneratingExamples || isGeneratingLearningAids || isGeneratingUsage || isGeneratingRecall
     }
 
     private var firstDefinition: String? {

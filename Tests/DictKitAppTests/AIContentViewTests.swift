@@ -6,6 +6,42 @@ import XCTest
 
 @MainActor
 final class AIContentViewTests: XCTestCase {
+    func testTrackedGenerationKeepsOwningWordMarkedLoadingUntilWorkFinishes() async {
+        let item = WordItem(word: "apple")
+        let gate = AsyncGate()
+
+        let task = AITrackedGenerationRunner.start(item: item, action: .examples) {
+            await gate.wait()
+        }
+
+        XCTAssertTrue(item.isGeneratingAI)
+        XCTAssertTrue(item.isGeneratingAI(for: .examples))
+        XCTAssertFalse(item.isGeneratingAI(for: .usage))
+
+        await gate.open()
+        await task.value
+
+        XCTAssertFalse(item.isGeneratingAI)
+        XCTAssertFalse(item.isGeneratingAI(for: .examples))
+    }
+
+    func testTrackedGenerationStoresErrorOnOwningWordAndClearsOnlyFailedAction() async {
+        let item = WordItem(word: "apple")
+        item.beginAIGeneration(.usage)
+
+        let task = AITrackedGenerationRunner.start(item: item, action: .examples) {
+            throw TestGenerationError.failed
+        }
+
+        await task.value
+
+        XCTAssertTrue(item.isGeneratingAI)
+        XCTAssertFalse(item.isGeneratingAI(for: .examples))
+        XCTAssertTrue(item.isGeneratingAI(for: .usage))
+        XCTAssertEqual(item.aiGenerationError(for: .examples), TestGenerationError.failed.localizedDescription)
+        XCTAssertNil(item.aiGenerationError(for: .usage))
+    }
+
     func testResolvedAgentSessionReturnsMatchingSession() {
         let wordID = UUID()
         let session = AgentSession(
@@ -131,5 +167,31 @@ private final class AIContentViewGenerator: AgentGenerating {
 
     func generate(messages: [LLMMessage], tools: [LLMToolDefinition]) async throws -> GenerateResult {
         result
+    }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private enum TestGenerationError: LocalizedError {
+    case failed
+
+    var errorDescription: String? {
+        "Generation failed."
     }
 }

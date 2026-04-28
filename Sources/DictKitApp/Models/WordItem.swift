@@ -20,6 +20,13 @@ enum LookupState: Equatable {
     }
 }
 
+enum AIGenerationAction: Hashable {
+    case examples
+    case learningAids
+    case usage
+    case recall
+}
+
 final class WordItem: ObservableObject, Identifiable {
     let id: UUID
     @Published var word: String
@@ -38,7 +45,9 @@ final class WordItem: ObservableObject, Identifiable {
 
     // AI artifacts are stored in a single typed schema with suggested/accepted slots.
     @Published var aiArtifacts: AIArtifacts = .empty
-    @Published var isGeneratingAI: Bool = false
+    @Published private(set) var isGeneratingAI: Bool = false
+    @Published private var activeAIGenerationActions: Set<AIGenerationAction> = []
+    @Published private var aiGenerationErrors: [AIGenerationAction: String] = [:]
 
     var aiSuggestedExampleArtifacts: [ExampleSentenceArtifact] {
         get { aiArtifacts.exampleSentences.suggested ?? [] }
@@ -228,6 +237,29 @@ final class WordItem: ObservableObject, Identifiable {
     var lookupResult: LookupResult? {
         if case .loaded(let result) = lookupState { return result }
         return nil
+    }
+
+    func beginAIGeneration(_ action: AIGenerationAction) {
+        activeAIGenerationActions.insert(action)
+        isGeneratingAI = !activeAIGenerationActions.isEmpty
+        aiGenerationErrors[action] = nil
+    }
+
+    func endAIGeneration(_ action: AIGenerationAction) {
+        activeAIGenerationActions.remove(action)
+        isGeneratingAI = !activeAIGenerationActions.isEmpty
+    }
+
+    func isGeneratingAI(for action: AIGenerationAction) -> Bool {
+        activeAIGenerationActions.contains(action)
+    }
+
+    func setAIGenerationError(_ message: String?, for action: AIGenerationAction) {
+        aiGenerationErrors[action] = message
+    }
+
+    func aiGenerationError(for action: AIGenerationAction) -> String? {
+        aiGenerationErrors[action]
     }
 
     var phonetic: String {
