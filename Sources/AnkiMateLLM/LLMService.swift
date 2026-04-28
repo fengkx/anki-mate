@@ -1,10 +1,10 @@
 // LLMService — main public API for LLM features in the app.
 // Manages the server lifecycle, model loading, and provides high-level generation methods.
 
-import Foundation
-import Combine
 import AnkiMateRPC
+import Combine
 import DictKit
+import Foundation
 
 private let llmServiceWarmupRequestTimeoutSeconds: TimeInterval = 5
 private let llmServiceWarmupResourceTimeoutSeconds: TimeInterval = 10
@@ -16,16 +16,30 @@ public final class LLMService: ObservableObject {
     private static let contextSizeEnvironmentKey = "DICTKIT_LLM_CONTEXT_SIZE"
     private static let gpuLayersEnvironmentKey = "DICTKIT_LLM_GPU_LAYERS"
     private static let recallDebugEnvironmentKey = "DICTKIT_LLM_RECALL_DEBUG"
-    static let exampleArtifactMinTokens = 1024
-    static let usageHintMinTokens = 1024
-    static let learningAidsMaxTokens = 1280
-    static let learningAidJudgeMaxTokens = 1024
-    static let learningAidCombinedJudgeMaxTokens = 1024
-    static let ipaMaxTokens = 1024
-    static let pronunciationEnhancementMaxTokens = 1024
-    static let recallPlanMaxTokens = 1024
-    static let recallDraftMaxTokens = 1024
-    static let recallMaskPlanMaxTokens = 512
+    static let reasoningFormat = "deepseek"
+    static let reasoningTokenReserve = 512
+    static let exampleArtifactBaseTokens = 1536
+    static let exampleArtifactMinTokens = exampleArtifactBaseTokens + reasoningTokenReserve
+    static let usageHintBaseTokens = 1024
+    static let usageHintMinTokens = usageHintBaseTokens + reasoningTokenReserve
+    static let learningAidsBaseTokens = 1280
+    static let learningAidsMaxTokens = learningAidsBaseTokens + reasoningTokenReserve
+    static let learningAidJudgeBaseTokens = 1024
+    static let learningAidJudgeMaxTokens = learningAidJudgeBaseTokens + reasoningTokenReserve
+    static let learningAidCombinedJudgeBaseTokens = 1024
+    static let learningAidCombinedJudgeMaxTokens =
+        learningAidCombinedJudgeBaseTokens + reasoningTokenReserve
+    static let ipaBaseTokens = 1536
+    static let ipaMaxTokens = ipaBaseTokens + reasoningTokenReserve
+    static let pronunciationEnhancementBaseTokens = 1536
+    static let pronunciationEnhancementMaxTokens =
+        pronunciationEnhancementBaseTokens + reasoningTokenReserve
+    static let recallPlanBaseTokens = 1024
+    static let recallPlanMaxTokens = recallPlanBaseTokens + reasoningTokenReserve
+    static let recallDraftBaseTokens = 1024
+    static let recallDraftMaxTokens = recallDraftBaseTokens + reasoningTokenReserve
+    static let recallMaskPlanBaseTokens = 512
+    static let recallMaskPlanMaxTokens = recallMaskPlanBaseTokens + reasoningTokenReserve
 
     @Published public private(set) var serverState: ServerProcessManager.State = .stopped
     @Published public private(set) var isWarmingUp = false
@@ -88,12 +102,14 @@ public final class LLMService: ObservableObject {
         warmupRequest: @escaping LLMWarmupRequest = LLMWarmupCoordinator.defaultWarmupRequest
     ) {
         self.rpcClient = rpcClient
-        self.warmupRPCClient = warmupRPCClient ?? RPCClient(
-            configuration: .init(
-                requestTimeoutSeconds: llmServiceWarmupRequestTimeoutSeconds,
-                resourceTimeoutSeconds: llmServiceWarmupResourceTimeoutSeconds
+        self.warmupRPCClient =
+            warmupRPCClient
+            ?? RPCClient(
+                configuration: .init(
+                    requestTimeoutSeconds: llmServiceWarmupRequestTimeoutSeconds,
+                    resourceTimeoutSeconds: llmServiceWarmupResourceTimeoutSeconds
+                )
             )
-        )
         self.defaults = defaults
         self.registry = registry
         self.downloadManager = downloadManager
@@ -159,7 +175,8 @@ public final class LLMService: ObservableObject {
             }
 
             let modelPath = downloadManager.localPath(for: model).path
-            let mmprojPath = model.requiresMMProj ? downloadManager.localMMProjPath(for: model)?.path : nil
+            let mmprojPath =
+                model.requiresMMProj ? downloadManager.localMMProjPath(for: model)?.path : nil
             let _: LoadModelResult = try await rpcClient.call(
                 method: RPCMethod.loadModel,
                 params: LoadModelParams(
@@ -211,7 +228,8 @@ public final class LLMService: ObservableObject {
         guard !downloadedModels.isEmpty else { return }
 
         if let resolvedModelId = Self.resolveAutoSelectedModelId(
-            lastSuccessfullyLoadedModelId: defaults.string(forKey: Self.lastSuccessfulModelIdDefaultsKey),
+            lastSuccessfullyLoadedModelId: defaults.string(
+                forKey: Self.lastSuccessfulModelIdDefaultsKey),
             currentSelectedModelId: selectedModelId,
             registryModels: registry.models,
             downloadedModelIDs: Set(downloadedModels.map(\.id))
@@ -268,7 +286,9 @@ public final class LLMService: ObservableObject {
                         ChatMessage(role: "user", content: prompt.user),
                     ],
                     temperature: self.adjustedTemperature(0.7),
-                    max_completion_tokens: max(300, sentenceCount * 96)
+                    max_completion_tokens: Self.reasoningTokenReserve + max(300, sentenceCount * 96),
+                    thinking_budget_tokens: Self.reasoningTokenReserve,
+                    reasoning_format: Self.reasoningFormat
                 ),
                 port: port
             )
@@ -310,7 +330,8 @@ public final class LLMService: ObservableObject {
         }
 
         let coveredSenseIndexes = Set(initialExamples.compactMap(\.senseIndex))
-        let missingSenseIndexes = Array(Set(1...senses.count).subtracting(coveredSenseIndexes)).sorted()
+        let missingSenseIndexes = Array(Set(1...senses.count).subtracting(coveredSenseIndexes))
+            .sorted()
         guard !missingSenseIndexes.isEmpty else {
             return initialExamples
         }
@@ -324,7 +345,8 @@ public final class LLMService: ObservableObject {
         )
         let topUpExamples: [LLMExampleSentence] = remappedTopUpExamples.compactMap { example in
             guard let localSenseIndex = example.senseIndex,
-                  missingSenseIndexes.indices.contains(localSenseIndex - 1) else {
+                missingSenseIndexes.indices.contains(localSenseIndex - 1)
+            else {
                 return nil
             }
 
@@ -359,7 +381,7 @@ public final class LLMService: ObservableObject {
             prompt: prompt,
             maxTokens: max(Self.exampleArtifactMinTokens, desiredCount * 256),
             temperature: adjustedTemperature(temperature),
-            responseFormat: LLMResponseFormat(kind: .json)
+            responseFormat: Self.exampleSentenceResponseFormat()
         )
 
         return normalizeExampleSentences(
@@ -407,7 +429,10 @@ public final class LLMService: ObservableObject {
                         ChatMessage(role: "user", content: prompt.user),
                     ],
                     temperature: self.adjustedTemperature(0.7),
-                    max_completion_tokens: max(360, sentenceCount * 112),
+                    max_completion_tokens: Self.reasoningTokenReserve
+                        + max(360, sentenceCount * 112),
+                    thinking_budget_tokens: Self.reasoningTokenReserve,
+                    reasoning_format: Self.reasoningFormat,
                     stream: true
                 ),
                 port: port,
@@ -541,7 +566,8 @@ public final class LLMService: ObservableObject {
                 )
             }
             throw LLMServiceError.invalidStructuredOutput(
-                stressValidation.failureReason?.validationMessage ?? "Expected one valid stress syllables string"
+                stressValidation.failureReason?.validationMessage
+                    ?? "Expected one valid stress syllables string"
             )
         }
 
@@ -578,11 +604,12 @@ public final class LLMService: ObservableObject {
         )
         let wordSignals = Self.recallWordSignals(for: normalizedWord)
 
-        let plan: (
-            selectedMode: LLMRecallCardMode,
-            selectionReason: LLMRecallSelectionReason,
-            cuePlan: LLMRecallCuePlan
-        )
+        let plan:
+            (
+                selectedMode: LLMRecallCardMode,
+                selectionReason: LLMRecallSelectionReason,
+                cuePlan: LLMRecallCuePlan
+            )
         do {
             let planPrompt = LLMPrompt.recallCardPlan(
                 word: normalizedWord,
@@ -602,11 +629,13 @@ public final class LLMService: ObservableObject {
                 responseFormat: Self.recallPlanResponseFormat(allowedModes: normalizedAllowedModes),
                 operation: "Recall plan generation"
             )
-            guard let normalizedPlan = Self.normalizeRecallCardPlan(
-                planResponse,
-                allowedModes: normalizedAllowedModes,
-                target: normalizedWord
-            ) else {
+            guard
+                let normalizedPlan = Self.normalizeRecallCardPlan(
+                    planResponse,
+                    allowedModes: normalizedAllowedModes,
+                    target: normalizedWord
+                )
+            else {
                 throw LLMServiceError.invalidStructuredOutput(
                     "Recall plan generation returned no valid plan JSON"
                 )
@@ -667,7 +696,8 @@ public final class LLMService: ObservableObject {
                         allowReasoningFallback: false,
                         operation: "Recall mask plan repair generation"
                     )
-                    maskPlan = try Self.validateRecallMaskPlan(repairResponse, target: normalizedWord)
+                    maskPlan = try Self.validateRecallMaskPlan(
+                        repairResponse, target: normalizedWord)
                     maskPlanRepaired = true
                 } catch LLMServiceError.invalidStructuredOutput {
                     guard let fallbackMaskPlan = Self.ruleBasedMaskPlan(for: normalizedWord) else {
@@ -680,13 +710,15 @@ public final class LLMService: ObservableObject {
                 }
             }
 
-            guard let localDraft = Self.locallyRenderedTargetedLetterClozeDraft(
-                word: normalizedWord,
-                cuePlan: plan.cuePlan,
-                maskPlan: maskPlan,
-                scaffold: scaffold,
-                anchor: anchor
-            ) else {
+            guard
+                let localDraft = Self.locallyRenderedTargetedLetterClozeDraft(
+                    word: normalizedWord,
+                    cuePlan: plan.cuePlan,
+                    maskPlan: maskPlan,
+                    scaffold: scaffold,
+                    anchor: anchor
+                )
+            else {
                 throw LLMServiceError.invalidStructuredOutput(
                     "Recall mask plan rendered no valid targeted cloze draft"
                 )
@@ -743,13 +775,15 @@ public final class LLMService: ObservableObject {
                 allowReasoningFallback: false,
                 operation: "Recall draft retry generation"
             )
-            guard let retryDraft = retryResponse.draft.flatMap({
-                Self.normalizeRecallCardDraft(
-                    $0,
-                    allowedModes: [plan.selectedMode],
-                    target: normalizedWord
-                )
-            }) else {
+            guard
+                let retryDraft = retryResponse.draft.flatMap({
+                    Self.normalizeRecallCardDraft(
+                        $0,
+                        allowedModes: [plan.selectedMode],
+                        target: normalizedWord
+                    )
+                })
+            else {
                 throw LLMServiceError.invalidStructuredOutput(
                     "Recall draft generation returned no valid draft JSON"
                 )
@@ -779,7 +813,7 @@ public final class LLMService: ObservableObject {
             "The exact target is: \(target).",
             "draft.back must equal the exact target with no underscores.",
             "draft.front must not contain the exact unmasked target.",
-            "For targeted_letter_cloze, put the masked target surface in draft.front, not in draft.back."
+            "For targeted_letter_cloze, put the masked target surface in draft.front, not in draft.back.",
         ].joined(separator: "\n")
 
         return (
@@ -1050,7 +1084,8 @@ public final class LLMService: ObservableObject {
             return LLMSensePromptInput(
                 partOfSpeech: partOfSpeech.isEmpty ? "general" : partOfSpeech,
                 definition: definition,
-                semanticHint: sense.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                semanticHint: sense.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty
             )
         }
 
@@ -1167,7 +1202,8 @@ public final class LLMService: ObservableObject {
 
         for example in primary {
             guard let senseIndex = example.senseIndex,
-                  !coveredSenseIndexes.contains(senseIndex) else {
+                !coveredSenseIndexes.contains(senseIndex)
+            else {
                 continue
             }
             appendIfNeeded(example)
@@ -1175,7 +1211,8 @@ public final class LLMService: ObservableObject {
 
         for example in topUp {
             guard let senseIndex = example.senseIndex,
-                  !coveredSenseIndexes.contains(senseIndex) else {
+                !coveredSenseIndexes.contains(senseIndex)
+            else {
                 continue
             }
             appendIfNeeded(example)
@@ -1214,10 +1251,12 @@ public final class LLMService: ObservableObject {
     }
 
     private static func stripListMarker(from text: String) -> String? {
-        guard let range = text.range(
-            of: #"^(?:[-*•]\s+|\d+\s*[\.\)\:\-–—]\s+)"#,
-            options: .regularExpression
-        ) else {
+        guard
+            let range = text.range(
+                of: #"^(?:[-*•]\s+|\d+\s*[\.\)\:\-–—]\s+)"#,
+                options: .regularExpression
+            )
+        else {
             return nil
         }
 
@@ -1225,10 +1264,13 @@ public final class LLMService: ObservableObject {
     }
 
     private static func stripStructuredFieldLabel(from text: String) -> String? {
-        guard let range = text.range(
-            of: #"^(?:(?:English|Chinese|Translation|Meaning|Text|Summary|Details|Clue|Phrase|Hint|Front|Back|Pitfall|Usage|Collocation|Mnemonic|EN|ZH)\s*:\s*)"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) else {
+        guard
+            let range = text.range(
+                of:
+                    #"^(?:(?:English|Chinese|Translation|Meaning|Text|Summary|Details|Clue|Phrase|Hint|Front|Back|Pitfall|Usage|Collocation|Mnemonic|EN|ZH)\s*:\s*)"#,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        else {
             return nil
         }
 
@@ -1243,8 +1285,9 @@ public final class LLMService: ObservableObject {
 
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
         guard let result = regex.firstMatch(in: text, range: nsRange),
-              let enRange = Range(result.range(at: 1), in: text),
-              let zhRange = Range(result.range(at: 2), in: text) else {
+            let enRange = Range(result.range(at: 1), in: text),
+            let zhRange = Range(result.range(at: 2), in: text)
+        else {
             return nil
         }
 
@@ -1253,7 +1296,8 @@ public final class LLMService: ObservableObject {
 
     private static func normalizedUsageHintKind(_ rawValue: String?) -> String? {
         guard let rawValue else { return nil }
-        let normalized = rawValue
+        let normalized =
+            rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
@@ -1292,6 +1336,8 @@ public final class LLMService: ObservableObject {
                     ],
                     temperature: temperature,
                     max_completion_tokens: maxTokens,
+                    thinking_budget_tokens: Self.reasoningTokenReserve,
+                    reasoning_format: Self.reasoningFormat,
                     response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
                 ),
                 port: port
@@ -1322,7 +1368,9 @@ public final class LLMService: ObservableObject {
         temperature: Float = 0.2
     ) async throws -> GenerateResult {
         try await withForegroundInferenceAccess { port in
-            let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content)) }
+            let chatMessages = messages.map {
+                ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
+            }
 
             let chatTools: [ChatTool]? = tools.flatMap { defs in
                 let mapped = defs.map { tool in
@@ -1337,13 +1385,14 @@ public final class LLMService: ObservableObject {
                 return mapped.isEmpty ? nil : mapped
             }
 
-            let chatToolChoice: JSONValue? = if let toolChoice {
-                .string(toolChoice)
-            } else if chatTools != nil {
-                .string("auto")
-            } else {
-                nil
-            }
+            let chatToolChoice: JSONValue? =
+                if let toolChoice {
+                    .string(toolChoice)
+                } else if chatTools != nil {
+                    .string("auto")
+                } else {
+                    nil
+                }
 
             let response = try await self.rpcClient.chatCompletion(
                 request: ChatCompletionRequest(
@@ -1351,6 +1400,8 @@ public final class LLMService: ObservableObject {
                     messages: chatMessages,
                     temperature: temperature,
                     max_completion_tokens: maxTokens,
+                    thinking_budget_tokens: Self.reasoningTokenReserve,
+                    reasoning_format: Self.reasoningFormat,
                     tools: chatTools,
                     tool_choice: chatToolChoice,
                     parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
@@ -1375,7 +1426,9 @@ public final class LLMService: ObservableObject {
         onReasoningDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> GenerateResult {
         try await withForegroundInferenceAccess { port in
-            let chatMessages = messages.map { ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content)) }
+            let chatMessages = messages.map {
+                ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
+            }
 
             let chatTools: [ChatTool]? = tools.flatMap { defs in
                 let mapped = defs.map { tool in
@@ -1390,13 +1443,14 @@ public final class LLMService: ObservableObject {
                 return mapped.isEmpty ? nil : mapped
             }
 
-            let chatToolChoice: JSONValue? = if let toolChoice {
-                .string(toolChoice)
-            } else if chatTools != nil {
-                .string("auto")
-            } else {
-                nil
-            }
+            let chatToolChoice: JSONValue? =
+                if let toolChoice {
+                    .string(toolChoice)
+                } else if chatTools != nil {
+                    .string("auto")
+                } else {
+                    nil
+                }
 
             let response = try await self.rpcClient.chatCompletionStream(
                 request: ChatCompletionRequest(
@@ -1404,6 +1458,8 @@ public final class LLMService: ObservableObject {
                     messages: chatMessages,
                     temperature: temperature,
                     max_completion_tokens: maxTokens,
+                    thinking_budget_tokens: Self.reasoningTokenReserve,
+                    reasoning_format: Self.reasoningFormat,
                     stream: true,
                     tools: chatTools,
                     tool_choice: chatToolChoice,
@@ -1491,7 +1547,9 @@ public final class LLMService: ObservableObject {
             seemsLikeLocalSpellingPitfall($0)
         }
 
-        if hasLocalSpellingEvidence || signals.hasRepeatedLetters || signals.hasConfusableVowelCluster {
+        if hasLocalSpellingEvidence || signals.hasRepeatedLetters
+            || signals.hasConfusableVowelCluster
+        {
             return [.fullSpelling, .targetedLetterCloze]
         }
         return [.fullSpelling]
@@ -1512,7 +1570,8 @@ public final class LLMService: ObservableObject {
 
         let normalizedContext = normalizeRecallGenerationContext(context)
         if normalizedContext.acceptedPitfalls.contains(where: seemsLikeLocalSpellingPitfall),
-           resolvedAllowedModes.contains(.targetedLetterCloze) {
+            resolvedAllowedModes.contains(.targetedLetterCloze)
+        {
             return .targetedLetterCloze
         }
 
@@ -1559,7 +1618,8 @@ public final class LLMService: ObservableObject {
             return currentSelectedModelId
         }
         if let lastSuccessfullyLoadedModelId,
-           downloadedModelIDs.contains(lastSuccessfullyLoadedModelId) {
+            downloadedModelIDs.contains(lastSuccessfullyLoadedModelId)
+        {
             return lastSuccessfullyLoadedModelId
         }
         return registryModels.first(where: { downloadedModelIDs.contains($0.id) })?.id
@@ -1576,8 +1636,9 @@ public final class LLMService: ObservableObject {
 
     private func scheduleWarmupIfNeeded() {
         guard let modelId = loadedModelId,
-              let modelPath = loadedModelPath,
-              let inferencePort = llamaServerPort else {
+            let modelPath = loadedModelPath,
+            let inferencePort = llamaServerPort
+        else {
             return
         }
 
@@ -1639,9 +1700,12 @@ public final class LLMService: ObservableObject {
         }
     }
 
-    static func gpuLayersOverride(environment: [String: String] = ProcessInfo.processInfo.environment) -> Int {
+    static func gpuLayersOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Int {
         guard let rawValue = environment[gpuLayersEnvironmentKey],
-              let parsed = Int(rawValue) else {
+            let parsed = Int(rawValue)
+        else {
             return 99
         }
 
@@ -1653,7 +1717,8 @@ public final class LLMService: ObservableObject {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Int {
         guard let rawValue = environment[contextSizeEnvironmentKey],
-              let parsed = Int(rawValue) else {
+            let parsed = Int(rawValue)
+        else {
             return defaultValue
         }
 
@@ -1672,8 +1737,10 @@ struct RecallCardDraftEnvelope: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.primaryDraft = try container.decodeIfPresent(RecallCardDraftPayload.self, forKey: .draft)
-        self.drafts = try container.decodeIfPresent([RecallCardDraftPayload].self, forKey: .drafts) ?? []
+        self.primaryDraft = try container.decodeIfPresent(
+            RecallCardDraftPayload.self, forKey: .draft)
+        self.drafts =
+            try container.decodeIfPresent([RecallCardDraftPayload].self, forKey: .drafts) ?? []
     }
 }
 
@@ -1695,7 +1762,8 @@ struct RecallCardPlanPayload: Decodable {
             try container.decodeIfPresent(String.self, forKey: .selectedMode)
             ?? container.decodeIfPresent(String.self, forKey: .mode)
             ?? ""
-        self.selectionReason = try container.decodeIfPresent(RecallSelectionReasonPayload.self, forKey: .selectionReason)
+        self.selectionReason = try container.decodeIfPresent(
+            RecallSelectionReasonPayload.self, forKey: .selectionReason)
         self.cuePlan = try container.decodeIfPresent(RecallCuePlanPayload.self, forKey: .cuePlan)
     }
 }
@@ -1902,9 +1970,12 @@ struct LearningAidsEnvelope: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.pitfalls = try container.decodeIfPresent([PitfallPayload].self, forKey: .pitfalls) ?? []
-        self.mnemonics = try container.decodeIfPresent([MnemonicPayload].self, forKey: .mnemonics) ?? []
-        self.collocations = try container.decodeIfPresent([CollocationPayload].self, forKey: .collocations) ?? []
+        self.pitfalls =
+            try container.decodeIfPresent([PitfallPayload].self, forKey: .pitfalls) ?? []
+        self.mnemonics =
+            try container.decodeIfPresent([MnemonicPayload].self, forKey: .mnemonics) ?? []
+        self.collocations =
+            try container.decodeIfPresent([CollocationPayload].self, forKey: .collocations) ?? []
     }
 }
 
@@ -1976,7 +2047,8 @@ extension LLMService {
             }
         }
 
-        let rawPreview = text
+        let rawPreview =
+            text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .prefix(400)
         let candidatePreview = attemptedPayloads.first?
@@ -1987,7 +2059,7 @@ extension LLMService {
             [
                 "Expected JSON object for structured output",
                 rawPreview.isEmpty ? nil : "raw=\(rawPreview)",
-                candidatePreview.map { "candidate=\($0)" }
+                candidatePreview.map { "candidate=\($0)" },
             ]
             .compactMap { $0 }
             .joined(separator: " | ")
@@ -2004,13 +2076,14 @@ extension LLMService {
 
         for payload in payloads {
             guard let mode = normalizedRecallCardMode(from: payload.mode),
-                  requestedModeSet.contains(mode),
-                  draftsByMode[mode] == nil,
-                  let draft = normalizeRecallCardDraft(
-                      payload,
-                      expectedMode: mode,
-                      target: target
-                  ) else {
+                requestedModeSet.contains(mode),
+                draftsByMode[mode] == nil,
+                let draft = normalizeRecallCardDraft(
+                    payload,
+                    expectedMode: mode,
+                    target: target
+                )
+            else {
                 continue
             }
             draftsByMode[mode] = draft
@@ -2023,13 +2096,17 @@ extension LLMService {
         _ payload: RecallCardPlanPayload,
         allowedModes: [LLMRecallCardMode],
         target: String
-    ) -> (selectedMode: LLMRecallCardMode, selectionReason: LLMRecallSelectionReason, cuePlan: LLMRecallCuePlan)? {
+    ) -> (
+        selectedMode: LLMRecallCardMode, selectionReason: LLMRecallSelectionReason,
+        cuePlan: LLMRecallCuePlan
+    )? {
         guard let selectedMode = normalizedRecallCardMode(from: payload.selectedMode),
-              allowedModes.contains(selectedMode),
-              let cuePlan = normalizeRecallCuePlan(
-                  payload.cuePlan,
-                  target: target
-              ) else {
+            allowedModes.contains(selectedMode),
+            let cuePlan = normalizeRecallCuePlan(
+                payload.cuePlan,
+                target: target
+            )
+        else {
             return nil
         }
         return (
@@ -2120,7 +2197,8 @@ extension LLMService {
 
     private static func fencedCodeBlockContents(in text: String) -> [String] {
         let pattern = #"```(?:json)?\s*([\s\S]*?)```"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        else {
             return []
         }
 
@@ -2186,11 +2264,13 @@ extension LLMService {
     ) -> [String] {
         var seen = Set<String>()
         return values.compactMap { value in
-            let normalized = value
+            let normalized =
+                value
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\n", with: " ")
             guard !normalized.isEmpty else { return nil }
-            let limited = normalized.count > 120
+            let limited =
+                normalized.count > 120
                 ? String(normalized.prefix(120)).trimmingCharacters(in: .whitespacesAndNewlines)
                 : normalized
             let key = limited.lowercased()
@@ -2205,7 +2285,7 @@ extension LLMService {
         let normalized = text.lowercased()
         let keywords = [
             "spell", "spelling", "letter", "letters", "double", "vowel", "consonant",
-            "suffix", "prefix", "顺序", "拼写", "字母", "双写", "元音", "辅音", "漏掉", "写反"
+            "suffix", "prefix", "顺序", "拼写", "字母", "双写", "元音", "辅音", "漏掉", "写反",
         ]
         return keywords.contains { normalized.contains($0) }
     }
@@ -2216,6 +2296,42 @@ extension LLMService {
         LLMResponseFormat(
             kind: .jsonSchema,
             schema: recallPlanSchema(allowedModes: allowedModes),
+            strict: true
+        )
+    }
+
+    private static func exampleSentenceResponseFormat() -> LLMResponseFormat {
+        LLMResponseFormat(
+            kind: .jsonSchema,
+            schema: .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(false),
+                "required": .array([.string("examples")]),
+                "properties": .object([
+                    "examples": .object([
+                        "type": .string("array"),
+                        "minItems": .number(1),
+                        "maxItems": .number(3),
+                        "items": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .bool(false),
+                            "required": .array([
+                                .string("english"),
+                                .string("translation"),
+                                .string("senseIndex"),
+                            ]),
+                            "properties": .object([
+                                "english": .object(["type": .string("string")]),
+                                "translation": .object(["type": .string("string")]),
+                                "senseIndex": .object([
+                                    "type": .string("integer"),
+                                    "minimum": .number(1),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ]),
             strict: true
         )
     }
@@ -2248,7 +2364,7 @@ extension LLMService {
             "properties": .object([
                 "selectedMode": .object([
                     "type": .string("string"),
-                    "enum": .array(allowedModes.map { .string($0.rawValue) })
+                    "enum": .array(allowedModes.map { .string($0.rawValue) }),
                 ]),
                 "cuePlan": .object([
                     "type": .string("object"),
@@ -2262,16 +2378,16 @@ extension LLMService {
                                 .string("sense_semantic_hint"),
                                 .string("sense_definition_paraphrase"),
                                 .string("pitfall"),
-                                .string("collocation")
-                            ])
+                                .string("collocation"),
+                            ]),
                         ]),
                         "normalizedCue": .object([
                             "type": .string("string"),
-                            "maxLength": .number(120)
-                        ])
-                    ])
-                ])
-            ])
+                            "maxLength": .number(120),
+                        ]),
+                    ]),
+                ]),
+            ]),
         ])
     }
 
@@ -2289,24 +2405,24 @@ extension LLMService {
                     "required": .array([
                         .string("mode"),
                         .string("front"),
-                        .string("back")
+                        .string("back"),
                     ]),
                     "properties": .object([
                         "mode": .object([
                             "type": .string("string"),
-                            "enum": .array([.string(mode.rawValue)])
+                            "enum": .array([.string(mode.rawValue)]),
                         ]),
                         "front": .object([
                             "type": .string("string"),
-                            "maxLength": .number(120)
+                            "maxLength": .number(120),
                         ]),
                         "back": .object([
                             "type": .string("string"),
-                            "maxLength": .number(120)
+                            "maxLength": .number(120),
                         ]),
                         "hint": .object([
                             "type": .string("string"),
-                            "maxLength": .number(80)
+                            "maxLength": .number(80),
                         ]),
                         "anchor": .object([
                             "type": .string("object"),
@@ -2315,17 +2431,17 @@ extension LLMService {
                             "properties": .object([
                                 "text": .object([
                                     "type": .string("string"),
-                                    "maxLength": .number(160)
+                                    "maxLength": .number(160),
                                 ]),
                                 "note": .object([
                                     "type": .string("string"),
-                                    "maxLength": .number(160)
-                                ])
-                            ])
-                        ])
-                    ])
+                                    "maxLength": .number(160),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
                 ])
-            ])
+            ]),
         ])
     }
 
@@ -2341,7 +2457,7 @@ extension LLMService {
                     "required": .array([
                         .string("startIndex"),
                         .string("hiddenText"),
-                        .string("teachingReason")
+                        .string("teachingReason"),
                     ]),
                     "properties": .object([
                         "startIndex": .object([
@@ -2349,20 +2465,21 @@ extension LLMService {
                         ]),
                         "hiddenText": .object([
                             "type": .string("string"),
-                            "maxLength": .number(3)
+                            "maxLength": .number(3),
                         ]),
                         "teachingReason": .object([
                             "type": .string("string"),
-                            "maxLength": .number(160)
-                        ])
-                    ])
+                            "maxLength": .number(160),
+                        ]),
+                    ]),
                 ])
-            ])
+            ]),
         ])
     }
 
     private static func normalizedRecallCardMode(from rawValue: String) -> LLMRecallCardMode? {
-        let normalized = rawValue
+        let normalized =
+            rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
@@ -2398,7 +2515,8 @@ extension LLMService {
         target: String
     ) -> LLMRecallCardDraft? {
         guard let mode = normalizedRecallCardMode(from: payload.mode),
-              allowedModes.contains(mode) else {
+            allowedModes.contains(mode)
+        else {
             return nil
         }
 
@@ -2475,7 +2593,8 @@ extension LLMService {
             throw LLMServiceError.invalidStructuredOutput("startIndex is outside the target")
         }
         guard zeroBasedStart > 0, end < targetCharacters.count else {
-            throw LLMServiceError.invalidStructuredOutput("mask span must not include the first or last character")
+            throw LLMServiceError.invalidStructuredOutput(
+                "mask span must not include the first or last character")
         }
 
         let actualHiddenText = String(targetCharacters[zeroBasedStart..<end])
@@ -2484,11 +2603,13 @@ extension LLMService {
                 "hiddenText does not match target at startIndex \(payload.startIndex)"
             )
         }
-        guard let maskedSurface = applyMask(
-            word: normalizedTarget,
-            startIndex: payload.startIndex,
-            hiddenText: hiddenText
-        ), clozeGapMatchesTarget(maskedSurface, target: normalizedTarget) else {
+        guard
+            let maskedSurface = applyMask(
+                word: normalizedTarget,
+                startIndex: payload.startIndex,
+                hiddenText: hiddenText
+            ), clozeGapMatchesTarget(maskedSurface, target: normalizedTarget)
+        else {
             throw LLMServiceError.invalidStructuredOutput("rendered mask does not match target")
         }
 
@@ -2514,7 +2635,9 @@ extension LLMService {
         let zeroBasedStart = startIndex - 1
         let end = zeroBasedStart + hiddenCharacters.count
         guard zeroBasedStart >= 0, end <= characters.count else { return nil }
-        guard String(characters[zeroBasedStart..<end]) == String(hiddenCharacters) else { return nil }
+        guard String(characters[zeroBasedStart..<end]) == String(hiddenCharacters) else {
+            return nil
+        }
         return applyingMask(range: zeroBasedStart..<end, to: characters)
     }
 
@@ -2526,11 +2649,13 @@ extension LLMService {
         anchor: LLMAnchorSnapshot?
     ) -> LLMRecallCardDraft? {
         let normalizedWord = word.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let maskedTarget = applyMask(
-            word: normalizedWord,
-            startIndex: maskPlan.startIndex,
-            hiddenText: maskPlan.hiddenText
-        ) else {
+        guard
+            let maskedTarget = applyMask(
+                word: normalizedWord,
+                startIndex: maskPlan.startIndex,
+                hiddenText: maskPlan.hiddenText
+            )
+        else {
             return nil
         }
         let cue = cuePlan.normalizedCue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2542,7 +2667,9 @@ extension LLMService {
             hint: scaffold.hint,
             anchor: normalizeAnchor(anchor)
         )
-        guard isValidTargetedLetterClozeSurface(draft.front, hint: draft.hint, target: normalizedWord) else {
+        guard
+            isValidTargetedLetterClozeSurface(draft.front, hint: draft.hint, target: normalizedWord)
+        else {
             return nil
         }
         return draft
@@ -2580,7 +2707,9 @@ extension LLMService {
 
         switch mode {
         case .fullSpelling:
-            let front = cue.nilIfEmpty.map { "\($0) · spell the exact word" } ?? "Spell the exact target word."
+            let front =
+                cue.nilIfEmpty.map { "\($0) · spell the exact word" }
+                ?? "Spell the exact target word."
             return LLMRecallCardDraft(
                 mode: .fullSpelling,
                 front: front,
@@ -2601,7 +2730,9 @@ extension LLMService {
             )
 
         case .phraseRecall:
-            let front = cue.nilIfEmpty.map { "\($0) · recall the exact phrase" } ?? "Recall the exact phrase."
+            let front =
+                cue.nilIfEmpty.map { "\($0) · recall the exact phrase" }
+                ?? "Recall the exact phrase."
             return LLMRecallCardDraft(
                 mode: .phraseRecall,
                 front: front,
@@ -2619,7 +2750,8 @@ extension LLMService {
         guard let payload else { return nil }
         let primaryGoal = normalizeGeneratedLine(payload.primaryGoal, stripFieldLabels: true)
         guard !primaryGoal.isEmpty,
-              isAllowedRecallPrimaryGoal(primaryGoal) else {
+            isAllowedRecallPrimaryGoal(primaryGoal)
+        else {
             return nil
         }
 
@@ -2648,7 +2780,7 @@ extension LLMService {
             "sense_semantic_hint",
             "sense_definition_paraphrase",
             "pitfall",
-            "collocation"
+            "collocation",
         ]
         guard allowedSources.contains(semanticSource) else { return nil }
 
@@ -2667,18 +2799,23 @@ extension LLMService {
         let trimmedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedCue.isEmpty, !trimmedTarget.isEmpty else { return false }
 
-        let normalizedCue = trimmedCue.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        let normalizedTarget = trimmedTarget.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalizedCue = trimmedCue.folding(
+            options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let normalizedTarget = trimmedTarget.folding(
+            options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
 
         if normalizedTarget.contains(" ") {
             return normalizedCue.contains(normalizedTarget)
         }
 
-        let pattern = #"(?<![[:alnum:]])\#(NSRegularExpression.escapedPattern(for: normalizedTarget))(?![[:alnum:]])"#
+        let pattern =
+            #"(?<![[:alnum:]])\#(NSRegularExpression.escapedPattern(for: normalizedTarget))(?![[:alnum:]])"#
         return normalizedCue.range(of: pattern, options: .regularExpression) != nil
     }
 
-    private static func fallbackSelectionReason(for mode: LLMRecallCardMode) -> LLMRecallSelectionReason {
+    private static func fallbackSelectionReason(for mode: LLMRecallCardMode)
+        -> LLMRecallSelectionReason
+    {
         switch mode {
         case .fullSpelling:
             return LLMRecallSelectionReason(
@@ -2702,10 +2839,12 @@ extension LLMService {
         for draft: LLMRecallCardDraft,
         senses: [LLMSensePromptInput]
     ) -> LLMRecallCuePlan {
-        let semanticSource = senses.first?.semanticHint?.nilIfEmpty != nil
+        let semanticSource =
+            senses.first?.semanticHint?.nilIfEmpty != nil
             ? "sense_semantic_hint"
             : "sense_definition_paraphrase"
-        let normalizedCue = recallPromptScaffold(word: draft.back, senses: senses).learnerCue
+        let normalizedCue =
+            recallPromptScaffold(word: draft.back, senses: senses).learnerCue
             ?? draft.front
         return LLMRecallCuePlan(
             semanticSource: semanticSource,
@@ -2717,7 +2856,7 @@ extension LLMService {
         [
             "whole_word_recall",
             "local_spelling_calibration",
-            "phrase_chunk_retrieval"
+            "phrase_chunk_retrieval",
         ].contains(primaryGoal)
     }
 
@@ -2730,7 +2869,9 @@ extension LLMService {
         guard front.contains("_") else { return false }
         guard combined.contains("_") else { return false }
         guard underscoreGroupCount(in: combined) == 1 else { return false }
-        guard !combined.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_") else { return false }
+        guard !combined.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("_") else {
+            return false
+        }
         return clozeGapMatchesTarget(front, target: target)
     }
 
@@ -2738,7 +2879,8 @@ extension LLMService {
         let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedTarget.isEmpty else { return false }
 
-        for candidate in clozeTokenCandidates(in: front) where underscoreGroupCount(in: candidate) == 1 {
+        for candidate in clozeTokenCandidates(in: front)
+        where underscoreGroupCount(in: candidate) == 1 {
             let gapLength = longestUnderscoreRun(in: candidate)
             guard gapLength > 0 else { continue }
             let parts = splitClozeToken(candidate)
@@ -2746,8 +2888,9 @@ extension LLMService {
             let suffix = parts.suffix.lowercased()
             guard !prefix.isEmpty || !suffix.isEmpty else { continue }
             guard normalizedTarget.hasPrefix(prefix),
-                  normalizedTarget.hasSuffix(suffix),
-                  prefix.count + suffix.count < normalizedTarget.count else {
+                normalizedTarget.hasSuffix(suffix),
+                prefix.count + suffix.count < normalizedTarget.count
+            else {
                 continue
             }
 
@@ -2791,7 +2934,8 @@ extension LLMService {
 
     private static func splitClozeToken(_ token: String) -> (prefix: String, suffix: String) {
         guard let firstGap = token.firstIndex(of: "_"),
-              let lastGap = token.lastIndex(of: "_") else {
+            let lastGap = token.lastIndex(of: "_")
+        else {
             return (token, "")
         }
         return (
@@ -2847,7 +2991,8 @@ extension LLMService {
 
     static func normalizeGeneratedIPA(_ rawValue: String?) -> String? {
         guard let rawValue else { return nil }
-        let trimmed = rawValue
+        let trimmed =
+            rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2855,9 +3000,12 @@ extension LLMService {
         return Pronunciation(dialect: nil, ipa: trimmed, respelling: nil).ttsIPANotation
     }
 
-    static func normalizeStressSyllables(_ rawValue: String?, preservingSpellingOf word: String? = nil) -> String? {
+    static func normalizeStressSyllables(
+        _ rawValue: String?, preservingSpellingOf word: String? = nil
+    ) -> String? {
         guard let rawValue else { return nil }
-        let trimmed = rawValue
+        let trimmed =
+            rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
         guard !trimmed.isEmpty else { return nil }
@@ -2867,12 +3015,15 @@ extension LLMService {
         )
 
         for rawCandidate in rawCandidates {
-            let candidate = rawCandidate
+            let candidate =
+                rawCandidate
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .components(separatedBy: .whitespaces)
                 .joined()
             guard !candidate.isEmpty else { continue }
-            if let normalized = normalizeStressSyllableCandidate(candidate, preservingSpellingOf: word) {
+            if let normalized = normalizeStressSyllableCandidate(
+                candidate, preservingSpellingOf: word)
+            {
                 return normalized
             }
         }
@@ -2888,14 +3039,16 @@ extension LLMService {
         guard let rawValue else {
             return .failure(nil)
         }
-        let rawCandidates = rawValue
+        let rawCandidates =
+            rawValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             .components(separatedBy: CharacterSet(charactersIn: ",/;\n"))
 
         var firstFailureReason: PronunciationStressFailureReason?
         for rawCandidate in rawCandidates {
-            let candidate = rawCandidate
+            let candidate =
+                rawCandidate
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .components(separatedBy: .whitespaces)
                 .joined()
@@ -2907,7 +3060,8 @@ extension LLMService {
             }
 
             let normalizedWord = word.lowercased()
-            let normalizedCandidateLetters = candidate
+            let normalizedCandidateLetters =
+                candidate
                 .replacingOccurrences(of: "-", with: "")
                 .lowercased()
             if normalizedCandidateLetters != normalizedWord {
@@ -2918,8 +3072,9 @@ extension LLMService {
                         .lowercased()
                 }
                 if let normalizedGuideLetters,
-                   normalizedGuideLetters != normalizedWord,
-                   normalizedCandidateLetters == normalizedGuideLetters {
+                    normalizedGuideLetters != normalizedWord,
+                    normalizedCandidateLetters == normalizedGuideLetters
+                {
                     firstFailureReason = firstFailureReason ?? .copiedGuideLetters
                 } else {
                     firstFailureReason = firstFailureReason ?? .doesNotPreserveSpelling
@@ -2928,19 +3083,23 @@ extension LLMService {
             }
 
             if let pronunciationGuide,
-               pronunciationGuide.contains("-"),
-               !candidate.contains("-") {
+                pronunciationGuide.contains("-"),
+                !candidate.contains("-")
+            {
                 firstFailureReason = firstFailureReason ?? .missingHyphenation
                 continue
             }
 
             if candidate.contains("-"),
-               candidate.rangeOfCharacter(from: .uppercaseLetters) == nil {
+                candidate.rangeOfCharacter(from: .uppercaseLetters) == nil
+            {
                 firstFailureReason = firstFailureReason ?? .missingPrimaryStressMarker
                 continue
             }
 
-            if let normalized = normalizeStressSyllableCandidate(candidate, preservingSpellingOf: word) {
+            if let normalized = normalizeStressSyllableCandidate(
+                candidate, preservingSpellingOf: word)
+            {
                 return .success(normalized)
             }
         }
@@ -2948,14 +3107,19 @@ extension LLMService {
         return .failure(firstFailureReason)
     }
 
-    private static func normalizeStressSyllableCandidate(_ candidate: String, preservingSpellingOf word: String?) -> String? {
-        let syllables = candidate
+    private static func normalizeStressSyllableCandidate(
+        _ candidate: String, preservingSpellingOf word: String?
+    ) -> String? {
+        let syllables =
+            candidate
             .split(separator: "-", omittingEmptySubsequences: true)
             .map(String.init)
         guard !syllables.isEmpty else { return nil }
-        guard syllables.allSatisfy({
-            $0.range(of: #"^[A-Za-z]+$"#, options: .regularExpression) != nil
-        }) else {
+        guard
+            syllables.allSatisfy({
+                $0.range(of: #"^[A-Za-z]+$"#, options: .regularExpression) != nil
+            })
+        else {
             return nil
         }
 
@@ -2991,11 +3155,14 @@ extension LLMService {
     ) -> String {
         switch failureReason {
         case .copiedGuideLetters, .doesNotPreserveSpelling, .invalidCharacters:
-            return "Your previous value changed the written word. Return the exact target letters in order, with hyphens inserted only between learner-friendly chunks and the stressed chunk uppercased. Do not copy letters from the pronunciation guide."
+            return
+                "Your previous value changed the written word. Return the exact target letters in order, with hyphens inserted only between learner-friendly chunks and the stressed chunk uppercased. Do not copy letters from the pronunciation guide."
         case .missingHyphenation, .missingPrimaryStressMarker:
-            return "Your previous value did not properly split the word. For multi-syllable words, split into hyphen-joined chunks with one chunk uppercased for stress. A single chunk without hyphens is not valid."
+            return
+                "Your previous value did not properly split the word. For multi-syllable words, split into hyphen-joined chunks with one chunk uppercased for stress. A single chunk without hyphens is not valid."
         case nil:
-            return #"Your previous value was not a valid stressSyllables string. Build it from the exact letters of "\#(word)" only, keeping the same order and inserting hyphens only when needed."#
+            return
+                #"Your previous value was not a valid stressSyllables string. Build it from the exact letters of "\#(word)" only, keeping the same order and inserting hyphens only when needed."#
         }
     }
 
@@ -3012,24 +3179,27 @@ extension LLMService {
     private static func fallbackRecallCue(from senses: [LLMSensePromptInput]) -> String {
         guard let primary = senses.first else { return "" }
         let preferred = primary.semanticHint?.nilIfEmpty ?? primary.definition
-        let compact = preferred
+        let compact =
+            preferred
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !compact.isEmpty else { return primary.partOfSpeech }
-        return compact.count > 44 ? String(compact.prefix(44)).trimmingCharacters(in: .whitespacesAndNewlines) : compact
+        return compact.count > 44
+            ? String(compact.prefix(44)).trimmingCharacters(in: .whitespacesAndNewlines) : compact
     }
 
     private static func fallbackRecallHint(from senses: [LLMSensePromptInput]) -> String? {
         guard let primary = senses.first else { return nil }
         let parts = [
             primary.partOfSpeech.trimmingCharacters(in: .whitespacesAndNewlines),
-            primary.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            primary.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
         ]
         .filter { !$0.isEmpty }
 
         guard !parts.isEmpty else { return nil }
         let joined = parts.joined(separator: " · ")
-        return joined.count > 36 ? String(joined.prefix(36)).trimmingCharacters(in: .whitespacesAndNewlines) : joined
+        return joined.count > 36
+            ? String(joined.prefix(36)).trimmingCharacters(in: .whitespacesAndNewlines) : joined
     }
 
     private static func ruleBasedMaskedSurface(for word: String) -> String? {
@@ -3088,14 +3258,18 @@ extension LLMService {
             return repeatedRange
         }
 
-        let vowelClusters = ["ie", "ei", "ea", "ee", "oo", "ou", "oa", "ai", "au", "oi", "ue", "ui", "io"]
+        let vowelClusters = [
+            "ie", "ei", "ea", "ee", "oo", "ou", "oa", "ai", "au", "oi", "ue", "ui", "io",
+        ]
         for cluster in vowelClusters {
             if let range = internalSubstringRange(of: cluster, in: word) {
                 return range
             }
         }
 
-        let suffixFragments = ["ion", "ian", "ial", "ual", "ous", "ive", "ize", "ise", "ate", "ent", "ant"]
+        let suffixFragments = [
+            "ion", "ian", "ial", "ual", "ous", "ive", "ize", "ise", "ate", "ent", "ant",
+        ]
         for fragment in suffixFragments {
             if let range = internalSubstringRange(of: fragment, in: word) {
                 return range
@@ -3119,7 +3293,8 @@ extension LLMService {
         return nil
     }
 
-    private static func internalSubstringRange(of substring: String, in word: String) -> Range<Int>? {
+    private static func internalSubstringRange(of substring: String, in word: String) -> Range<Int>?
+    {
         guard let range = word.range(of: substring, options: [.caseInsensitive]) else { return nil }
         let lowerBound = word.distance(from: word.startIndex, to: range.lowerBound)
         let upperBound = word.distance(from: word.startIndex, to: range.upperBound)
@@ -3225,21 +3400,25 @@ extension LLMService {
             senses: senses
         )
 
-        if isDefinitionParaphraseLike(maxOverlap: maxOverlap, contentTokens: contentTokens, section: section) {
+        if isDefinitionParaphraseLike(
+            maxOverlap: maxOverlap, contentTokens: contentTokens, section: section)
+        {
             return true
         }
 
         switch section {
         case .pitfalls:
-            if normalizedText.contains("confusing with") || normalizedText.contains("confuse with") {
+            if normalizedText.contains("confusing with") || normalizedText.contains("confuse with")
+            {
                 if !normalizedText.contains(normalizedWord) {
                     return true
                 }
             }
             if contentTokens.count <= 3 {
                 if let normalizedTranslation,
-                   normalizedTranslation.count <= 8,
-                   !containsAny(normalizedText, ["spelling", "contrast", "misuse"]) {
+                    normalizedTranslation.count <= 8,
+                    !containsAny(normalizedText, ["spelling", "contrast", "misuse"])
+                {
                     return true
                 }
 
@@ -3249,7 +3428,9 @@ extension LLMService {
                     return !pitfallContrastNoiseTokens.contains(token)
                 }
 
-                if hasSpecificContrastCue && (normalizedText.contains(normalizedWord) || hasSpecificEnglishToken) {
+                if hasSpecificContrastCue
+                    && (normalizedText.contains(normalizedWord) || hasSpecificEnglishToken)
+                {
                     return false
                 }
                 return true
@@ -3262,11 +3443,13 @@ extension LLMService {
         case .mnemonics:
             if contentTokens.count <= 3 {
                 if let normalizedTranslation,
-                   normalizedTranslation.count <= 8,
-                   !containsAny(normalizedText, mnemonicHookMarkers) {
+                    normalizedTranslation.count <= 8,
+                    !containsAny(normalizedText, mnemonicHookMarkers)
+                {
                     return true
                 }
-                if containsAny(normalizedText, mnemonicHookMarkers) || normalizedText.contains("=") {
+                if containsAny(normalizedText, mnemonicHookMarkers) || normalizedText.contains("=")
+                {
                     return false
                 }
                 if lexicalTokens.contains(where: mnemonicGlueWords.contains) {
@@ -3303,7 +3486,7 @@ extension LLMService {
         "trap",
         "watch out",
         "instead of",
-        "rather than"
+        "rather than",
     ]
 
     private static let pitfallContrastMarkers: [String] = [
@@ -3325,7 +3508,7 @@ extension LLMService {
         "不同",
         "混淆",
         "不要",
-        "和"
+        "和",
     ]
 
     private static let pitfallContrastNoiseTokens: Set<String> = [
@@ -3351,7 +3534,7 @@ extension LLMService {
         "or",
         "do",
         "does",
-        "did"
+        "did",
     ]
 
     private static let mnemonicHookMarkers: [String] = [
@@ -3364,7 +3547,7 @@ extension LLMService {
         "associate",
         "visual",
         "memory",
-        "hook"
+        "hook",
     ]
 
     private static let mnemonicGlueWords: Set<String> = [
@@ -3378,7 +3561,7 @@ extension LLMService {
         "on",
         "at",
         "with",
-        "from"
+        "from",
     ]
 
     private static func containsAny(_ text: String, _ markers: [String]) -> Bool {
@@ -3409,9 +3592,11 @@ extension LLMService {
 
         var best: Double = 0
         for sense in senses {
-            let senseTokens = learningAidContentTokens(for: [sense.definition, sense.semanticHint].compactMap { $0 })
+            let senseTokens = learningAidContentTokens(
+                for: [sense.definition, sense.semanticHint].compactMap { $0 })
             guard !senseTokens.isEmpty else { continue }
-            let overlap = Double(Set(candidateTokens).intersection(senseTokens).count)
+            let overlap =
+                Double(Set(candidateTokens).intersection(senseTokens).count)
                 / Double(max(1, min(candidateTokens.count, senseTokens.count)))
             best = max(best, overlap)
 
@@ -3421,7 +3606,9 @@ extension LLMService {
                 .joined(separator: " ")
                 .lowercased()
             if !normalizedCandidate.isEmpty, !normalizedSense.isEmpty,
-               (normalizedCandidate.contains(normalizedSense) || normalizedSense.contains(normalizedCandidate)) {
+                normalizedCandidate.contains(normalizedSense)
+                    || normalizedSense.contains(normalizedCandidate)
+            {
                 best = max(best, 1.0)
             }
         }
@@ -3433,10 +3620,11 @@ extension LLMService {
         let stopWords: Set<String> = [
             "a", "an", "and", "as", "be", "by", "for", "from", "in", "is", "it", "of", "or", "the",
             "to", "with", "without", "on", "at", "into", "than", "that", "this", "these", "those",
-            "are", "was", "were", "am", "been", "being"
+            "are", "was", "were", "am", "been", "being",
         ]
 
-        return texts
+        return
+            texts
             .joined(separator: " ")
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
@@ -3521,7 +3709,9 @@ extension LLMService {
         let collocationCandidates = learningAidCandidates(for: .collocations, aids: aids)
         let acceptedItems = judgeAcceptedItems(for: acceptedContext)
 
-        let hasAnyCandidates = !pitfallCandidates.isEmpty || !mnemonicCandidates.isEmpty || !collocationCandidates.isEmpty
+        let hasAnyCandidates =
+            !pitfallCandidates.isEmpty || !mnemonicCandidates.isEmpty
+            || !collocationCandidates.isEmpty
         guard hasAnyCandidates else {
             return LLMLearningAidSelections()
         }
@@ -3530,7 +3720,7 @@ extension LLMService {
             let candidatesBySection: [String: [LearningAidJudgeCandidate]] = [
                 LLMLearningAidSection.pitfalls.rawValue: pitfallCandidates,
                 LLMLearningAidSection.mnemonics.rawValue: mnemonicCandidates,
-                LLMLearningAidSection.collocations.rawValue: collocationCandidates
+                LLMLearningAidSection.collocations.rawValue: collocationCandidates,
             ]
             let prompt = LLMPrompt.learningAidCombinedJudge(
                 word: word,
@@ -3568,9 +3758,12 @@ extension LLMService {
             )
         } catch {
             return LLMLearningAidSelections(
-                pitfalls: Self.deterministicLearningAidFallback(section: .pitfalls, candidates: pitfallCandidates),
-                mnemonics: Self.deterministicLearningAidFallback(section: .mnemonics, candidates: mnemonicCandidates),
-                collocations: Self.deterministicLearningAidFallback(section: .collocations, candidates: collocationCandidates)
+                pitfalls: Self.deterministicLearningAidFallback(
+                    section: .pitfalls, candidates: pitfallCandidates),
+                mnemonics: Self.deterministicLearningAidFallback(
+                    section: .mnemonics, candidates: mnemonicCandidates),
+                collocations: Self.deterministicLearningAidFallback(
+                    section: .collocations, candidates: collocationCandidates)
             )
         }
     }
@@ -3640,7 +3833,8 @@ extension LLMService {
             }
         }
 
-        append(sectionName: "pitfalls", texts: acceptedContext.acceptedPitfalls, recallRelevant: true)
+        append(
+            sectionName: "pitfalls", texts: acceptedContext.acceptedPitfalls, recallRelevant: true)
         append(sectionName: "usage", texts: acceptedContext.acceptedUsageHints)
         append(sectionName: "mnemonics", texts: acceptedContext.acceptedMnemonics)
         append(sectionName: "collocations", texts: acceptedContext.acceptedCollocations)
@@ -3671,26 +3865,32 @@ extension LLMService {
             guard !reason.isEmpty else { return nil }
             return LLMLearningAidOverlapHint(
                 candidateID: hint.candidateId,
-                overlapType: hint.overlapType?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-                withItemID: hint.withItemId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                overlapType: hint.overlapType?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty,
+                withItemID: hint.withItemId?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty,
                 reason: reason
             )
         }
 
         var recommendedID = judge.recommendedId.flatMap { candidateByID[$0] != nil ? $0 : nil }
         if let currentRecommendedID = recommendedID,
-           let candidate = candidateByID[currentRecommendedID],
-           shouldRejectRecommendedCandidate(section: section, candidate: candidate, acceptedItems: acceptedItems, overlapHints: overlapHints) {
+            let candidate = candidateByID[currentRecommendedID],
+            shouldRejectRecommendedCandidate(
+                section: section, candidate: candidate, acceptedItems: acceptedItems,
+                overlapHints: overlapHints)
+        {
             recommendedID = nil
         }
 
         if recommendedID == nil {
-            recommendedID = firstValidCandidateWithoutAcceptedOverlap(
-                section: section,
-                candidates: candidates,
-                acceptedItems: acceptedItems,
-                overlapHints: overlapHints
-            )?.id
+            recommendedID =
+                firstValidCandidateWithoutAcceptedOverlap(
+                    section: section,
+                    candidates: candidates,
+                    acceptedItems: acceptedItems,
+                    overlapHints: overlapHints
+                )?.id
         }
 
         guard let recommendedID else {
@@ -3708,7 +3908,8 @@ extension LLMService {
             recommendedID: recommendedID,
             alternativeIDs: candidates.map(\.id).filter { $0 != recommendedID },
             overlapHints: overlapHints,
-            whyRecommended: judge.whyRecommended?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            whyRecommended: judge.whyRecommended?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty,
             selectionSource: "judge_with_guardrails"
         )
     }
@@ -3751,7 +3952,8 @@ extension LLMService {
         let valid = candidates.filter { isValidLearningAidCandidate($0, for: section) }
         guard !valid.isEmpty else { return nil }
         let sorted = valid.sorted {
-            fallbackPriority(for: $0, section: section) > fallbackPriority(for: $1, section: section)
+            fallbackPriority(for: $0, section: section)
+                > fallbackPriority(for: $1, section: section)
         }
         guard let recommended = sorted.first else { return nil }
         return LLMLearningAidSectionSelection(
@@ -3774,25 +3976,33 @@ extension LLMService {
         )
     }
 
-    private static func reorder(_ items: [LLMPitfall], selection: LLMLearningAidSectionSelection?) -> [LLMPitfall] {
+    private static func reorder(_ items: [LLMPitfall], selection: LLMLearningAidSectionSelection?)
+        -> [LLMPitfall]
+    {
         guard let selection else { return items }
         let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
     }
 
-    private static func reorder(_ items: [LLMMnemonic], selection: LLMLearningAidSectionSelection?) -> [LLMMnemonic] {
+    private static func reorder(_ items: [LLMMnemonic], selection: LLMLearningAidSectionSelection?)
+        -> [LLMMnemonic]
+    {
         guard let selection else { return items }
         let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
     }
 
-    private static func reorder(_ items: [LLMCollocation], selection: LLMLearningAidSectionSelection?) -> [LLMCollocation] {
+    private static func reorder(
+        _ items: [LLMCollocation], selection: LLMLearningAidSectionSelection?
+    ) -> [LLMCollocation] {
         guard let selection else { return items }
         let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
         return orderedIDs(selection: selection, allIDs: items.map(\.id)).compactMap { byID[$0] }
     }
 
-    private static func orderedIDs(selection: LLMLearningAidSectionSelection, allIDs: [String]) -> [String] {
+    private static func orderedIDs(selection: LLMLearningAidSectionSelection, allIDs: [String])
+        -> [String]
+    {
         var ordered: [String] = []
         if let recommendedID = selection.recommendedID {
             ordered.append(recommendedID)
@@ -3808,9 +4018,13 @@ extension LLMService {
         acceptedItems: [LearningAidJudgeAcceptedItem],
         overlapHints: [LLMLearningAidOverlapHint]
     ) -> Bool {
-        !isValidLearningAidCandidate(candidate, for: section) ||
-            overlapHints.contains(where: { $0.candidateID == candidate.id && $0.overlapType == "accepted_overlap" }) ||
-            acceptedItems.contains(where: { normalizedLearningAidText($0.text) == normalizedLearningAidText(candidate.text) })
+        !isValidLearningAidCandidate(candidate, for: section)
+            || overlapHints.contains(where: {
+                $0.candidateID == candidate.id && $0.overlapType == "accepted_overlap"
+            })
+            || acceptedItems.contains(where: {
+                normalizedLearningAidText($0.text) == normalizedLearningAidText(candidate.text)
+            })
     }
 
     private static func firstValidCandidateWithoutAcceptedOverlap(
@@ -3841,8 +4055,8 @@ extension LLMService {
 
         switch section {
         case .pitfalls:
-            return text.split(whereSeparator: \.isWhitespace).count <= 20 &&
-                candidate.type != "usage_tendency"
+            return text.split(whereSeparator: \.isWhitespace).count <= 20
+                && candidate.type != "usage_tendency"
         case .mnemonics:
             return text.split(whereSeparator: \.isWhitespace).count <= 18
         case .collocations:
@@ -3856,7 +4070,7 @@ extension LLMService {
             "this is a useful word",
             "be careful with this word",
             "this word is common",
-            "useful in many contexts"
+            "useful in many contexts",
         ]
         return genericPatterns.contains { normalized.contains($0) }
     }
@@ -3893,7 +4107,8 @@ extension LLMService {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(value),
-              let string = String(data: data, encoding: .utf8) else {
+            let string = String(data: data, encoding: .utf8)
+        else {
             return "{}"
         }
         return string
@@ -3916,14 +4131,15 @@ extension LLMService {
         case .text(let text):
             return .text(text)
         case .parts(let parts):
-            return .parts(parts.map { part in
-                switch part {
-                case .text(let text):
-                    return .text(text)
-                case .imageURL(let url):
-                    return .imageURL(url)
-                }
-            })
+            return .parts(
+                parts.map { part in
+                    switch part {
+                    case .text(let text):
+                        return .text(text)
+                    case .imageURL(let url):
+                        return .imageURL(url)
+                    }
+                })
         }
     }
 
@@ -3939,16 +4155,68 @@ extension LLMService {
             }
             return ChatResponseFormat(
                 type: "json_schema",
-                json_schema: ChatJSONSchemaSpec(name: "response", schema: schema, strict: format.strict)
+                json_schema: ChatJSONSchemaSpec(
+                    name: "response", schema: schema, strict: format.strict)
             )
         }
     }
 
+    private static func cleanedVisibleResponseText(_ text: String) -> String {
+        let visible = RPCClient.splitThinkingTaggedContent(text).visible
+        return dropLeadingThinkingEndTagArtifacts(visible)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func dropLeadingThinkingEndTagArtifacts(_ text: String) -> String {
+        let endTag = "</think>"
+        var cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        while !cleaned.isEmpty {
+            if cleaned.hasPrefix(endTag) {
+                cleaned = String(cleaned.dropFirst(endTag.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+
+            if let length = leadingPartialThinkingEndTagLength(in: cleaned, endTag: endTag) {
+                cleaned = String(cleaned.dropFirst(length))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+
+            break
+        }
+
+        return cleaned
+    }
+
+    private static func leadingPartialThinkingEndTagLength(in text: String, endTag: String) -> Int? {
+        for length in stride(from: endTag.count - 1, through: 2, by: -1) {
+            let partial = String(endTag.prefix(length))
+            guard text.hasPrefix(partial) else { continue }
+
+            let rest = text.dropFirst(length)
+            guard
+                rest.isEmpty
+                    || rest.first?.isWhitespace == true
+                    || rest.first == "{"
+                    || rest.first == "["
+            else {
+                continue
+            }
+
+            return length
+        }
+
+        return nil
+    }
+
     static func primaryResponseText(from response: ChatCompletionResponse) -> String {
         let choice = response.choices.first
-        let content = choice?.message.content?.plainText ?? ""
+        let content = cleanedVisibleResponseText(choice?.message.content?.plainText ?? "")
         let reasoning = choice?.message.reasoning_content ?? ""
-        return (content.isEmpty ? reasoning : content).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (content.isEmpty ? reasoning : content).trimmingCharacters(
+            in: .whitespacesAndNewlines)
     }
 
     static func strictStructuredResponseText(
@@ -3957,12 +4225,13 @@ extension LLMService {
         allowReasoningFallback: Bool
     ) throws -> String {
         let choice = response.choices.first
-        let content = choice?.message.content?.plainText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let content = cleanedVisibleResponseText(choice?.message.content?.plainText ?? "")
         if !content.isEmpty {
             return content
         }
 
-        let reasoning = choice?.message.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let reasoning =
+            choice?.message.reasoning_content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if allowReasoningFallback, !reasoning.isEmpty {
             return reasoning
         }
@@ -4051,8 +4320,8 @@ struct PronunciationStressValidationResult: Equatable {
     }
 }
 
-private extension String {
-    var nilIfEmpty: String? {
+extension String {
+    fileprivate var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
 }

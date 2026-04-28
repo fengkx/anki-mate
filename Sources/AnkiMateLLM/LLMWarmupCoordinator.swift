@@ -41,7 +41,9 @@ actor LLMWarmupCoordinator {
                     ChatMessage(role: "user", content: "OK")
                 ],
                 temperature: 0,
-                max_completion_tokens: 4
+                max_completion_tokens: 4,
+                thinking_budget_tokens: LLMService.reasoningTokenReserve,
+                reasoning_format: LLMService.reasoningFormat
             ),
             port: inferencePort
         )

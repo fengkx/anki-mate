@@ -12,6 +12,8 @@ public struct ChatCompletionRequest: Codable, Sendable {
     public var messages: [ChatMessage]
     public var temperature: Float?
     public var max_completion_tokens: Int?
+    public var thinking_budget_tokens: Int?
+    public var reasoning_format: String?
     public var stream: Bool?
     public var tools: [ChatTool]?
     public var tool_choice: JSONValue?
@@ -23,6 +25,8 @@ public struct ChatCompletionRequest: Codable, Sendable {
         messages: [ChatMessage],
         temperature: Float? = nil,
         max_completion_tokens: Int? = nil,
+        thinking_budget_tokens: Int? = nil,
+        reasoning_format: String? = nil,
         stream: Bool? = nil,
         tools: [ChatTool]? = nil,
         tool_choice: JSONValue? = nil,
@@ -33,6 +37,8 @@ public struct ChatCompletionRequest: Codable, Sendable {
         self.messages = messages
         self.temperature = temperature
         self.max_completion_tokens = max_completion_tokens
+        self.thinking_budget_tokens = thinking_budget_tokens
+        self.reasoning_format = reasoning_format
         self.stream = stream
         self.tools = tools
         self.tool_choice = tool_choice

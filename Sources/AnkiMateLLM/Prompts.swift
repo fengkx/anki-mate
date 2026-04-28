@@ -20,7 +20,25 @@ public struct LLMSensePromptInput: Sendable, Equatable {
         } else {
             hintSuffix = ""
         }
-        return "\(partOfSpeech): \(definition)\(hintSuffix)"
+        return "\(partOfSpeech): \(promptDefinition)\(hintSuffix)"
+    }
+
+    private var promptDefinition: String {
+        Self.isGrammarOnlyDefinition(definition) ? "general usage" : definition
+    }
+
+    private static func isGrammarOnlyDefinition(_ text: String) -> Bool {
+        let tokens = text
+            .lowercased()
+            .split { !$0.isLetter }
+            .map(String.init)
+        guard !tokens.isEmpty else { return false }
+
+        let grammarTokens: Set<String> = [
+            "and", "or", "countable", "uncountable", "singular", "plural", "usually", "mainly",
+            "often",
+        ]
+        return tokens.allSatisfy { grammarTokens.contains($0) }
     }
 }
 

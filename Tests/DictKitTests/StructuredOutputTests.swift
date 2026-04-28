@@ -67,6 +67,28 @@ final class StructuredOutputTests: XCTestCase {
         XCTAssertTrue(phrasalVerbs.rawContent?.contains("light up") == true)
     }
 
+    func testParseTextLookupResultHandlesUncountableAndCountableSensePrefix() throws {
+        let raw = "therapy | BrE ˈθɛrəpi, AmE ˈθɛrəpi | noun uncountable and countable ① (medical treatment) 治疗 zhìliáo▸ music therapy 音乐疗法▸ a course of antibiotic therapy 抗生素疗程 ② (psychotherapy) 心理治疗 xīnlǐ zhìliáo "
+
+        let result = try DictionaryTextParser.parse(query: "therapy", raw: raw, includeSource: true)
+
+        let headword = try XCTUnwrap(result.entries.only)
+        let lexicalEntry = try XCTUnwrap(headword.lexicalEntries.only)
+        XCTAssertEqual(lexicalEntry.senses.count, 2)
+        XCTAssertEqual(lexicalEntry.senses[0].countability, .countableAndUncountable)
+        XCTAssertEqual(lexicalEntry.senses[0].semanticHint, "(medical treatment)")
+        XCTAssertEqual(lexicalEntry.senses[0].definition, "治疗 zhìliáo")
+        XCTAssertEqual(
+            lexicalEntry.senses[0].examples,
+            [
+                "music therapy 音乐疗法",
+                "a course of antibiotic therapy 抗生素疗程",
+            ]
+        )
+        XCTAssertEqual(lexicalEntry.senses[1].semanticHint, "(psychotherapy)")
+        XCTAssertEqual(lexicalEntry.senses[1].definition, "心理治疗 xīnlǐ zhìliáo")
+    }
+
     func testParseTextLookupResultAssignsPerLexicalEntryPronunciations() throws {
         let raw = try loadTextFixture("elaborate")
 

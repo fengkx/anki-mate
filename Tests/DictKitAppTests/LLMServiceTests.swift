@@ -1075,6 +1075,57 @@ final class LLMServiceTests: XCTestCase {
         )
     }
 
+    func testPrimaryResponseTextStripsLeakedThinkingEndTagFromContent() {
+        let response = ChatCompletionResponse(
+            choices: [
+                .init(
+                    message: ChatMessage(
+                        role: "assistant",
+                        content: """
+                        </think>
+
+                        {"ipa":null,"stressSyllables":"Ther-a-py"}
+                        """,
+                        reasoning_content: "truncated reasoning"
+                    )
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            LLMService.primaryResponseText(from: response),
+            #"{"ipa":null,"stressSyllables":"Ther-a-py"}"#
+        )
+    }
+
+    func testStrictStructuredResponseTextStripsLeakedThinkingEndTagFromContent() throws {
+        let response = ChatCompletionResponse(
+            choices: [
+                .init(
+                    message: ChatMessage(
+                        role: "assistant",
+                        content: """
+                        </think>
+
+                        {"ipa":null,"stressSyllables":"Ther-a-py"}
+                        """,
+                        reasoning_content: "truncated reasoning"
+                    ),
+                    finish_reason: "stop"
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            try LLMService.strictStructuredResponseText(
+                from: response,
+                operation: "Pronunciation enhancement",
+                allowReasoningFallback: false
+            ),
+            #"{"ipa":null,"stressSyllables":"Ther-a-py"}"#
+        )
+    }
+
     func testStrictStructuredResponseTextRejectsReasoningOnlyTruncation() {
         let response = ChatCompletionResponse(
             choices: [
@@ -1107,18 +1158,30 @@ final class LLMServiceTests: XCTestCase {
     }
 
     func testRecallDraftTokenBudgetAllowsReasoningModelsToEmitFinalJSON() {
-        XCTAssertEqual(LLMService.recallDraftMaxTokens, 1024)
+        XCTAssertEqual(LLMService.recallDraftMaxTokens, 1536)
     }
 
     func testStructuredJSONTokenBudgetsMatchTaskOutputShape() {
-        XCTAssertEqual(LLMService.exampleArtifactMinTokens, 1024)
-        XCTAssertEqual(LLMService.usageHintMinTokens, 1024)
-        XCTAssertEqual(LLMService.learningAidsMaxTokens, 1280)
-        XCTAssertEqual(LLMService.learningAidJudgeMaxTokens, 1024)
-        XCTAssertEqual(LLMService.learningAidCombinedJudgeMaxTokens, 1024)
-        XCTAssertEqual(LLMService.ipaMaxTokens, 1024)
-        XCTAssertEqual(LLMService.pronunciationEnhancementMaxTokens, 1024)
-        XCTAssertEqual(LLMService.recallPlanMaxTokens, 1024)
+        XCTAssertEqual(LLMService.reasoningFormat, "deepseek")
+        XCTAssertEqual(LLMService.reasoningTokenReserve, 512)
+        XCTAssertEqual(LLMService.exampleArtifactBaseTokens, 1536)
+        XCTAssertEqual(LLMService.exampleArtifactMinTokens, 2048)
+        XCTAssertEqual(LLMService.usageHintBaseTokens, 1024)
+        XCTAssertEqual(LLMService.usageHintMinTokens, 1536)
+        XCTAssertEqual(LLMService.learningAidsBaseTokens, 1280)
+        XCTAssertEqual(LLMService.learningAidsMaxTokens, 1792)
+        XCTAssertEqual(LLMService.learningAidJudgeBaseTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidJudgeMaxTokens, 1536)
+        XCTAssertEqual(LLMService.learningAidCombinedJudgeBaseTokens, 1024)
+        XCTAssertEqual(LLMService.learningAidCombinedJudgeMaxTokens, 1536)
+        XCTAssertEqual(LLMService.ipaBaseTokens, 1536)
+        XCTAssertEqual(LLMService.ipaMaxTokens, 2048)
+        XCTAssertEqual(LLMService.pronunciationEnhancementBaseTokens, 1536)
+        XCTAssertEqual(LLMService.pronunciationEnhancementMaxTokens, 2048)
+        XCTAssertEqual(LLMService.recallPlanBaseTokens, 1024)
+        XCTAssertEqual(LLMService.recallPlanMaxTokens, 1536)
+        XCTAssertEqual(LLMService.recallMaskPlanBaseTokens, 512)
+        XCTAssertEqual(LLMService.recallMaskPlanMaxTokens, 1024)
     }
 
     func testChatCompletionRequestRoundTripsCorrectly() throws {
@@ -1130,6 +1193,8 @@ final class LLMServiceTests: XCTestCase {
             ],
             temperature: 0.2,
             max_completion_tokens: 128,
+            thinking_budget_tokens: 512,
+            reasoning_format: "deepseek",
             tools: [
                 ChatTool(
                     function: ChatFunction(
@@ -1166,8 +1231,12 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(decoded.tools?.first?.function.name, "lookup")
         XCTAssertEqual(decoded.response_format?.type, "json_schema")
         XCTAssertTrue(encoded.contains(#""max_completion_tokens":128"#))
+        XCTAssertTrue(encoded.contains(#""thinking_budget_tokens":512"#))
+        XCTAssertTrue(encoded.contains(#""reasoning_format":"deepseek""#))
         XCTAssertFalse(encoded.contains(#""max_tokens":"#))
         XCTAssertEqual(decoded.max_completion_tokens, 128)
+        XCTAssertEqual(decoded.thinking_budget_tokens, 512)
+        XCTAssertEqual(decoded.reasoning_format, "deepseek")
         XCTAssertEqual(decoded.temperature, 0.2)
     }
 

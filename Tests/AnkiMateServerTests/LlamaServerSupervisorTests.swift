@@ -66,6 +66,7 @@ final class LlamaServerSupervisorTests: XCTestCase {
                 "--jinja",
                 "--no-webui",
                 "--reasoning", "auto",
+                "--reasoning-format", "deepseek",
                 "--flash-attn", "on",
                 "-m", "/tmp/model.gguf",
                 "-c", "4096",

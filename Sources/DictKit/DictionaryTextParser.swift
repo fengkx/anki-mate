@@ -406,6 +406,16 @@ public enum DictionaryTextParser {
             segments = [(1, normalized)]
         }
 
+        if segments.count > 1,
+           isStandaloneCountabilityPrefix(segments[0].1),
+           segments[0].0 == segments[1].0 {
+            segments[1] = (
+                segments[1].0,
+                normalizeWhitespace("\(segments[0].1) \(segments[1].1)")
+            )
+            segments.removeFirst()
+        }
+
         if segments.count == 1,
            segments[0].1.hasPrefix("("),
            segments[0].1.contains("; (") {
@@ -421,6 +431,18 @@ public enum DictionaryTextParser {
         return segments
     }
 
+    private static func isStandaloneCountabilityPrefix(_ text: String) -> Bool {
+        switch normalizeWhitespace(text).lowercased() {
+        case "countable",
+             "uncountable",
+             "countable and uncountable",
+             "uncountable and countable":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func parsePublicSenses(from rawBody: String) -> [Sense] {
         splitSenseSegments(rawBody).map { segment in
             var remaining = normalizeWhitespace(segment.text)
@@ -429,6 +451,9 @@ public enum DictionaryTextParser {
             if remaining.lowercased().hasPrefix("countable and uncountable ") {
                 countability = .countableAndUncountable
                 remaining = String(remaining.dropFirst("countable and uncountable ".count))
+            } else if remaining.lowercased().hasPrefix("uncountable and countable ") {
+                countability = .countableAndUncountable
+                remaining = String(remaining.dropFirst("uncountable and countable ".count))
             } else if remaining.lowercased().hasPrefix("uncountable ") {
                 countability = .uncountable
                 remaining = String(remaining.dropFirst("uncountable ".count))

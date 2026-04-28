@@ -321,6 +321,7 @@ final class LlamaServerSupervisor: LlamaServerSupervising {
             "--jinja",
             "--no-webui",
             "--reasoning", "auto",
+            "--reasoning-format", "deepseek",
             "--flash-attn", "on",
             "-m", modelPath,
             "-c", "\(contextSize)",

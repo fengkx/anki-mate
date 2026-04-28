@@ -76,6 +76,30 @@ final class LLMPromptTests: XCTestCase {
         XCTAssertTrue(prompt.user.contains("2. verb: ask someone to pay a price"))
     }
 
+    func testStructuredExamplePromptReplacesGrammarOnlyDefinitionFragments() {
+        let prompt = LLMPrompt.exampleSentenceArtifacts(
+            word: "therapy",
+            senses: [
+                LLMSensePromptInput(partOfSpeech: "noun", definition: "and countable"),
+                LLMSensePromptInput(
+                    partOfSpeech: "noun",
+                    definition: "治疗 zhìliáo",
+                    semanticHint: "(medical treatment)"
+                ),
+                LLMSensePromptInput(
+                    partOfSpeech: "noun",
+                    definition: "心理治疗 xīnlǐ zhìliáo",
+                    semanticHint: "(psychotherapy)"
+                ),
+            ]
+        )
+
+        XCTAssertTrue(prompt.user.contains("1. noun: general usage"))
+        XCTAssertFalse(prompt.user.contains("noun: and countable"))
+        XCTAssertTrue(prompt.user.contains("2. noun: 治疗 zhìliáo [hint: (medical treatment)]"))
+        XCTAssertTrue(prompt.user.contains("3. noun: 心理治疗 xīnlǐ zhìliáo [hint: (psychotherapy)]"))
+    }
+
     func testUsagePromptUsesStructuredJSONAndProtectsBoundariesForSingleSense() {
         let prompt = LLMPrompt.usageHints(
             word: "perpetual",
