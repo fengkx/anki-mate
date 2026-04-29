@@ -20,4 +20,7 @@ public enum AnkiMateIdentity {
     ]
 
     public static let webDAVKeychainAccount = "credentials"
+
+    public static let byokKeychainService = "\(bundleIdentifier).byok"
+    public static let byokKeychainAccount = "openai-compatible"
 }

@@ -6,10 +6,24 @@ final class LLMGenerationAvailabilityTests: XCTestCase {
     func testResolvedStateIsNoModelConfiguredWhenModelIsMissing() {
         XCTAssertEqual(
             LLMGenerationAvailability.resolvedState(
+                backendMode: .local,
                 hasModel: false,
+                hasBYOKConfiguration: false,
                 serverState: .stopped
             ),
             .noModelConfigured
+        )
+    }
+
+    func testResolvedStateIsBYOKNotConfiguredWhenBYOKCredentialsAreMissing() {
+        XCTAssertEqual(
+            LLMGenerationAvailability.resolvedState(
+                backendMode: .openAICompatible,
+                hasModel: false,
+                hasBYOKConfiguration: false,
+                serverState: .stopped
+            ),
+            .byokNotConfigured
         )
     }
 
@@ -61,6 +75,16 @@ final class LLMGenerationAvailabilityTests: XCTestCase {
                 state: .noModelConfigured
             ),
             "Set up local AI in AI Settings to generate examples."
+        )
+    }
+
+    func testExamplesActionMessageExplainsBYOKRecoveryWhenCredentialsAreMissing() {
+        XCTAssertEqual(
+            LLMGenerationAvailability.actionMessage(
+                for: .examples,
+                state: .byokNotConfigured
+            ),
+            "Set up Bring Your Own Key in AI Settings to generate examples."
         )
     }
 

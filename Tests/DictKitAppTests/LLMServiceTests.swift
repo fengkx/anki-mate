@@ -5,6 +5,55 @@ import XCTest
 
 @MainActor
 final class LLMServiceTests: XCTestCase {
+    override func tearDown() {
+        BYOKCredentials.environment = .live
+        RemoteChatURLProtocolForLLMService.reset()
+        super.tearDown()
+    }
+
+    func testGenerateUsesBYOKModelWithoutStartingLocalServer() async throws {
+        let defaults = UserDefaults(suiteName: "LLMServiceTests-\(UUID().uuidString)")!
+        defaults.set(LLMBackendMode.openAICompatible.rawValue, forKey: LLMBackendMode.defaultsKey)
+        let store = InMemoryLLMServiceBYOKCredentialStore(defaults: defaults)
+        BYOKCredentials.environment = store.environment
+        XCTAssertTrue(
+            BYOKCredentials(
+                baseURL: "https://api.example.com",
+                modelID: "remote-model",
+                apiKey: "secret-key"
+            ).save(storageMode: .keychain)
+        )
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RemoteChatURLProtocolForLLMService.self]
+        RemoteChatURLProtocolForLLMService.response = Data(
+            """
+            {"id":"chatcmpl-test","object":"chat.completion","created":1,"model":"remote-model","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}
+            """.utf8
+        )
+
+        let rpcClient = RPCClient()
+        let service = LLMService(
+            defaults: defaults,
+            registry: ModelRegistry(models: []),
+            downloadManager: ModelDownloadManager(baseDirectoryURL: makeTemporaryDirectory()),
+            serverManager: ServerProcessManager(rpcClient: rpcClient),
+            rpcClient: rpcClient,
+            remoteChatClient: RemoteOpenAIChatClient(session: URLSession(configuration: configuration))
+        )
+
+        let result = try await service.generate(
+            messages: [LLMMessage(role: .user, content: .text("Hi"))],
+            maxTokens: 4
+        )
+
+        XCTAssertEqual(result.text, "hello")
+        XCTAssertEqual(service.serverState, .stopped)
+        let body = try XCTUnwrap(RemoteChatURLProtocolForLLMService.lastBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["model"] as? String, "remote-model")
+    }
+
     func testDownloadProgressFormatsSpeedAndETAForUsers() throws {
         let progress = ModelDownloadManager.DownloadProgress(
             modelId: "test-model",
@@ -104,6 +153,152 @@ final class LLMServiceTests: XCTestCase {
 
         XCTAssertEqual(manager.localAssetState(for: model), .missingMMProj)
         XCTAssertEqual(manager.downloadActionTitle(for: model), "Download Projector")
+    }
+
+    func testLocalAssetStateRejectsModelWithMismatchedChecksum() throws {
+        let root = makeTemporaryDirectory()
+        let manager = ModelDownloadManager(baseDirectoryURL: root)
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 4,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            quantization: "Q4",
+            contextSize: 4096
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        try Data("stub".utf8).write(to: manager.localPath(for: model))
+
+        XCTAssertEqual(manager.localAssetState(for: model), .invalidModelChecksum)
+        XCTAssertFalse(manager.isDownloaded(model))
+    }
+
+    func testLocalAssetStateAcceptsModelWithMatchingChecksum() throws {
+        let root = makeTemporaryDirectory()
+        let manager = ModelDownloadManager(baseDirectoryURL: root)
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 3,
+            sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            quantization: "Q4",
+            contextSize: 4096
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        try Data("hel".utf8).write(to: manager.localPath(for: model))
+
+        XCTAssertEqual(manager.localAssetState(for: model), .invalidModelChecksum)
+
+        try Data("hello".utf8).write(to: manager.localPath(for: model))
+
+        XCTAssertEqual(manager.localAssetState(for: model), .ready)
+    }
+
+    func testLocalAssetStateReusesCachedChecksumValidationForUnchangedFile() throws {
+        let root = makeTemporaryDirectory()
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 5,
+            sha256: "expected",
+            quantization: "Q4",
+            contextSize: 4096
+        )
+        var checksumCalls = 0
+        let manager = ModelDownloadManager(
+            baseDirectoryURL: root,
+            sha256DigestProvider: { _ in
+                checksumCalls += 1
+                return "expected"
+            }
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        try Data("hello".utf8).write(to: manager.localPath(for: model))
+
+        XCTAssertEqual(manager.localAssetState(for: model), .ready)
+        XCTAssertEqual(manager.localAssetState(for: model), .ready)
+
+        XCTAssertEqual(checksumCalls, 1)
+    }
+
+    func testLocalAssetStateReusesPersistedChecksumValidationAfterRelaunch() throws {
+        let root = makeTemporaryDirectory()
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 5,
+            sha256: "expected",
+            quantization: "Q4",
+            contextSize: 4096
+        )
+        var checksumCalls = 0
+        let first = ModelDownloadManager(
+            baseDirectoryURL: root,
+            sha256DigestProvider: { _ in
+                checksumCalls += 1
+                return "expected"
+            }
+        )
+
+        try FileManager.default.createDirectory(at: first.modelsDirectory, withIntermediateDirectories: true)
+        try Data("hello".utf8).write(to: first.localPath(for: model))
+
+        XCTAssertEqual(first.localAssetState(for: model), .ready)
+
+        let second = ModelDownloadManager(
+            baseDirectoryURL: root,
+            sha256DigestProvider: { _ in
+                checksumCalls += 1
+                return "expected"
+            }
+        )
+
+        XCTAssertEqual(second.localAssetState(for: model), .ready)
+        XCTAssertEqual(checksumCalls, 1)
+    }
+
+    func testLocalAssetStateInvalidatesCachedChecksumValidationWhenFileChanges() throws {
+        let root = makeTemporaryDirectory()
+        let model = ModelInfo(
+            id: "test-model",
+            displayName: "Test Model",
+            fileName: "test.gguf",
+            url: "https://example.com/test.gguf",
+            sizeBytes: 5,
+            sha256: "expected",
+            quantization: "Q4",
+            contextSize: 4096
+        )
+        var digests = ["expected", "different"].makeIterator()
+        let manager = ModelDownloadManager(
+            baseDirectoryURL: root,
+            sha256DigestProvider: { _ in digests.next() }
+        )
+
+        try FileManager.default.createDirectory(at: manager.modelsDirectory, withIntermediateDirectories: true)
+        let fileURL = manager.localPath(for: model)
+        try Data("hello".utf8).write(to: fileURL)
+
+        XCTAssertEqual(manager.localAssetState(for: model), .ready)
+
+        try Data("world!".utf8).write(to: fileURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 2_000_000_000)],
+            ofItemAtPath: fileURL.path
+        )
+
+        XCTAssertEqual(manager.localAssetState(for: model), .invalidModelChecksum)
     }
 
     func testDownloadManagerChangesTriggerLLMServiceUpdates() {
@@ -1240,6 +1435,22 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(decoded.temperature, 0.2)
     }
 
+    func testStrictResponseSchemasRequireEveryObjectPropertyForOpenAI() throws {
+        let formats: [(String, LLMResponseFormat)] = [
+            ("exampleSentence", LLMService.exampleSentenceResponseFormat()),
+            ("recallPlan", LLMService.recallPlanResponseFormat(allowedModes: [.fullSpelling])),
+            ("recallDraft", LLMService.recallDraftResponseFormat(mode: .fullSpelling)),
+            ("recallMaskPlan", LLMService.recallMaskPlanResponseFormat()),
+        ]
+
+        for (name, format) in formats {
+            XCTAssertEqual(format.kind, .jsonSchema, name)
+            XCTAssertEqual(format.strict, true, name)
+            let schema = try XCTUnwrap(format.schema, name)
+            XCTAssertEqual(Self.openAIStrictSchemaViolations(in: schema), [], name)
+        }
+    }
+
     func testGenerateResultDecodesLegacyPayloadWithoutFinishReason() throws {
         let payload = #"{"text":"hello","tokensUsed":3,"durationMs":42}"#
         let result = try JSONDecoder().decode(GenerateResult.self, from: Data(payload.utf8))
@@ -1248,6 +1459,48 @@ final class LLMServiceTests: XCTestCase {
         XCTAssertEqual(result.tokensUsed, 3)
         XCTAssertEqual(result.durationMs, 42)
         XCTAssertNil(result.finishReason)
+    }
+
+    private static func openAIStrictSchemaViolations(
+        in value: AnkiMateRPC.JSONValue,
+        path: String = "$"
+    ) -> [String] {
+        switch value {
+        case .object(let object):
+            var violations: [String] = []
+            if case .object(let properties)? = object["properties"] {
+                let required = requiredKeys(in: object["required"])
+                let propertyKeys = Set(properties.keys)
+                if required != propertyKeys {
+                    violations.append(
+                        "\(path): required \(required.sorted()) does not match properties \(propertyKeys.sorted())"
+                    )
+                }
+                for key in properties.keys.sorted() {
+                    if let property = properties[key] {
+                        violations += openAIStrictSchemaViolations(in: property, path: "\(path).\(key)")
+                    }
+                }
+            }
+            for (key, nested) in object where key != "properties" {
+                violations += openAIStrictSchemaViolations(in: nested, path: "\(path).\(key)")
+            }
+            return violations
+        case .array(let array):
+            return array.enumerated().flatMap { index, nested in
+                openAIStrictSchemaViolations(in: nested, path: "\(path)[\(index)]")
+            }
+        case .string, .number, .bool, .null:
+            return []
+        }
+    }
+
+    private static func requiredKeys(in value: AnkiMateRPC.JSONValue?) -> Set<String> {
+        guard case .array(let values)? = value else { return [] }
+        return Set(values.compactMap { value in
+            guard case .string(let key) = value else { return nil }
+            return key
+        })
     }
 
     func testLearningAidFilterDropsDefinitionParaphrasesAndThinHooks() {
@@ -1409,4 +1662,75 @@ final class LLMServiceTests: XCTestCase {
         }
         return url
     }
+}
+
+private final class InMemoryLLMServiceBYOKCredentialStore {
+    let defaults: UserDefaults
+    var keychainData: Data?
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    var environment: BYOKCredentials.StorageEnvironment {
+        BYOKCredentials.StorageEnvironment(
+            userDefaults: { self.defaults },
+            keychain: .init(
+                load: { self.keychainData },
+                save: { data in
+                    self.keychainData = data
+                    return true
+                },
+                delete: { self.keychainData = nil },
+                exists: { self.keychainData != nil }
+            ),
+            encryptedLocal: .init(
+                load: { nil },
+                save: { _ in true },
+                delete: {},
+                exists: { false }
+            )
+        )
+    }
+}
+
+private final class RemoteChatURLProtocolForLLMService: URLProtocol {
+    static var lastBody: Data?
+    static var response = Data()
+
+    static func reset() {
+        lastBody = nil
+        response = Data()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lastBody = request.httpBody ?? request.httpBodyStream.flatMap { stream in
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+            defer { buffer.deallocate() }
+            while stream.hasBytesAvailable {
+                let count = stream.read(buffer, maxLength: 1024)
+                if count <= 0 { break }
+                data.append(buffer, count: count)
+            }
+            return data
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.response)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

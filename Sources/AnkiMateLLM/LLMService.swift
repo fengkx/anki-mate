@@ -49,6 +49,11 @@ public final class LLMService: ObservableObject {
             defaults.set(selectedModelId, forKey: Self.selectedModelIdDefaultsKey)
         }
     }
+    @Published public var backendMode: LLMBackendMode {
+        didSet {
+            defaults.set(backendMode.rawValue, forKey: LLMBackendMode.defaultsKey)
+        }
+    }
 
     public let registry: ModelRegistry
     public let downloadManager: ModelDownloadManager
@@ -56,6 +61,7 @@ public final class LLMService: ObservableObject {
 
     private let rpcClient: RPCClient
     private let warmupRPCClient: RPCClient
+    private let remoteChatClient: RemoteOpenAIChatClient
     private let defaults: UserDefaults
     private let warmupCoordinator: LLMWarmupCoordinator
     private let warmupRequest: LLMWarmupRequest
@@ -96,12 +102,14 @@ public final class LLMService: ObservableObject {
         downloadManager: ModelDownloadManager,
         serverManager: ServerProcessManager,
         rpcClient: RPCClient,
+        remoteChatClient: RemoteOpenAIChatClient = RemoteOpenAIChatClient(),
         warmupRPCClient: RPCClient? = nil,
         warmupCoordinator: LLMWarmupCoordinator = LLMWarmupCoordinator(),
         inferenceRequestGate: LLMInferenceRequestGate? = nil,
         warmupRequest: @escaping LLMWarmupRequest = LLMWarmupCoordinator.defaultWarmupRequest
     ) {
         self.rpcClient = rpcClient
+        self.remoteChatClient = remoteChatClient
         self.warmupRPCClient =
             warmupRPCClient
             ?? RPCClient(
@@ -118,6 +126,7 @@ public final class LLMService: ObservableObject {
         self.inferenceRequestGate = inferenceRequestGate ?? LLMInferenceRequestGate()
         self.warmupRequest = warmupRequest
         self.selectedModelId = defaults.string(forKey: Self.selectedModelIdDefaultsKey) ?? ""
+        self.backendMode = LLMBackendMode.current(defaults: defaults)
 
         // Observe server state changes
         serverManager.$state
@@ -149,6 +158,10 @@ public final class LLMService: ObservableObject {
         guard !autoStartOnAvailableModel else { return }
         autoStartOnAvailableModel = true
         scheduleAutoActivationIfNeeded()
+    }
+
+    public func notifyBackendConfigurationChanged() {
+        objectWillChange.send()
     }
 
     // MARK: - Server Lifecycle
@@ -271,30 +284,27 @@ public final class LLMService: ObservableObject {
         word: String,
         senses: [LLMSensePromptInput]
     ) async throws -> [String] {
-        try await withForegroundInferenceAccess { port in
-            let prompt = LLMPrompt.exampleSentences(
-                word: word,
-                senses: senses
-            )
-            let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
+        let prompt = LLMPrompt.exampleSentences(
+            word: word,
+            senses: senses
+        )
+        let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-            let response = try await self.rpcClient.chatCompletion(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: [
-                        ChatMessage(role: "system", content: prompt.system),
-                        ChatMessage(role: "user", content: prompt.user),
-                    ],
-                    temperature: self.adjustedTemperature(0.7),
-                    max_completion_tokens: Self.reasoningTokenReserve + max(300, sentenceCount * 96),
-                    thinking_budget_tokens: Self.reasoningTokenReserve,
-                    reasoning_format: Self.reasoningFormat
-                ),
-                port: port
+        let response = try await chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: adjustedTemperature(0.7),
+                max_completion_tokens: Self.reasoningTokenReserve + max(300, sentenceCount * 96),
+                thinking_budget_tokens: Self.reasoningTokenReserve,
+                reasoning_format: Self.reasoningFormat
             )
+        )
 
-            return self.parseSentences(response.choices.first?.message.content?.plainText ?? "")
-        }
+        return parseSentences(response.choices.first?.message.content?.plainText ?? "")
     }
 
     public func generateExampleSentenceArtifacts(
@@ -414,32 +424,29 @@ public final class LLMService: ObservableObject {
         senses: [LLMSensePromptInput],
         onDelta: @escaping @Sendable (String) -> Void
     ) async throws -> [String] {
-        try await withForegroundInferenceAccess { port in
-            let prompt = LLMPrompt.exampleSentences(
-                word: word,
-                senses: senses
-            )
-            let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
+        let prompt = LLMPrompt.exampleSentences(
+            word: word,
+            senses: senses
+        )
+        let sentenceCount = LLMPrompt.exampleSentenceCount(for: senses)
 
-            let response = try await self.rpcClient.chatCompletionStream(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: [
-                        ChatMessage(role: "system", content: prompt.system),
-                        ChatMessage(role: "user", content: prompt.user),
-                    ],
-                    temperature: self.adjustedTemperature(0.7),
-                    max_completion_tokens: Self.reasoningTokenReserve
-                        + max(360, sentenceCount * 112),
-                    thinking_budget_tokens: Self.reasoningTokenReserve,
-                    reasoning_format: Self.reasoningFormat,
-                    stream: true
-                ),
-                port: port,
-                onDelta: onDelta
-            )
-            return self.parseSentences(response.choices.first?.message.content?.plainText ?? "")
-        }
+        let response = try await chatCompletionStream(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: adjustedTemperature(0.7),
+                max_completion_tokens: Self.reasoningTokenReserve
+                    + max(360, sentenceCount * 112),
+                thinking_budget_tokens: Self.reasoningTokenReserve,
+                reasoning_format: Self.reasoningFormat,
+                stream: true
+            ),
+            onDelta: onDelta
+        )
+        return parseSentences(response.choices.first?.message.content?.plainText ?? "")
     }
 
     public func generateUsageHints(
@@ -1326,30 +1333,27 @@ public final class LLMService: ObservableObject {
         allowReasoningFallback: Bool = true,
         operation: String = "Structured generation"
     ) async throws -> T {
-        try await withForegroundInferenceAccess { port in
-            let response = try await self.rpcClient.chatCompletion(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: [
-                        ChatMessage(role: "system", content: prompt.system),
-                        ChatMessage(role: "user", content: prompt.user),
-                    ],
-                    temperature: temperature,
-                    max_completion_tokens: maxTokens,
-                    thinking_budget_tokens: Self.reasoningTokenReserve,
-                    reasoning_format: Self.reasoningFormat,
-                    response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
-                ),
-                port: port
+        let response = try await chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: [
+                    ChatMessage(role: "system", content: prompt.system),
+                    ChatMessage(role: "user", content: prompt.user),
+                ],
+                temperature: temperature,
+                max_completion_tokens: maxTokens,
+                thinking_budget_tokens: Self.reasoningTokenReserve,
+                reasoning_format: Self.reasoningFormat,
+                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
             )
+        )
 
-            let responseText = try Self.strictStructuredResponseText(
-                from: response,
-                operation: operation,
-                allowReasoningFallback: allowReasoningFallback
-            )
-            return try Self.decodeStructuredOutput(type, from: responseText)
-        }
+        let responseText = try Self.strictStructuredResponseText(
+            from: response,
+            operation: operation,
+            allowReasoningFallback: allowReasoningFallback
+        )
+        return try Self.decodeStructuredOutput(type, from: responseText)
     }
 
     /// OpenAI-style chat generation entry point.
@@ -1367,51 +1371,27 @@ public final class LLMService: ObservableObject {
         maxTokens: Int? = nil,
         temperature: Float = 0.2
     ) async throws -> GenerateResult {
-        try await withForegroundInferenceAccess { port in
-            let chatMessages = messages.map {
-                ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
-            }
-
-            let chatTools: [ChatTool]? = tools.flatMap { defs in
-                let mapped = defs.map { tool in
-                    ChatTool(
-                        function: ChatFunction(
-                            name: tool.name,
-                            description: tool.description,
-                            parameters: tool.parameters
-                        )
-                    )
-                }
-                return mapped.isEmpty ? nil : mapped
-            }
-
-            let chatToolChoice: JSONValue? =
-                if let toolChoice {
-                    .string(toolChoice)
-                } else if chatTools != nil {
-                    .string("auto")
-                } else {
-                    nil
-                }
-
-            let response = try await self.rpcClient.chatCompletion(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: chatMessages,
-                    temperature: temperature,
-                    max_completion_tokens: maxTokens,
-                    thinking_budget_tokens: Self.reasoningTokenReserve,
-                    reasoning_format: Self.reasoningFormat,
-                    tools: chatTools,
-                    tool_choice: chatToolChoice,
-                    parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
-                    response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
-                ),
-                port: port
-            )
-
-            return Self.mapToGenerateResult(response)
+        let chatMessages = messages.map {
+            ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
         }
+
+        let chatTools = Self.mapTools(tools)
+        let response = try await chatCompletion(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: chatMessages,
+                temperature: temperature,
+                max_completion_tokens: maxTokens,
+                thinking_budget_tokens: Self.reasoningTokenReserve,
+                reasoning_format: Self.reasoningFormat,
+                tools: chatTools,
+                tool_choice: Self.mapToolChoice(toolChoice, chatTools: chatTools),
+                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil,
+                response_format: responseFormat.flatMap { Self.mapResponseFormat($0) }
+            )
+        )
+
+        return Self.mapToGenerateResult(response)
     }
 
     /// Streaming variant of `generate`. Calls `onDelta` for each content chunk.
@@ -1425,53 +1405,29 @@ public final class LLMService: ObservableObject {
         onDelta: @escaping @Sendable (String) -> Void,
         onReasoningDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> GenerateResult {
-        try await withForegroundInferenceAccess { port in
-            let chatMessages = messages.map {
-                ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
-            }
-
-            let chatTools: [ChatTool]? = tools.flatMap { defs in
-                let mapped = defs.map { tool in
-                    ChatTool(
-                        function: ChatFunction(
-                            name: tool.name,
-                            description: tool.description,
-                            parameters: tool.parameters
-                        )
-                    )
-                }
-                return mapped.isEmpty ? nil : mapped
-            }
-
-            let chatToolChoice: JSONValue? =
-                if let toolChoice {
-                    .string(toolChoice)
-                } else if chatTools != nil {
-                    .string("auto")
-                } else {
-                    nil
-                }
-
-            let response = try await self.rpcClient.chatCompletionStream(
-                request: ChatCompletionRequest(
-                    model: self.loadedModelPath ?? "",
-                    messages: chatMessages,
-                    temperature: temperature,
-                    max_completion_tokens: maxTokens,
-                    thinking_budget_tokens: Self.reasoningTokenReserve,
-                    reasoning_format: Self.reasoningFormat,
-                    stream: true,
-                    tools: chatTools,
-                    tool_choice: chatToolChoice,
-                    parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil
-                ),
-                port: port,
-                onDelta: onDelta,
-                onReasoningDelta: onReasoningDelta
-            )
-
-            return Self.mapToGenerateResult(response)
+        let chatMessages = messages.map {
+            ChatMessage(role: $0.role.rawValue, content: Self.mapMessageContent($0.content))
         }
+
+        let chatTools = Self.mapTools(tools)
+        let response = try await chatCompletionStream(
+            request: ChatCompletionRequest(
+                model: loadedModelPath ?? "",
+                messages: chatMessages,
+                temperature: temperature,
+                max_completion_tokens: maxTokens,
+                thinking_budget_tokens: Self.reasoningTokenReserve,
+                reasoning_format: Self.reasoningFormat,
+                stream: true,
+                tools: chatTools,
+                tool_choice: Self.mapToolChoice(toolChoice, chatTools: chatTools),
+                parallel_tool_calls: (chatTools != nil) ? parallelToolCalls : nil
+            ),
+            onDelta: onDelta,
+            onReasoningDelta: onReasoningDelta
+        )
+
+        return Self.mapToGenerateResult(response)
     }
 
     /// Returns the llama-server child port for direct chat completion requests.
@@ -1605,6 +1561,10 @@ public final class LLMService: ObservableObject {
         return downloadManager.isDownloaded(model)
     }
 
+    public var hasBYOKConfiguration: Bool {
+        BYOKCredentials.load().isConfigured
+    }
+
     static func resolveAutoSelectedModelId(
         lastSuccessfullyLoadedModelId: String?,
         currentSelectedModelId: String,
@@ -1697,6 +1657,63 @@ public final class LLMService: ObservableObject {
         } catch {
             await inferenceRequestGate.release(lease)
             throw error
+        }
+    }
+
+    private func chatCompletion(
+        request: ChatCompletionRequest
+    ) async throws -> ChatCompletionResponse {
+        switch backendMode {
+        case .local:
+            return try await withForegroundInferenceAccess { port in
+                try await self.rpcClient.chatCompletion(request: request, port: port)
+            }
+        case .openAICompatible:
+            let credentials = BYOKCredentials.load()
+            guard credentials.isConfigured else {
+                throw LLMServiceError.byokNotConfigured
+            }
+            return try await remoteChatClient.chatCompletion(
+                request: request,
+                configuration: .init(
+                    baseURL: credentials.baseURL,
+                    modelID: credentials.modelID,
+                    apiKey: credentials.apiKey
+                )
+            )
+        }
+    }
+
+    private func chatCompletionStream(
+        request: ChatCompletionRequest,
+        onDelta: @escaping @Sendable (String) -> Void,
+        onReasoningDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> ChatCompletionResponse {
+        switch backendMode {
+        case .local:
+            return try await withForegroundInferenceAccess { port in
+                try await self.rpcClient.chatCompletionStream(
+                    request: request,
+                    port: port,
+                    onDelta: onDelta,
+                    onReasoningDelta: onReasoningDelta
+                )
+            }
+        case .openAICompatible:
+            let credentials = BYOKCredentials.load()
+            guard credentials.isConfigured else {
+                throw LLMServiceError.byokNotConfigured
+            }
+            return try await remoteChatClient.chatCompletionStream(
+                request: request,
+                configuration: .init(
+                    baseURL: credentials.baseURL,
+                    modelID: credentials.modelID,
+                    apiKey: credentials.apiKey
+                ),
+                onDelta: onDelta,
+                onReasoningDelta: onReasoningDelta
+            )
         }
     }
 
@@ -2290,7 +2307,7 @@ extension LLMService {
         return keywords.contains { normalized.contains($0) }
     }
 
-    private static func recallPlanResponseFormat(
+    static func recallPlanResponseFormat(
         allowedModes: [LLMRecallCardMode]
     ) -> LLMResponseFormat {
         LLMResponseFormat(
@@ -2300,7 +2317,7 @@ extension LLMService {
         )
     }
 
-    private static func exampleSentenceResponseFormat() -> LLMResponseFormat {
+    static func exampleSentenceResponseFormat() -> LLMResponseFormat {
         LLMResponseFormat(
             kind: .jsonSchema,
             schema: .object([
@@ -2336,7 +2353,7 @@ extension LLMService {
         )
     }
 
-    private static func recallDraftResponseFormat(
+    static func recallDraftResponseFormat(
         mode: LLMRecallCardMode
     ) -> LLMResponseFormat {
         LLMResponseFormat(
@@ -2346,7 +2363,7 @@ extension LLMService {
         )
     }
 
-    private static func recallMaskPlanResponseFormat() -> LLMResponseFormat {
+    static func recallMaskPlanResponseFormat() -> LLMResponseFormat {
         LLMResponseFormat(
             kind: .jsonSchema,
             schema: recallMaskPlanSchema(),
@@ -2406,6 +2423,8 @@ extension LLMService {
                         .string("mode"),
                         .string("front"),
                         .string("back"),
+                        .string("hint"),
+                        .string("anchor"),
                     ]),
                     "properties": .object([
                         "mode": .object([
@@ -2421,20 +2440,20 @@ extension LLMService {
                             "maxLength": .number(120),
                         ]),
                         "hint": .object([
-                            "type": .string("string"),
+                            "type": .array([.string("string"), .string("null")]),
                             "maxLength": .number(80),
                         ]),
                         "anchor": .object([
-                            "type": .string("object"),
+                            "type": .array([.string("object"), .string("null")]),
                             "additionalProperties": .bool(false),
-                            "required": .array([.string("text")]),
+                            "required": .array([.string("text"), .string("note")]),
                             "properties": .object([
                                 "text": .object([
                                     "type": .string("string"),
                                     "maxLength": .number(160),
                                 ]),
                                 "note": .object([
-                                    "type": .string("string"),
+                                    "type": .array([.string("string"), .string("null")]),
                                     "maxLength": .number(160),
                                 ]),
                             ]),
@@ -4161,6 +4180,31 @@ extension LLMService {
         }
     }
 
+    private static func mapTools(_ tools: [LLMToolDefinition]?) -> [ChatTool]? {
+        tools.flatMap { defs in
+            let mapped = defs.map { tool in
+                ChatTool(
+                    function: ChatFunction(
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.parameters
+                    )
+                )
+            }
+            return mapped.isEmpty ? nil : mapped
+        }
+    }
+
+    private static func mapToolChoice(_ toolChoice: String?, chatTools: [ChatTool]?) -> JSONValue? {
+        if let toolChoice {
+            return .string(toolChoice)
+        }
+        if chatTools != nil {
+            return .string("auto")
+        }
+        return nil
+    }
+
     private static func cleanedVisibleResponseText(_ text: String) -> String {
         let visible = RPCClient.splitThinkingTaggedContent(text).visible
         return dropLeadingThinkingEndTagArtifacts(visible)
@@ -4332,6 +4376,7 @@ public enum LLMServiceError: Error, LocalizedError {
     case serverNotAvailable
     case noModelSelected
     case modelNotDownloaded
+    case byokNotConfigured
     case invalidStructuredOutput(String)
 
     public var errorDescription: String? {
@@ -4339,6 +4384,7 @@ public enum LLMServiceError: Error, LocalizedError {
         case .serverNotAvailable: return "Inference server is not available"
         case .noModelSelected: return "No model selected"
         case .modelNotDownloaded: return "Selected model has not been downloaded yet"
+        case .byokNotConfigured: return "Bring Your Own Key is not configured"
         case .invalidStructuredOutput(let message): return message
         }
     }

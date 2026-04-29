@@ -34,6 +34,14 @@ struct LLMSettingsView: View {
     @StateObject private var serverControls = LLMServerControlsModel()
     @AppStorage(LLMDebugSettings.streamDebugEnabledKey) private var streamDebugEnabled = false
     @AppStorage(LLMContentStyle.defaultsKey) private var storedContentStyle = LLMContentStyle.balanced.rawValue
+    @AppStorage(LLMBackendMode.defaultsKey) private var storedBackendMode = LLMBackendMode.local.rawValue
+    @State private var byokBaseURL = ""
+    @State private var byokModelID = ""
+    @State private var byokAPIKey = ""
+    @State private var byokStorageMode: BYOKCredentialStorageMode = .keychain
+    @State private var byokTestResult: BYOKTestResult?
+    @State private var byokSaveError: String?
+    @State private var isTestingBYOK = false
 
     private var serverGuidance: LLMServerStatusGuidance {
         LLMServerStatusGuidance.make(
@@ -48,6 +56,7 @@ struct LLMSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    backendSection
                     overviewSection
                     contentStyleSection
                     if let notice = llmService.downloadManager.latestNotice {
@@ -63,6 +72,117 @@ struct LLMSettingsView: View {
         }
         .frame(minWidth: 700, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            loadBYOKForm()
+        }
+    }
+
+    // MARK: - Backend
+
+    @ViewBuilder
+    private var backendSection: some View {
+        settingsCard(
+            title: "AI Backend",
+            subtitle: backendMode == .local ? "Use a downloaded local model." : "Use your own OpenAI-compatible API key.",
+            tone: backendMode == .openAICompatible && !BYOKCredentials.load().isConfigured ? .accent(.orange) : .neutral
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                Picker("AI Backend", selection: backendModeBinding) {
+                    Text("Local AI").tag(LLMBackendMode.local)
+                    Text("Bring Your Own Key").tag(LLMBackendMode.openAICompatible)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+
+                if backendMode == .openAICompatible {
+                    byokSetupPanel
+                } else {
+                    Text("Local AI keeps generation on this Mac and uses the selected downloaded model below.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var byokSetupPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Base URL")
+                        .foregroundStyle(.secondary)
+                    TextField("https://api.openai.com", text: $byokBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                }
+
+                GridRow {
+                    Text("Model ID")
+                        .foregroundStyle(.secondary)
+                    TextField("gpt-4.1-mini", text: $byokModelID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                }
+
+                GridRow {
+                    Text("API Key")
+                        .foregroundStyle(.secondary)
+                    SecureField("sk-...", text: $byokAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                }
+            }
+
+            Toggle("Use macOS Keychain", isOn: byokUseKeychainBinding)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(byokStorageMode.summary)
+                    .font(.subheadline.weight(.medium))
+                Text(byokStorageMode.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(BYOKCredentials.currentStorageSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            byokStatusRow
+
+            HStack(spacing: 10) {
+                Button("Test") {
+                    testBYOKConnection()
+                }
+                .disabled(!canUseBYOKForm || isTestingBYOK)
+
+                Button("Save") {
+                    saveBYOKCredentials()
+                }
+                .disabled(!canUseBYOKForm)
+
+                Button("Clear") {
+                    clearBYOKCredentials()
+                }
+                .disabled(!BYOKCredentials.hasBeenConfigured && byokBaseURL.isEmpty && byokModelID.isEmpty && byokAPIKey.isEmpty)
+            }
+            .controlSize(.small)
+
+            if let byokSaveError {
+                Label(byokSaveError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var byokStatusRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: byokStatusIcon)
+                .foregroundStyle(byokStatusColor)
+            Text(byokStatusText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Header
@@ -839,6 +959,111 @@ struct LLMSettingsView: View {
         )
     }
 
+    private var backendMode: LLMBackendMode {
+        get { LLMBackendMode(rawValue: storedBackendMode) ?? .local }
+        nonmutating set {
+            storedBackendMode = newValue.rawValue
+            llmService.backendMode = newValue
+        }
+    }
+
+    private var backendModeBinding: Binding<LLMBackendMode> {
+        Binding(
+            get: { backendMode },
+            set: { backendMode = $0 }
+        )
+    }
+
+    private var byokUseKeychainBinding: Binding<Bool> {
+        Binding(
+            get: { byokStorageMode == .keychain },
+            set: { byokStorageMode = $0 ? .keychain : .encryptedLocalFile }
+        )
+    }
+
+    private var canUseBYOKForm: Bool {
+        !byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !byokModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !byokAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var byokStatusIcon: String {
+        if isTestingBYOK { return "arrow.triangle.2.circlepath" }
+        if let result = byokTestResult {
+            return result.success ? "checkmark.circle.fill" : "xmark.circle.fill"
+        }
+        return BYOKCredentials.load().isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+    }
+
+    private var byokStatusColor: Color {
+        if isTestingBYOK { return .blue }
+        if let result = byokTestResult {
+            return result.success ? .green : .red
+        }
+        return BYOKCredentials.load().isConfigured ? .green : .orange
+    }
+
+    private var byokStatusText: String {
+        if isTestingBYOK {
+            return "Testing connection..."
+        }
+        if let result = byokTestResult {
+            return result.message
+        }
+        if BYOKCredentials.load().isConfigured {
+            return "Ready. BYOK credentials are saved."
+        }
+        return "Not configured. Add a base URL, model ID, and API key."
+    }
+
+    private func loadBYOKForm() {
+        let credentials = BYOKCredentials.load()
+        byokBaseURL = credentials.baseURL
+        byokModelID = credentials.modelID
+        byokAPIKey = credentials.apiKey
+        byokStorageMode = BYOKCredentials.preferredStorageMode
+    }
+
+    @discardableResult
+    private func saveBYOKCredentials() -> Bool {
+        byokSaveError = nil
+        let credentials = BYOKCredentials(baseURL: byokBaseURL, modelID: byokModelID, apiKey: byokAPIKey)
+        guard credentials.save(storageMode: byokStorageMode) else {
+            byokSaveError = "Couldn’t save your BYOK settings."
+            return false
+        }
+        loadBYOKForm()
+        llmService.notifyBackendConfigurationChanged()
+        byokTestResult = BYOKTestResult(success: true, message: "Settings saved.")
+        return true
+    }
+
+    private func clearBYOKCredentials() {
+        BYOKCredentials.clear()
+        byokBaseURL = ""
+        byokModelID = ""
+        byokAPIKey = ""
+        byokSaveError = nil
+        byokTestResult = nil
+        llmService.notifyBackendConfigurationChanged()
+    }
+
+    private func testBYOKConnection() {
+        byokSaveError = nil
+        byokTestResult = nil
+        isTestingBYOK = true
+        let credentials = BYOKCredentials(baseURL: byokBaseURL, modelID: byokModelID, apiKey: byokAPIKey)
+        Task { @MainActor in
+            do {
+                try await BYOKConnectionTester.test(credentials: credentials)
+                byokTestResult = BYOKTestResult(success: true, message: "Connection looks good.")
+            } catch {
+                byokTestResult = BYOKTestResult(success: false, message: error.localizedDescription)
+            }
+            isTestingBYOK = false
+        }
+    }
+
     // MARK: - Notice helpers
 
     @ViewBuilder
@@ -1030,4 +1255,9 @@ struct LLMSettingsView: View {
 private enum SettingsCardTone {
     case neutral
     case accent(Color)
+}
+
+private struct BYOKTestResult {
+    let success: Bool
+    let message: String
 }

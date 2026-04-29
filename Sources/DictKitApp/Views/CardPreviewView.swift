@@ -31,7 +31,9 @@ struct CardPreviewView: View {
     private let minPreviewHeight: CGFloat = 96
     private var generationAvailabilityState: LLMGenerationAvailability.State {
         LLMGenerationAvailability.resolvedState(
+            backendMode: llmService.backendMode,
             hasModel: llmService.hasModel,
+            hasBYOKConfiguration: llmService.hasBYOKConfiguration,
             serverState: llmService.serverState
         )
     }
@@ -916,7 +918,9 @@ struct CardPreviewView: View {
 
         unavailableAlertContent = LLMGenerationAvailability.alertContent(
             for: LLMGenerationAvailability.resolvedState(
+                backendMode: llmService.backendMode,
                 hasModel: llmService.hasModel,
+                hasBYOKConfiguration: llmService.hasBYOKConfiguration,
                 serverState: llmService.serverState,
                 error: error
             )
@@ -926,7 +930,7 @@ struct CardPreviewView: View {
 
     private func isActionBlocked(for action: LLMGenerationAvailability.Action) -> Bool {
         switch generationAvailabilityState {
-        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+        case .noModelConfigured, .byokNotConfigured, .runtimeMissing, .serviceFailedToStart:
             return true
         case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
             return false

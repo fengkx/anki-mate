@@ -4,6 +4,7 @@ enum LLMGenerationAvailability {
     enum State: Equatable {
         case available
         case noModelConfigured
+        case byokNotConfigured
         case modelAvailableServiceIdle
         case preparing
         case runtimeMissing
@@ -32,10 +33,16 @@ enum LLMGenerationAvailability {
     static let settingsButtonTitle = "Open AI Settings"
 
     static func resolvedState(
+        backendMode: LLMBackendMode = .local,
         hasModel: Bool,
+        hasBYOKConfiguration: Bool = false,
         serverState: ServerProcessManager.State,
         error: Error? = nil
     ) -> State {
+        if backendMode == .openAICompatible {
+            return hasBYOKConfiguration ? .available : .byokNotConfigured
+        }
+
         if !hasModel {
             return .noModelConfigured
         }
@@ -70,7 +77,7 @@ enum LLMGenerationAvailability {
         switch resolvedState(hasModel: hasModel, serverState: serverState, error: error) {
         case .available, .modelAvailableServiceIdle, .preparing:
             return false
-        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart, .temporarilyUnavailable:
+        case .noModelConfigured, .byokNotConfigured, .runtimeMissing, .serviceFailedToStart, .temporarilyUnavailable:
             return true
         }
     }
@@ -78,7 +85,7 @@ enum LLMGenerationAvailability {
     static func isAvailabilityError(_ error: Error) -> Bool {
         if let serviceError = error as? LLMServiceError {
             switch serviceError {
-            case .serverNotAvailable, .noModelSelected, .modelNotDownloaded:
+            case .serverNotAvailable, .noModelSelected, .modelNotDownloaded, .byokNotConfigured:
                 return true
             case .invalidStructuredOutput:
                 return false
@@ -106,6 +113,13 @@ enum LLMGenerationAvailability {
                 state: state,
                 title: "Local AI is not set up yet",
                 message: "Download and select a model in AI Settings to generate AI content.",
+                settingsButtonTitle: settingsButtonTitle
+            )
+        case .byokNotConfigured:
+            return AlertContent(
+                state: state,
+                title: "Bring Your Own Key is not set up yet",
+                message: "Add an OpenAI-compatible base URL, model, and API key in AI Settings to generate AI content.",
                 settingsButtonTitle: settingsButtonTitle
             )
         case .runtimeMissing:
@@ -156,6 +170,21 @@ enum LLMGenerationAvailability {
             case .agentChat:
                 return "Set up local AI in AI Settings to start Agent Chat."
             }
+        case .byokNotConfigured:
+            switch action {
+            case .examples:
+                return "Set up Bring Your Own Key in AI Settings to generate examples."
+            case .learningAids:
+                return "Set up Bring Your Own Key in AI Settings to generate learning aids."
+            case .usage:
+                return "Set up Bring Your Own Key in AI Settings to generate a usage cue."
+            case .recallCard:
+                return "Set up Bring Your Own Key in AI Settings to draft a recall card."
+            case .pronunciationEnhancement:
+                return "Set up Bring Your Own Key in AI Settings to generate pronunciation aids."
+            case .agentChat:
+                return "Set up Bring Your Own Key in AI Settings to start Agent Chat."
+            }
         case .runtimeMissing:
             return "This copy of the app is missing the local AI runtime."
         case .serviceFailedToStart:
@@ -169,7 +198,7 @@ enum LLMGenerationAvailability {
 
     static func bannerContent(for state: State) -> AlertContent? {
         switch state {
-        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+        case .noModelConfigured, .byokNotConfigured, .runtimeMissing, .serviceFailedToStart:
             return alertContent(for: state)
         case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
             return nil

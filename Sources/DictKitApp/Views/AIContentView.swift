@@ -304,7 +304,9 @@ struct AIContentView: View {
     }
     private var generationAvailabilityState: LLMGenerationAvailability.State {
         LLMGenerationAvailability.resolvedState(
+            backendMode: llmService.backendMode,
             hasModel: llmService.hasModel,
+            hasBYOKConfiguration: llmService.hasBYOKConfiguration,
             serverState: llmService.serverState
         )
     }
@@ -313,7 +315,7 @@ struct AIContentView: View {
     }
     private var chatPanelState: AIChatPanelState {
         switch generationAvailabilityState {
-        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+        case .noModelConfigured, .byokNotConfigured, .runtimeMissing, .serviceFailedToStart:
             return .llmUnavailable
         case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
             break
@@ -1152,7 +1154,7 @@ struct AIContentView: View {
 
     private func isActionBlocked(for action: LLMGenerationAvailability.Action) -> Bool {
         switch generationAvailabilityState {
-        case .noModelConfigured, .runtimeMissing, .serviceFailedToStart:
+        case .noModelConfigured, .byokNotConfigured, .runtimeMissing, .serviceFailedToStart:
             return true
         case .available, .modelAvailableServiceIdle, .preparing, .temporarilyUnavailable:
             return false

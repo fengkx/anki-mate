@@ -410,7 +410,7 @@ public actor RPCClient {
         }
     }
 
-    private static func readErrorBody(from bytes: URLSession.AsyncBytes, limit: Int) async throws -> String {
+    static func readErrorBody(from bytes: URLSession.AsyncBytes, limit: Int) async throws -> String {
         var data = Data()
         for try await byte in bytes {
             if data.count >= limit {
