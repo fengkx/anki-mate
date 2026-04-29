@@ -3,6 +3,7 @@
 // pause/resume via URLSession resume data, and HuggingFace mirror configuration.
 
 import AnkiMateShared
+import CryptoKit
 import Foundation
 import AnkiMateRPC
 
@@ -14,6 +15,18 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         let totalBytes: Int64
     }
 
+    private struct CachedChecksumValidation: Codable, Equatable {
+        let assetKey: String
+        let expectedChecksum: String
+        let fileSize: Int64
+        let modificationTime: TimeInterval
+    }
+
+    private struct FileFingerprint: Equatable {
+        let fileSize: Int64
+        let modificationTime: TimeInterval
+    }
+
     private enum DownloadAssetKind: String {
         case model
         case mmproj
@@ -21,7 +34,9 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
 
     public enum LocalAssetState: Equatable, Sendable {
         case missingModel
+        case invalidModelChecksum
         case missingMMProj
+        case invalidMMProjChecksum
         case ready
     }
 
@@ -178,7 +193,9 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
     private var resumeDataByModelId: [String: Data] = [:]
     private var lastSampleByModelId: [String: TransferSample] = [:]
     private var persistedResumeStates: [String: PersistedResumeState] = [:]
+    private var checksumValidationCache: [String: CachedChecksumValidation] = [:]
     private let baseDirectoryURL: URL
+    private let sha256DigestProvider: (URL) -> String?
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -190,11 +207,16 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         return URLSession(configuration: config, delegate: self, delegateQueue: q)
     }()
 
-    public init(baseDirectoryURL: URL? = nil) {
+    public init(
+        baseDirectoryURL: URL? = nil,
+        sha256DigestProvider: ((URL) -> String?)? = nil
+    ) {
         self.baseDirectoryURL = baseDirectoryURL ?? Self.defaultBaseDirectory
+        self.sha256DigestProvider = sha256DigestProvider ?? Self.sha256HexDigest(for:)
         self.hfMirror = UserDefaults.standard.string(forKey: "ankimate.hfMirror") ?? ""
         super.init()
         restorePersistedResumeStates()
+        restoreChecksumValidationCache()
     }
 
     // MARK: - Paths
@@ -222,13 +244,22 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
     }
 
     public func localAssetState(for model: ModelInfo) -> LocalAssetState {
-        guard FileManager.default.fileExists(atPath: localPath(for: model).path) else {
+        let modelPath = localPath(for: model)
+        guard FileManager.default.fileExists(atPath: modelPath.path) else {
             return .missingModel
+        }
+        if let sha256 = model.sha256,
+           !file(at: modelPath, assetKey: checksumAssetKey(for: model, assetKind: .model), matchesSHA256: sha256) {
+            return .invalidModelChecksum
         }
         guard model.requiresMMProj else { return .ready }
         guard let mmprojPath = localMMProjPath(for: model),
               FileManager.default.fileExists(atPath: mmprojPath.path) else {
             return .missingMMProj
+        }
+        if let sha256 = model.mmprojSHA256,
+           !file(at: mmprojPath, assetKey: checksumAssetKey(for: model, assetKind: .mmproj), matchesSHA256: sha256) {
+            return .invalidMMProjChecksum
         }
         return .ready
     }
@@ -314,13 +345,23 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
     }
 
     private func nextMissingAssetKind(for model: ModelInfo) -> DownloadAssetKind {
-        if !FileManager.default.fileExists(atPath: localPath(for: model).path) {
+        let modelPath = localPath(for: model)
+        if !FileManager.default.fileExists(atPath: modelPath.path) {
+            return .model
+        }
+        if let sha256 = model.sha256,
+           !file(at: modelPath, assetKey: checksumAssetKey(for: model, assetKind: .model), matchesSHA256: sha256) {
             return .model
         }
         if model.requiresMMProj,
-           let mmprojPath = localMMProjPath(for: model),
-           !FileManager.default.fileExists(atPath: mmprojPath.path) {
-            return .mmproj
+           let mmprojPath = localMMProjPath(for: model) {
+            if !FileManager.default.fileExists(atPath: mmprojPath.path) {
+                return .mmproj
+            }
+            if let sha256 = model.mmprojSHA256,
+               !file(at: mmprojPath, assetKey: checksumAssetKey(for: model, assetKind: .mmproj), matchesSHA256: sha256) {
+                return .mmproj
+            }
         }
         return .model
     }
@@ -481,6 +522,10 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         resumeDirectoryURL.appendingPathComponent("resume-state.json", isDirectory: false)
     }
 
+    private var checksumCacheURL: URL {
+        baseDirectoryURL.appendingPathComponent("checksum-cache.json", isDirectory: false)
+    }
+
     private func resumeDataURL(for modelId: String) -> URL {
         resumeDirectoryURL.appendingPathComponent("\(modelId).resume", isDirectory: false)
     }
@@ -550,6 +595,80 @@ public final class ModelDownloadManager: NSObject, ObservableObject {
         }
         guard let data = try? JSONEncoder().encode(states) else { return }
         try? data.write(to: resumeIndexURL, options: .atomic)
+    }
+
+    private func restoreChecksumValidationCache() {
+        guard let data = try? Data(contentsOf: checksumCacheURL),
+              let decoded = try? JSONDecoder().decode([CachedChecksumValidation].self, from: data) else {
+            return
+        }
+        checksumValidationCache = Dictionary(uniqueKeysWithValues: decoded.map { ($0.assetKey, $0) })
+    }
+
+    private func writeChecksumValidationCache() {
+        let entries = checksumValidationCache.values.sorted { $0.assetKey < $1.assetKey }
+        guard !entries.isEmpty else {
+            try? FileManager.default.removeItem(at: checksumCacheURL)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        try? FileManager.default.createDirectory(
+            at: baseDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: checksumCacheURL, options: .atomic)
+    }
+
+    private func checksumAssetKey(for model: ModelInfo, assetKind: DownloadAssetKind) -> String {
+        switch assetKind {
+        case .model:
+            return "\(model.id):model:\(model.fileName)"
+        case .mmproj:
+            return "\(model.id):mmproj:\(model.mmprojFileName ?? "")"
+        }
+    }
+
+    private func file(at url: URL, assetKey: String, matchesSHA256 expectedChecksum: String) -> Bool {
+        guard let fingerprint = fileFingerprint(for: url) else {
+            checksumValidationCache.removeValue(forKey: assetKey)
+            writeChecksumValidationCache()
+            return false
+        }
+
+        if let cached = checksumValidationCache[assetKey],
+           cached.expectedChecksum.caseInsensitiveCompare(expectedChecksum) == .orderedSame,
+           cached.fileSize == fingerprint.fileSize,
+           cached.modificationTime == fingerprint.modificationTime {
+            return true
+        }
+
+        guard let actualChecksum = sha256DigestProvider(url),
+              actualChecksum.caseInsensitiveCompare(expectedChecksum) == .orderedSame else {
+            checksumValidationCache.removeValue(forKey: assetKey)
+            writeChecksumValidationCache()
+            return false
+        }
+
+        checksumValidationCache[assetKey] = CachedChecksumValidation(
+            assetKey: assetKey,
+            expectedChecksum: expectedChecksum,
+            fileSize: fingerprint.fileSize,
+            modificationTime: fingerprint.modificationTime
+        )
+        writeChecksumValidationCache()
+        return true
+    }
+
+    private func fileFingerprint(for url: URL) -> FileFingerprint? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = attributes[.size] as? NSNumber,
+              let modificationDate = attributes[.modificationDate] as? Date else {
+            return nil
+        }
+        return FileFingerprint(
+            fileSize: fileSize.int64Value,
+            modificationTime: modificationDate.timeIntervalSince1970
+        )
     }
 }
 
@@ -639,6 +758,23 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
                     try FileManager.default.removeItem(at: destination)
                 }
                 try FileManager.default.moveItem(at: tempCopy, to: destination)
+
+                if !self.downloadedAsset(at: destination, assetKind: assetKind, matches: model) {
+                    try? FileManager.default.removeItem(at: destination)
+                    self.updateDownloadProgress(for: modelId) { progress in
+                        progress.state = .failed("Downloaded file checksum did not match the model registry.")
+                        progress.bytesPerSecond = nil
+                        progress.recoverySuggestion = "Retry the download. If it keeps failing, try a mirror."
+                    }
+                    self.latestNotice = DownloadNotice(
+                        kind: .error,
+                        modelId: modelId,
+                        title: "Couldn't verify \(model.displayName)",
+                        message: "The downloaded file did not match the expected checksum."
+                    )
+                    self.cleanupCompletedTask(taskId: taskId, modelId: modelId)
+                    return
+                }
 
                 if assetKind == .model,
                    model.requiresMMProj,
@@ -776,6 +912,37 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
         assetKindByTask.removeValue(forKey: taskId)
         baseBytesByTask.removeValue(forKey: taskId)
         lastSampleByModelId.removeValue(forKey: modelId)
+    }
+
+    private func downloadedAsset(at url: URL, assetKind: DownloadAssetKind, matches model: ModelInfo) -> Bool {
+        let expectedChecksum: String?
+        switch assetKind {
+        case .model:
+            expectedChecksum = model.sha256
+        case .mmproj:
+            expectedChecksum = model.mmprojSHA256
+        }
+        guard let expectedChecksum else { return true }
+        return file(
+            at: url,
+            assetKey: checksumAssetKey(for: model, assetKind: assetKind),
+            matchesSHA256: expectedChecksum
+        )
+    }
+
+    private static func sha256HexDigest(for url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        while autoreleasepool(invoking: {
+            let data = try? handle.read(upToCount: 1024 * 1024)
+            guard let data, !data.isEmpty else { return false }
+            hasher.update(data: data)
+            return true
+        }) {}
+
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     public func dismissLatestNotice() {

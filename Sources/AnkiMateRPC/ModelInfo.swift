@@ -8,6 +8,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     public let fileName: String
     public let url: String
     public let sizeBytes: Int64
+    public let sha256: String?
     public let quantization: String
     public let contextSize: Int
     public let recommended: Bool
@@ -15,6 +16,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
     public let mmprojFileName: String?
     public let mmprojURL: String?
     public let mmprojSizeBytes: Int64?
+    public let mmprojSHA256: String?
 
     public init(
         id: String,
@@ -22,19 +24,22 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         fileName: String,
         url: String,
         sizeBytes: Int64,
+        sha256: String? = nil,
         quantization: String,
         contextSize: Int,
         recommended: Bool = false,
         supportsVision: Bool = false,
         mmprojFileName: String? = nil,
         mmprojURL: String? = nil,
-        mmprojSizeBytes: Int64? = nil
+        mmprojSizeBytes: Int64? = nil,
+        mmprojSHA256: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.fileName = fileName
         self.url = url
         self.sizeBytes = sizeBytes
+        self.sha256 = sha256
         self.quantization = quantization
         self.contextSize = contextSize
         self.recommended = recommended
@@ -42,6 +47,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         self.mmprojFileName = mmprojFileName
         self.mmprojURL = mmprojURL
         self.mmprojSizeBytes = mmprojSizeBytes
+        self.mmprojSHA256 = mmprojSHA256
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -50,6 +56,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         case fileName
         case url
         case sizeBytes
+        case sha256
         case quantization
         case contextSize
         case recommended
@@ -57,6 +64,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         case mmprojFileName
         case mmprojURL
         case mmprojSizeBytes
+        case mmprojSHA256
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,6 +74,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         self.fileName = try container.decode(String.self, forKey: .fileName)
         self.url = try container.decode(String.self, forKey: .url)
         self.sizeBytes = try container.decode(Int64.self, forKey: .sizeBytes)
+        self.sha256 = try container.decodeIfPresent(String.self, forKey: .sha256)
         self.quantization = try container.decode(String.self, forKey: .quantization)
         self.contextSize = try container.decode(Int.self, forKey: .contextSize)
         self.recommended = try container.decodeIfPresent(Bool.self, forKey: .recommended) ?? false
@@ -73,6 +82,7 @@ public struct ModelInfo: Codable, Sendable, Identifiable, Equatable {
         self.mmprojFileName = try container.decodeIfPresent(String.self, forKey: .mmprojFileName)
         self.mmprojURL = try container.decodeIfPresent(String.self, forKey: .mmprojURL)
         self.mmprojSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .mmprojSizeBytes)
+        self.mmprojSHA256 = try container.decodeIfPresent(String.self, forKey: .mmprojSHA256)
     }
 
     public var requiresMMProj: Bool {

@@ -34,6 +34,17 @@ final class LLMBenchmarkSupportTests: XCTestCase {
         XCTAssertEqual(registry.recommended?.id, "gemma-4-e2b-it-q4km")
     }
 
+    func testBundledModelRegistryIncludesChecksumsForAllAssets() {
+        let registry = ModelRegistry()
+
+        for model in registry.models {
+            XCTAssertEqual(model.sha256?.count, 64, "\(model.id) is missing a primary model SHA-256 checksum")
+            if model.requiresMMProj {
+                XCTAssertEqual(model.mmprojSHA256?.count, 64, "\(model.id) is missing an mmproj SHA-256 checksum")
+            }
+        }
+    }
+
     func testPinnedLLME2EModelAndJustDefaultUseGemma4Q4KM() throws {
         let lockfileURL = repositoryRootURL()
             .appendingPathComponent("ci", isDirectory: true)
