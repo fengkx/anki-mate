@@ -349,7 +349,8 @@ final class AgentSessionTests: XCTestCase {
         let prompt = generator.calls[0].map(\.content.plainText).joined(separator: "\n")
         XCTAssertTrue(prompt.contains("Related card snapshots"))
         XCTAssertTrue(prompt.contains("p_rpetual"))
-        XCTAssertTrue(prompt.contains(#""kind":"recall""#))
+        XCTAssertTrue(prompt.contains(#"<card_snapshot source="related-1" kind="recall" word="apple">"#))
+        XCTAssertTrue(prompt.contains(#"<recall id="recall-draft" editable="true">"#))
     }
 
     func testSendUserMessagePassesLayoutRequestsToAgentPrompt() async throws {

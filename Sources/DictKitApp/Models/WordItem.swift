@@ -51,12 +51,22 @@ final class WordItem: ObservableObject, Identifiable {
 
     var aiSuggestedExampleArtifacts: [ExampleSentenceArtifact] {
         get { aiArtifacts.exampleSentences.suggested ?? [] }
-        set { aiArtifacts.exampleSentences.suggested = newValue.compactMap(normalizeExampleArtifact).nilIfEmpty }
+        set {
+            aiArtifacts.exampleSentences.suggested = normalizeExampleArtifacts(
+                newValue,
+                previous: aiArtifacts.exampleSentences.suggested ?? []
+            )
+        }
     }
 
     var aiAcceptedExampleArtifacts: [ExampleSentenceArtifact] {
         get { aiArtifacts.exampleSentences.accepted ?? [] }
-        set { aiArtifacts.exampleSentences.accepted = newValue.compactMap(normalizeExampleArtifact).nilIfEmpty }
+        set {
+            aiArtifacts.exampleSentences.accepted = normalizeExampleArtifacts(
+                newValue,
+                previous: aiArtifacts.exampleSentences.accepted ?? []
+            )
+        }
     }
 
     var aiSuggestedExampleSentences: [String] {
@@ -343,10 +353,28 @@ final class WordItem: ObservableObject, Identifiable {
         !aiAcceptedRecallCardDrafts.isEmpty
     }
 
-    private func normalizeExampleArtifact(_ artifact: ExampleSentenceArtifact) -> ExampleSentenceArtifact? {
+    private func normalizeExampleArtifacts(
+        _ artifacts: [ExampleSentenceArtifact],
+        previous: [ExampleSentenceArtifact]
+    ) -> [ExampleSentenceArtifact]? {
+        artifacts.enumerated().compactMap { index, artifact in
+            let previousArtifact = previous.indices.contains(index) ? previous[index] : nil
+            return normalizeExampleArtifact(artifact, previous: previousArtifact)
+        }.nilIfEmpty
+    }
+
+    private func normalizeExampleArtifact(
+        _ artifact: ExampleSentenceArtifact,
+        previous: ExampleSentenceArtifact? = nil
+    ) -> ExampleSentenceArtifact? {
+        let shouldDropStaleTranslation =
+            ExampleSentenceArtifact.inferredTranslation(from: artifact.text) == nil &&
+            previous?.translation == artifact.translation &&
+            previous?.text != artifact.text
+
         let normalized = ExampleSentenceArtifact(
             text: artifact.text,
-            translation: artifact.translation,
+            translation: shouldDropStaleTranslation ? nil : artifact.translation,
             note: artifact.note,
             anchor: artifact.anchor
         )

@@ -370,9 +370,10 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? AIArtifacts.currentSchemaVersion
         self = AIArtifacts(
-            schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? AIArtifacts.currentSchemaVersion,
-            exampleSentences: Self.decodeExampleSentenceSlot(from: container),
+            schemaVersion: schemaVersion,
+            exampleSentences: Self.decodeExampleSentenceSlot(from: container, schemaVersion: schemaVersion),
             definitionNote: try container.decodeIfPresent(AIArtifactSlot<DefinitionNoteArtifact>.self, forKey: .definitionNote) ?? .init(),
             recallCardDrafts: try container.decodeIfPresent(AIArtifactSlot<[RecallCardDraft]>.self, forKey: .recallCardDrafts) ?? .init(),
             pitfalls: try container.decodeIfPresent(AIArtifactSlot<[PitfallArtifact]>.self, forKey: .pitfalls) ?? .init(),
@@ -677,7 +678,8 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
     }
 
     private static func decodeExampleSentenceSlot(
-        from container: KeyedDecodingContainer<CodingKeys>
+        from container: KeyedDecodingContainer<CodingKeys>,
+        schemaVersion: Int
     ) -> AIArtifactSlot<[ExampleSentenceArtifact]> {
         guard let rawSlot = try? container.decodeIfPresent(
             AIArtifactSlot<[RawExampleSentenceArtifact]>.self,
@@ -687,27 +689,43 @@ public struct AIArtifacts: Codable, Equatable, Sendable {
         }
 
         return AIArtifactSlot(
-            suggested: rawSlot.suggested?.compactMap(Self.decodeExampleSentenceArtifact(from:)).nilIfEmpty,
-            accepted: rawSlot.accepted?.compactMap(Self.decodeExampleSentenceArtifact(from:)).nilIfEmpty
+            suggested: rawSlot.suggested?.compactMap {
+                Self.decodeExampleSentenceArtifact(from: $0, schemaVersion: schemaVersion)
+            }.nilIfEmpty,
+            accepted: rawSlot.accepted?.compactMap {
+                Self.decodeExampleSentenceArtifact(from: $0, schemaVersion: schemaVersion)
+            }.nilIfEmpty
         )
     }
 
     private static func decodeExampleSentenceArtifact(
-        from raw: RawExampleSentenceArtifact
+        from raw: RawExampleSentenceArtifact,
+        schemaVersion: Int
     ) -> ExampleSentenceArtifact? {
         let text = raw.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
 
         let translation = raw.translation?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let effectiveText: String
-        if ExampleSentenceArtifact.inferredTranslation(from: text) == nil, let translation {
-            effectiveText = "\(text) — \(translation)"
-        } else {
-            effectiveText = text
+
+        if ExampleSentenceArtifact.inferredTranslation(from: text) != nil {
+            return ExampleSentenceArtifact(
+                text: text,
+                note: raw.note,
+                anchor: raw.anchor
+            )
+        }
+
+        if schemaVersion < 4, let translation {
+            return ExampleSentenceArtifact(
+                text: "\(text) — \(translation)",
+                note: raw.note,
+                anchor: raw.anchor
+            )
         }
 
         return ExampleSentenceArtifact(
-            text: effectiveText,
+            text: text,
+            translation: translation,
             note: raw.note,
             anchor: raw.anchor
         )
