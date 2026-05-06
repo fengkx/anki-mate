@@ -217,6 +217,7 @@ verify_bundle
 create_release_zip
 APP_ARCHIVE_SHA256="$(awk '{print $1}' "$CHECKSUM_PATH")"
 export APP_ARCHIVE_SHA256
+export DID_NOTARIZE
 if [[ -n "${APPLE_DEVELOPER_IDENTITY:-}" ]]; then
     APP_SIGNED=true
 else
