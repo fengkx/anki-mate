@@ -187,7 +187,10 @@ final class WordListViewModel: ObservableObject {
 
         do {
             let resolved = try await resolvedLookupService.resolve(trimmed, dictionaryName: currentCollection.dictionaryName)
-            return .dictionaryMatch(canonicalWord: resolved.word)
+            return .dictionaryMatch(
+                canonicalWord: resolved.word,
+                definition: Self.previewDefinition(from: resolved.lookupResult)
+            )
         } catch LookupError.notFound {
             return .notFound
         } catch {
@@ -205,6 +208,23 @@ final class WordListViewModel: ObservableObject {
             }
             return false
         }.count
+    }
+
+    private static func previewDefinition(from result: LookupResult) -> String? {
+        for entry in result.entries {
+            for lexicalEntry in entry.lexicalEntries {
+                for sense in lexicalEntry.senses {
+                    let definition = sense.definition.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !definition.isEmpty else { continue }
+                    if let semanticHint = sense.semanticHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !semanticHint.isEmpty {
+                        return "\(semanticHint) \(definition)"
+                    }
+                    return definition
+                }
+            }
+        }
+        return nil
     }
 
     func selectCollection(id: UUID) {

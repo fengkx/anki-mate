@@ -17,7 +17,7 @@ enum CommandPaletteSection: String, CaseIterable, Equatable {
 
 enum WordAddValidationResult: Equatable {
     case duplicateExistingWord(existingWordID: UUID?)
-    case dictionaryMatch(canonicalWord: String?)
+    case dictionaryMatch(canonicalWord: String?, definition: String?)
     case notFound
     case failed(String)
 }
@@ -41,9 +41,30 @@ struct CommandPaletteWordItem: Identifiable, Equatable {
 struct CommandPaletteAddWordItem: Identifiable, Equatable {
     let query: String
     let canonicalWord: String?
+    let definition: String?
 
     var id: String {
         "add-word:\(query.lowercased())"
+    }
+}
+
+enum CommandPaletteAddWordPreviewStatus: Equatable {
+    case checking
+    case readyToAdd
+    case duplicateExistingWord
+    case notFound
+    case failed
+}
+
+struct CommandPaletteAddWordPreview: Equatable {
+    let status: CommandPaletteAddWordPreviewStatus
+    let query: String
+    let canonicalWord: String?
+    let definition: String?
+    let message: String
+
+    var isAddable: Bool {
+        status == .readyToAdd
     }
 }
 
@@ -130,7 +151,7 @@ enum CommandPaletteItem: Identifiable, Equatable {
             if let canonicalWord = item.canonicalWord, canonicalWord.caseInsensitiveCompare(item.query) != .orderedSame {
                 return "Will be resolved via dictionary as \(canonicalWord)"
             }
-            return "Will be resolved via dictionary"
+            return item.definition ?? "Will be resolved via dictionary"
         case .command(let item):
             return item.subtitle
         case .collection(let item):

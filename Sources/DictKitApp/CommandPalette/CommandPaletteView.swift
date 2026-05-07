@@ -1,8 +1,24 @@
 import SwiftUI
 import AppKit
 
+struct CommandPaletteLayoutMetrics {
+    static let `default` = Self()
+
+    let searchFieldHeight: CGFloat = 50
+    let searchFieldFontSize: CGFloat = 16
+    let searchFieldCornerRadius: CGFloat = 14
+    let searchFieldTopPadding: CGFloat = 20
+    let searchFieldBottomPadding: CGFloat = 16
+    let sectionSpacing: CGFloat = 14
+    let rowVerticalPadding: CGFloat = 14
+    let footerVerticalPadding: CGFloat = 14
+    let resultsBottomPadding: CGFloat = 10
+    let previewCardPadding: CGFloat = 14
+}
+
 struct CommandPaletteView: View {
     @EnvironmentObject private var palette: CommandPaletteViewModel
+    private let metrics = CommandPaletteLayoutMetrics.default
 
     var body: some View {
         if palette.isPresented {
@@ -14,20 +30,11 @@ struct CommandPaletteView: View {
                     }
 
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        CommandPaletteSearchField(
-                            text: Binding(
-                                get: { palette.query },
-                                set: { palette.updateQuery($0) }
-                            ),
-                            placeholder: palette.placeholder,
-                            onMoveUp: { palette.moveSelection(delta: -1) },
-                            onMoveDown: { palette.moveSelection(delta: 1) },
-                            onSubmit: { palette.activateHighlightedItem() },
-                            onCommandSubmit: { palette.addCurrentQueryIfPossible() },
-                            onEscape: { palette.dismiss() }
+                    VStack(alignment: .leading, spacing: metrics.sectionSpacing) {
+                        CommandPaletteSearchInput(
+                            palette: palette,
+                            metrics: metrics
                         )
-                        .frame(height: 42)
 
                         if let sectionLabel {
                             Text(sectionLabel)
@@ -35,15 +42,17 @@ struct CommandPaletteView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        if palette.canAddCurrentQuery {
-                            Label("Press Cmd+Enter to add the current query directly", systemImage: "return")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if let preview = palette.addWordPreview {
+                            CommandPaletteAddWordPreviewCard(
+                                preview: preview,
+                                metrics: metrics,
+                                onAdd: { palette.addCurrentQueryIfPossible() }
+                            )
                         }
                     }
                     .padding(.horizontal, 18)
-                    .padding(.top, 18)
-                    .padding(.bottom, 14)
+                    .padding(.top, metrics.searchFieldTopPadding)
+                    .padding(.bottom, metrics.searchFieldBottomPadding)
 
                     Divider()
 
@@ -55,13 +64,14 @@ struct CommandPaletteView: View {
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.secondary)
                                         .padding(.horizontal, 18)
-                                        .padding(.top, 14)
+                                        .padding(.top, metrics.sectionSpacing)
                                         .padding(.bottom, 8)
 
                                     ForEach(Array(items.enumerated()), id: \.element.id) { _, item in
                                         CommandPaletteRow(
                                             item: item,
                                             isHighlighted: palette.highlightedItemID == item.id,
+                                            metrics: metrics,
                                             onSelect: { palette.execute(item) },
                                             onHover: { palette.highlightItem(id: item.id) }
                                         )
@@ -69,7 +79,7 @@ struct CommandPaletteView: View {
                                 }
                             }
                         }
-                        .padding(.bottom, 8)
+                        .padding(.bottom, metrics.resultsBottomPadding)
                     }
                     .frame(maxHeight: 340)
 
@@ -82,7 +92,7 @@ struct CommandPaletteView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, metrics.footerVerticalPadding)
                 }
                 .frame(width: 620)
                 .background(
@@ -94,14 +104,6 @@ struct CommandPaletteView: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                 )
-                .background {
-                    Button("Add Current Query") {
-                        palette.addCurrentQueryIfPossible()
-                    }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!palette.canAddCurrentQuery)
-                    .hidden()
-                }
                 .onAppear {
                     takeInputFocus()
                 }
@@ -137,9 +139,208 @@ struct CommandPaletteView: View {
     }
 }
 
+private struct CommandPaletteSearchInput: View {
+    @ObservedObject var palette: CommandPaletteViewModel
+    let metrics: CommandPaletteLayoutMetrics
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+
+            CommandPaletteSearchField(
+                text: Binding(
+                    get: { palette.query },
+                    set: { palette.updateQuery($0) }
+                ),
+                placeholder: palette.placeholder,
+                fontSize: metrics.searchFieldFontSize,
+                onMoveUp: { palette.moveSelection(delta: -1) },
+                onMoveDown: { palette.moveSelection(delta: 1) },
+                onSubmit: { palette.activateHighlightedItem() },
+                onCommandSubmit: { palette.addCurrentQueryIfPossible() },
+                onEscape: { palette.dismiss() }
+            )
+            .frame(minHeight: 24, idealHeight: 24, maxHeight: 24)
+
+            if !palette.query.isEmpty {
+                Button {
+                    palette.updateQuery("")
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: metrics.searchFieldHeight, idealHeight: metrics.searchFieldHeight, maxHeight: metrics.searchFieldHeight)
+        .background(
+            RoundedRectangle(cornerRadius: metrics.searchFieldCornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: metrics.searchFieldCornerRadius, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .background {
+            Button("Add Current Query") {
+                palette.addCurrentQueryIfPossible()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!palette.canAddCurrentQuery)
+            .hidden()
+        }
+    }
+}
+
+private struct CommandPaletteAddWordPreviewCard: View {
+    let preview: CommandPaletteAddWordPreview
+    let metrics: CommandPaletteLayoutMetrics
+    let onAdd: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: iconName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    if let canonicalWord = preview.canonicalWord,
+                       canonicalWord.caseInsensitiveCompare(preview.query) != .orderedSame {
+                        Text(canonicalWord)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.primary.opacity(0.06)))
+                    }
+                }
+
+                if let definition = preview.definition, !definition.isEmpty {
+                    Text(definition)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Text(preview.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            if preview.isAddable {
+                Button("Add") {
+                    onAdd()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(metrics.previewCardPadding)
+        .background(backgroundShape)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(borderColor, lineWidth: 1)
+        )
+    }
+
+    private var title: String {
+        switch preview.status {
+        case .checking:
+            return "Checking \"\(preview.query)\""
+        case .readyToAdd:
+            return "Add \"\(preview.query)\""
+        case .duplicateExistingWord:
+            return "\"\(preview.query)\" already exists"
+        case .notFound:
+            return "No dictionary match for \"\(preview.query)\""
+        case .failed:
+            return "Lookup failed for \"\(preview.query)\""
+        }
+    }
+
+    private var iconName: String {
+        switch preview.status {
+        case .checking:
+            return "clock.arrow.circlepath"
+        case .readyToAdd:
+            return "plus.circle.fill"
+        case .duplicateExistingWord:
+            return "checkmark.circle.fill"
+        case .notFound:
+            return "questionmark.circle"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch preview.status {
+        case .checking:
+            return .secondary
+        case .readyToAdd:
+            return .accentColor
+        case .duplicateExistingWord:
+            return .green
+        case .notFound:
+            return .secondary
+        case .failed:
+            return .orange
+        }
+    }
+
+    private var backgroundShape: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(backgroundColor)
+    }
+
+    private var backgroundColor: Color {
+        switch preview.status {
+        case .checking:
+            return Color.primary.opacity(0.04)
+        case .readyToAdd:
+            return Color.accentColor.opacity(0.10)
+        case .duplicateExistingWord:
+            return Color.green.opacity(0.10)
+        case .notFound:
+            return Color.primary.opacity(0.035)
+        case .failed:
+            return Color.orange.opacity(0.10)
+        }
+    }
+
+    private var borderColor: Color {
+        switch preview.status {
+        case .checking:
+            return Color.primary.opacity(0.08)
+        case .readyToAdd:
+            return Color.accentColor.opacity(0.25)
+        case .duplicateExistingWord:
+            return Color.green.opacity(0.25)
+        case .notFound:
+            return Color.primary.opacity(0.08)
+        case .failed:
+            return Color.orange.opacity(0.25)
+        }
+    }
+}
+
 private struct CommandPaletteRow: View {
     let item: CommandPaletteItem
     let isHighlighted: Bool
+    let metrics: CommandPaletteLayoutMetrics
     let onSelect: () -> Void
     let onHover: () -> Void
 
@@ -173,7 +374,7 @@ private struct CommandPaletteRow: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, metrics.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(backgroundShape)
         .overlay(overlayShape)
@@ -214,6 +415,7 @@ private struct CommandPaletteRow: View {
 private struct CommandPaletteSearchField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    let fontSize: CGFloat
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
     let onSubmit: () -> Void
@@ -238,15 +440,13 @@ private struct CommandPaletteSearchField: NSViewRepresentable {
                 onEscape()
             }
         }
-        searchField.sendsSearchStringImmediately = true
-        searchField.recentsAutosaveName = nil
-        searchField.maximumRecents = 0
+        searchField.isBordered = false
+        searchField.drawsBackground = false
         searchField.focusRingType = .none
-        searchField.bezelStyle = .roundedBezel
-        searchField.font = .systemFont(ofSize: 18, weight: .semibold)
+        searchField.font = .systemFont(ofSize: fontSize, weight: .medium)
         searchField.lineBreakMode = .byTruncatingTail
-        searchField.cell?.wraps = false
         searchField.cell?.usesSingleLineMode = true
+        searchField.cell?.wraps = false
         searchField.placeholderString = placeholder
         searchField.stringValue = text
         return searchField
@@ -263,7 +463,7 @@ private struct CommandPaletteSearchField: NSViewRepresentable {
         Coordinator(text: $text)
     }
 
-    final class Coordinator: NSObject, NSSearchFieldDelegate, NSControlTextEditingDelegate {
+    final class Coordinator: NSObject, NSTextFieldDelegate, NSControlTextEditingDelegate {
         @Binding private var text: String
         private weak var field: CommandPaletteSearchFieldView?
 
@@ -276,7 +476,7 @@ private struct CommandPaletteSearchField: NSViewRepresentable {
         }
 
         func controlTextDidChange(_ obj: Notification) {
-            guard let field = obj.object as? NSSearchField else { return }
+            guard let field = obj.object as? NSTextField else { return }
             text = field.stringValue
         }
 
@@ -287,7 +487,7 @@ private struct CommandPaletteSearchField: NSViewRepresentable {
     }
 }
 
-private final class CommandPaletteSearchFieldView: NSSearchField {
+private final class CommandPaletteSearchFieldView: NSTextField {
     enum Command {
         case moveUp
         case moveDown
@@ -297,6 +497,24 @@ private final class CommandPaletteSearchFieldView: NSSearchField {
     }
 
     var commandHandler: ((Command) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        isEditable = true
+        isSelectable = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        isEditable = true
+        isSelectable = true
+    }
 
     @discardableResult
     func handleCommand(selector: Selector, currentEvent: NSEvent?) -> Bool {
@@ -347,6 +565,10 @@ private final class CommandPaletteSearchFieldView: NSSearchField {
             break
         }
         super.keyDown(with: event)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 24)
     }
 }
 

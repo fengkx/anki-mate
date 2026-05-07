@@ -158,6 +158,63 @@ final class CommandPaletteViewModel: ObservableObject {
         addWordItem != nil
     }
 
+    var addWordPreview: CommandPaletteAddWordPreview? {
+        guard mode == .words else { return nil }
+
+        let trimmedQuery = rawTrimmedQuery
+        guard !trimmedQuery.isEmpty else { return nil }
+
+        switch lookupValidationState {
+        case .idle:
+            return nil
+        case .checking(let checkingQuery):
+            guard checkingQuery == normalizedQuery else { return nil }
+            return CommandPaletteAddWordPreview(
+                status: .checking,
+                query: trimmedQuery,
+                canonicalWord: nil,
+                definition: nil,
+                message: "Checking dictionary..."
+            )
+        case .result(let query, let outcome):
+            guard query == normalizedQuery else { return nil }
+            switch outcome {
+            case .dictionaryMatch(let canonicalWord, let definition):
+                return CommandPaletteAddWordPreview(
+                    status: .readyToAdd,
+                    query: trimmedQuery,
+                    canonicalWord: canonicalWord,
+                    definition: definition,
+                    message: "Press Cmd+Enter to add directly"
+                )
+            case .duplicateExistingWord:
+                return CommandPaletteAddWordPreview(
+                    status: .duplicateExistingWord,
+                    query: trimmedQuery,
+                    canonicalWord: nil,
+                    definition: nil,
+                    message: "Already exists in the current collection"
+                )
+            case .notFound:
+                return CommandPaletteAddWordPreview(
+                    status: .notFound,
+                    query: trimmedQuery,
+                    canonicalWord: nil,
+                    definition: nil,
+                    message: "No dictionary match found"
+                )
+            case .failed(let error):
+                return CommandPaletteAddWordPreview(
+                    status: .failed,
+                    query: trimmedQuery,
+                    canonicalWord: nil,
+                    definition: nil,
+                    message: error
+                )
+            }
+        }
+    }
+
     var placeholder: String {
         switch mode {
         case .words:
@@ -187,8 +244,12 @@ final class CommandPaletteViewModel: ObservableObject {
         guard case .result(let query, let outcome) = lookupValidationState else { return nil }
         guard query == normalizedQuery else { return nil }
 
-        if case .dictionaryMatch(let canonicalWord) = outcome {
-            return CommandPaletteAddWordItem(query: rawTrimmedQuery, canonicalWord: canonicalWord)
+        if case .dictionaryMatch(let canonicalWord, let definition) = outcome {
+            return CommandPaletteAddWordItem(
+                query: rawTrimmedQuery,
+                canonicalWord: canonicalWord,
+                definition: definition
+            )
         }
         return nil
     }
@@ -252,23 +313,12 @@ final class CommandPaletteViewModel: ObservableObject {
 
         results.append(contentsOf: matchingWords.map { CommandPaletteItem.word(makeWordItem(from: $0.0, isRecent: false)) })
 
-        if let addWordItem {
-            results.append(.addWord(addWordItem))
-        } else if case .checking(let checkingQuery) = lookupValidationState, checkingQuery == normalizedQuery {
-            results.append(
-                .info(.init(
-                    id: "checking-\(checkingQuery)",
-                    title: "Check dictionary for \"\(trimmedQuery)\"...",
-                    subtitle: nil,
-                    systemImage: "clock.arrow.circlepath"
-                ))
-            )
-        } else if results.isEmpty {
+        if results.isEmpty {
             results.append(
                 .info(.init(
                     id: "no-word-results",
                     title: "No matching word in this collection",
-                    subtitle: "Type Cmd+Enter after dictionary lookup succeeds to add it",
+                    subtitle: "Use Cmd+Enter when the dictionary preview says the word can be added",
                     systemImage: "magnifyingglass"
                 ))
             )

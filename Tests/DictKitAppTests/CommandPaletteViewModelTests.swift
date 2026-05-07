@@ -40,11 +40,6 @@ final class CommandPaletteViewModelTests: XCTestCase {
     }
 
     func testValidationAllowsAddRowWhenDictionaryLookupSucceeds() async throws {
-        // TODO(agent-chat): scheduleValidationIfNeeded() timing makes this test flaky
-        // in the current environment (canAddCurrentQuery false at 350ms wait).
-        // Not related to tool-call integration work; skipping until owner triages
-        // either the debounce window or the raw-lookup path latency.
-        throw XCTSkip("CommandPalette validation timing is flaky; see TODO above")
         let dependencies = try makeDependencies(rawLookup: { query, source in
             XCTAssertEqual(query, "abandon")
             XCTAssertEqual(source, .publicAPI)
@@ -53,15 +48,32 @@ final class CommandPaletteViewModelTests: XCTestCase {
 
         dependencies.palette.present()
         dependencies.palette.updateQuery("abandon")
-        try? await Task.sleep(nanoseconds: 350_000_000)
+        await waitForValidationResult(in: dependencies.palette)
 
         XCTAssertTrue(dependencies.palette.canAddCurrentQuery)
-        XCTAssertTrue(dependencies.palette.items.contains {
-            if case .addWord(let item) = $0 {
-                return item.query == "abandon"
-            }
+        XCTAssertFalse(dependencies.palette.items.contains {
+            if case .addWord = $0 { return true }
             return false
         })
+        let preview = try XCTUnwrap(dependencies.palette.addWordPreview)
+        XCTAssertEqual(preview.query, "abandon")
+        XCTAssertEqual(preview.canonicalWord, "abandon")
+        XCTAssertEqual(preview.definition, "leave behind")
+        XCTAssertTrue(preview.isAddable)
+    }
+
+    func testValidationReportsDuplicateWordPreview() async throws {
+        let dependencies = try makeDependencies()
+
+        dependencies.palette.present()
+        dependencies.palette.updateQuery("Apple")
+        await waitForValidationResult(in: dependencies.palette)
+
+        XCTAssertFalse(dependencies.palette.canAddCurrentQuery)
+        let preview = try XCTUnwrap(dependencies.palette.addWordPreview)
+        XCTAssertEqual(preview.status, .duplicateExistingWord)
+        XCTAssertEqual(preview.query, "Apple")
+        XCTAssertFalse(preview.isAddable)
     }
 
     func testExecuteWordSelectsWordAndRecordsHistory() throws {
@@ -188,5 +200,14 @@ final class CommandPaletteViewModelTests: XCTestCase {
             metadata: LookupMetadata(usedSource: .publicAPI, warnings: []),
             source: nil
         )
+    }
+
+    private func waitForValidationResult(in palette: CommandPaletteViewModel) async {
+        for _ in 0..<20 {
+            if case .result = palette.lookupValidationState {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 }
